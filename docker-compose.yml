@@ -1,0 +1,9 @@
+services:
+  earendil:
+    build: .
+    container_name: earendil-bot
+    env_file:
+      - .env
+    volumes:
+      - ./data:/app/data
+    restart: unless-stopped
