@@ -13,6 +13,11 @@ from app.utils.logging import configure_logging
 
 logger = logging.getLogger(__name__)
 
+def build_market_data_broker(settings):
+    if settings.broker == 'etoro':
+        return EtoroClient(settings=settings)
+
+    return FakeBrokerClient(equity=50.0)
 
 def build_broker(settings):
     if settings.ear_mode == 'paper':
@@ -26,11 +31,12 @@ def main() -> None:
 
     logger.info('Starting Eärendil | mode=%s | broker=%s', settings.ear_mode, settings.broker)
 
-    broker = build_broker(settings)
-    market_data = MarketDataService(broker)
+    execution_broker = build_broker(settings)
+    market_data_broker = build_market_data_broker(settings)
+    market_data = MarketDataService(market_data_broker)
     strategy = BreakoutStrategy()
     risk_manager = RiskManager(settings)
-    executor = PaperExecutor(broker)
+    executor = PaperExecutor(execution_broker)
     trade_journal = JsonlJournal(settings.journal_path)
     market_journal = JsonlJournal(settings.market_log_path)
 
@@ -40,7 +46,7 @@ def main() -> None:
             market_journal.write('market_snapshot', {'snapshot': snapshot})
 
             signal = strategy.on_snapshot(snapshot)
-            equity = broker.get_account_equity()
+            equity = execution_broker.get_account_equity()
             plan = risk_manager.evaluate(signal, snapshot, equity)
 
             trade_journal.write(
