@@ -62,24 +62,31 @@ def main() -> None:
                     closed_candle.closed_at.isoformat(),
                 )
 
-            signal = strategy.on_snapshot(snapshot)
-            equity = execution_broker.get_account_equity()
-            plan = risk_manager.evaluate(signal, snapshot, equity)
+                signal = strategy.on_candle(closed_candle)
+                equity = execution_broker.get_account_equity()
+                plan = risk_manager.evaluate(signal, snapshot, equity)
 
-            trade_journal.write(
-                'decision',
-                {
-                    'snapshot': snapshot,
-                    'signal': signal,
-                    'equity': equity,
-                    'trade_plan': plan,
-                },
-            )
+                trade_journal.write(
+                    'decision',
+                    {
+                        'snapshot': snapshot,
+                        'candle': closed_candle,
+                        'signal': signal,
+                        'equity': equity,
+                        'trade_plan': plan,
+                    },
+                )
 
-            position_id = executor.execute(plan)
-            if position_id:
-                risk_manager.record_open_position()
-                trade_journal.write('position_opened', {'position_id': position_id, 'trade_plan': plan})
+                position_id = executor.execute(plan)
+                if position_id:
+                    risk_manager.record_open_position()
+                    trade_journal.write(
+                        'position_opened',
+                        {
+                            'position_id': position_id,
+                            'trade_plan': plan,
+                        },
+                    )
 
         except KeyboardInterrupt:
             logger.info('Stopping Eärendil')
