@@ -31,9 +31,16 @@ class EtoroClient(BrokerClient):
         )
 
     def get_account_equity(self) -> float:
-        # Temporary MVP fallback.
-        # TODO: map real eToro portfolio/equity endpoint before real production usage.
-        return 50.0
+        portfolio = self.get_portfolio()
+        equity = self._extract_account_equity(portfolio)
+
+        logger.info(
+            'eToro account equity resolved | env=%s | equity=%s',
+            self.settings.etoro_env,
+            equity,
+        )
+
+        return equity
 
     def open_position(
         self,
@@ -623,6 +630,62 @@ class EtoroClient(BrokerClient):
             if value is not None:
                 return float(value)
 
+        return None
+    
+    def _extract_account_equity(self, payload: dict) -> float:
+        equity = self._extract_optional_account_equity(payload)
+
+        if equity is None:
+            raise ValueError(f'Unable to extract account equity from eToro portfolio: {payload}')
+
+        if equity <= 0:
+            raise ValueError(f'Invalid eToro account equity={equity}. Portfolio={payload}')
+
+        return equity
+
+
+    def _extract_optional_account_equity(self, payload: dict) -> float | None:
+        for key in (
+            'equity',
+            'Equity',
+            'accountEquity',
+            'AccountEquity',
+            'netLiquidationValue',
+            'NetLiquidationValue',
+            'netLiq',
+            'NetLiq',
+            'balance',
+            'Balance',
+            'cash',
+            'Cash',
+            'availableBalance',
+            'AvailableBalance',
+            'availableCash',
+            'AvailableCash',
+        ):
+            value = payload.get(key)
+            if value is not None:
+                return float(value)
+    
+        for key in (
+            'clientPortfolio',
+            'ClientPortfolio',
+            'portfolio',
+            'Portfolio',
+            'account',
+            'Account',
+            'cashAvailable',
+            'CashAvailable',
+            'data',
+            'Data',
+        ):
+            value = payload.get(key)
+    
+            if isinstance(value, dict):
+                nested_equity = self._extract_optional_account_equity(value)
+                if nested_equity is not None:
+                    return nested_equity
+    
         return None
 
     def _extract_order_id(self, payload: dict) -> str:

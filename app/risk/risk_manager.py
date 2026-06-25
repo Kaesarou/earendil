@@ -81,6 +81,7 @@ class RiskManager:
         if (
             self.open_positions_by_symbol.get(normalized_symbol, 0)
             >= self.settings.max_open_positions_per_symbol
+            
             ):
             return 'max_open_positions_per_symbol_reached'
 
