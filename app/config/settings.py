@@ -47,6 +47,14 @@ class Settings(BaseSettings):
     )
     stop_loss_percent: float = Field(default=0.8, alias='STOP_LOSS_PERCENT')
     take_profit_percent: float = Field(default=1.2, alias='TAKE_PROFIT_PERCENT')
+    estimated_round_trip_fees: float = Field(
+        default=0.0,
+        alias='ESTIMATED_ROUND_TRIP_FEES',
+    )
+    min_expected_net_profit: float = Field(
+        default=0.0,
+        alias='MIN_EXPECTED_NET_PROFIT',
+    )
     force_close_hour: int = Field(default=21, alias='FORCE_CLOSE_HOUR')
     force_close_minute: int = Field(default=55, alias='FORCE_CLOSE_MINUTE')
 

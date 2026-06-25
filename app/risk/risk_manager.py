@@ -39,10 +39,29 @@ class RiskManager:
             return TradePlan(approved=False, reason='invalid_position_amount')
 
         if signal.action == 'BUY':
+            expected_gross_profit = self._calculate_expected_gross_profit(amount)
+            estimated_fees = self.settings.estimated_round_trip_fees
+            expected_net_profit = expected_gross_profit - estimated_fees
+
+            if expected_net_profit < self.settings.min_expected_net_profit:
+                return TradePlan(
+                    approved=False,
+                    reason='expected_profit_too_low_after_fees',
+                    symbol=snapshot.symbol,
+                    side='BUY',
+                    amount=round(amount, 4),
+                    expected_gross_profit=round(expected_gross_profit, 4),
+                    estimated_fees=round(estimated_fees, 4),
+                    expected_net_profit=round(expected_net_profit, 4),
+                )
+
             return self._build_buy_plan(
                 signal=signal,
                 snapshot=snapshot,
                 amount=amount,
+                expected_gross_profit=expected_gross_profit,
+                estimated_fees=estimated_fees,
+                expected_net_profit=expected_net_profit,
             )
 
         return TradePlan(approved=False, reason=f'unsupported_signal_{signal.action}')
@@ -81,8 +100,7 @@ class RiskManager:
         if (
             self.open_positions_by_symbol.get(normalized_symbol, 0)
             >= self.settings.max_open_positions_per_symbol
-            
-            ):
+        ):
             return 'max_open_positions_per_symbol_reached'
 
         if self.trades_today >= self.settings.max_trades_per_day:
@@ -102,6 +120,9 @@ class RiskManager:
         signal: Signal,
         snapshot: MarketSnapshot,
         amount: float,
+        expected_gross_profit: float,
+        estimated_fees: float,
+        expected_net_profit: float,
     ) -> TradePlan:
         stop_loss = snapshot.last * (1 - self.settings.stop_loss_percent / 100)
         take_profit = snapshot.last * (1 + self.settings.take_profit_percent / 100)
@@ -111,10 +132,16 @@ class RiskManager:
             reason=signal.reason,
             symbol=snapshot.symbol,
             side='BUY',
-            amount=amount,
+            amount=round(amount, 4),
             stop_loss=round(stop_loss, 2),
             take_profit=round(take_profit, 2),
+            expected_gross_profit=round(expected_gross_profit, 4),
+            estimated_fees=round(estimated_fees, 4),
+            expected_net_profit=round(expected_net_profit, 4),
         )
+
+    def _calculate_expected_gross_profit(self, amount: float) -> float:
+        return amount * (self.settings.take_profit_percent / 100)
 
     def _normalize_symbol(self, symbol: str) -> str:
         return symbol.strip().upper()

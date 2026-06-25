@@ -9,6 +9,8 @@ def build_risk_manager(
     max_open_positions: int = 2,
     max_open_positions_per_symbol: int = 1,
     max_trades_per_day: int = 10,
+    estimated_round_trip_fees: float = 0.0,
+    min_expected_net_profit: float = 0.0,
 ) -> RiskManager:
     settings = Settings(
         MAX_OPEN_POSITIONS=max_open_positions,
@@ -17,6 +19,8 @@ def build_risk_manager(
         MAX_POSITION_SIZE_PERCENT=40.0,
         STOP_LOSS_PERCENT=0.3,
         TAKE_PROFIT_PERCENT=0.5,
+        ESTIMATED_ROUND_TRIP_FEES=estimated_round_trip_fees,
+        MIN_EXPECTED_NET_PROFIT=min_expected_net_profit,
         FORCE_CLOSE_HOUR=23,
         FORCE_CLOSE_MINUTE=59,
     )
@@ -58,6 +62,9 @@ def test_risk_manager_approves_buy_when_no_position_is_open():
     assert plan.amount == 40.0
     assert plan.stop_loss == 99.7
     assert plan.take_profit == 100.5
+    assert plan.expected_gross_profit == 0.2
+    assert plan.estimated_fees == 0.0
+    assert plan.expected_net_profit == 0.2
 
 
 def test_risk_manager_rejects_when_total_open_positions_limit_is_reached():
@@ -164,3 +171,60 @@ def test_risk_manager_rejects_when_max_trades_per_day_is_reached():
 
     assert not plan.approved
     assert plan.reason == 'max_trades_per_day_reached'
+
+
+def test_risk_manager_rejects_when_expected_profit_does_not_cover_fees():
+    risk_manager = build_risk_manager(
+        estimated_round_trip_fees=0.25,
+        min_expected_net_profit=0.0,
+    )
+
+    plan = risk_manager.evaluate(
+        signal=buy_signal(),
+        snapshot=snapshot('AAPL'),
+        account_equity=100.0,
+    )
+
+    assert not plan.approved
+    assert plan.reason == 'expected_profit_too_low_after_fees'
+    assert plan.amount == 40.0
+    assert plan.expected_gross_profit == 0.2
+    assert plan.estimated_fees == 0.25
+    assert plan.expected_net_profit == -0.05
+
+
+def test_risk_manager_rejects_when_expected_net_profit_is_below_minimum():
+    risk_manager = build_risk_manager(
+        estimated_round_trip_fees=0.05,
+        min_expected_net_profit=0.2,
+    )
+
+    plan = risk_manager.evaluate(
+        signal=buy_signal(),
+        snapshot=snapshot('AAPL'),
+        account_equity=100.0,
+    )
+
+    assert not plan.approved
+    assert plan.reason == 'expected_profit_too_low_after_fees'
+    assert plan.expected_gross_profit == 0.2
+    assert plan.estimated_fees == 0.05
+    assert plan.expected_net_profit == 0.15
+
+
+def test_risk_manager_approves_when_expected_net_profit_matches_minimum():
+    risk_manager = build_risk_manager(
+        estimated_round_trip_fees=0.05,
+        min_expected_net_profit=0.15,
+    )
+
+    plan = risk_manager.evaluate(
+        signal=buy_signal(),
+        snapshot=snapshot('AAPL'),
+        account_equity=100.0,
+    )
+
+    assert plan.approved
+    assert plan.expected_gross_profit == 0.2
+    assert plan.estimated_fees == 0.05
+    assert plan.expected_net_profit == 0.15
