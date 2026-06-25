@@ -31,12 +31,23 @@ def main() -> None:
     settings = get_settings()
     configure_logging(settings.log_level)
 
-    logger.info('Starting Eärendil | mode=%s | broker=%s', settings.ear_mode, settings.broker)
+    logger.info(
+        'Starting Eärendil | mode=%s | broker=%s | etoro_env=%s | real_trading_enabled=%s',
+        settings.ear_mode,
+        settings.broker,
+        settings.etoro_env,
+        settings.real_trading_enabled,
+    )
+
+    if settings.ear_mode == 'real' and not settings.real_trading_enabled:
+        logger.warning(
+            'Real execution mode is selected but REAL_TRADING_ENABLED=false. Orders will be blocked.'
+        )
 
     execution_broker = build_broker(settings)
     market_data_broker = build_market_data_broker(settings)
     market_data = MarketDataService(market_data_broker)
-    strategy = BreakoutStrategy(lookback=1, min_breakout_percent=0.0)
+    strategy = BreakoutStrategy()
     risk_manager = RiskManager(settings)
     executor = PaperExecutor(execution_broker)
     position_tracker = PositionTracker()
@@ -79,6 +90,13 @@ def main() -> None:
                 )
 
                 signal = strategy.on_candle(closed_candle)
+                logger.info(
+                    'Strategy signal | action=%s | confidence=%s | reason=%s | candle_close=%s',
+                    signal.action,
+                    signal.confidence,
+                    signal.reason,
+                    closed_candle.close,
+                )
                 equity = execution_broker.get_account_equity()
                 plan = risk_manager.evaluate(signal, snapshot, equity)
 
