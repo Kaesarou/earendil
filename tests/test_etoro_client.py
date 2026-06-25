@@ -218,6 +218,30 @@ def test_etoro_real_order_lookup_path():
     assert client._real_order_lookup_path() == '/api/v2/trading/info/orders:lookup'
 
 
+def test_etoro_demo_portfolio_path():
+    settings = Settings(
+        ETORO_ENV='demo',
+        ETORO_API_KEY='api-key',
+        ETORO_USER_KEY='user-key',
+    )
+
+    client = EtoroClient(settings=settings)
+
+    assert client._demo_portfolio_path() == '/api/v1/trading/info/demo/portfolio'
+
+
+def test_etoro_real_portfolio_path():
+    settings = Settings(
+        ETORO_ENV='real',
+        ETORO_API_KEY='api-key',
+        ETORO_USER_KEY='user-key',
+    )
+
+    client = EtoroClient(settings=settings)
+
+    assert client._real_portfolio_path() == '/api/v1/trading/info/portfolio'
+
+
 def test_get_order_details_uses_demo_order_details_endpoint(monkeypatch):
     settings = Settings(
         ETORO_ENV='demo',
@@ -264,6 +288,54 @@ def test_get_order_details_uses_real_order_lookup_endpoint(monkeypatch):
     assert result == {'orderId': 123}
     assert captured['path'] == '/api/v2/trading/info/orders:lookup'
     assert captured['params'] == {'orderId': '123'}
+
+
+def test_get_portfolio_uses_demo_portfolio_endpoint(monkeypatch):
+    settings = Settings(
+        ETORO_ENV='demo',
+        ETORO_API_KEY='api-key',
+        ETORO_USER_KEY='user-key',
+    )
+
+    client = EtoroClient(settings=settings)
+    captured = {}
+
+    def fake_get(path, params=None):
+        captured['path'] = path
+        captured['params'] = params
+        return {'clientPortfolio': {'positions': []}}
+
+    monkeypatch.setattr(client, '_get', fake_get)
+
+    result = client.get_portfolio()
+
+    assert result == {'clientPortfolio': {'positions': []}}
+    assert captured['path'] == '/api/v1/trading/info/demo/portfolio'
+    assert captured['params'] is None
+
+
+def test_get_portfolio_uses_real_portfolio_endpoint(monkeypatch):
+    settings = Settings(
+        ETORO_ENV='real',
+        ETORO_API_KEY='api-key',
+        ETORO_USER_KEY='user-key',
+    )
+
+    client = EtoroClient(settings=settings)
+    captured = {}
+
+    def fake_get(path, params=None):
+        captured['path'] = path
+        captured['params'] = params
+        return {'clientPortfolio': {'positions': []}}
+
+    monkeypatch.setattr(client, '_get', fake_get)
+
+    result = client.get_portfolio()
+
+    assert result == {'clientPortfolio': {'positions': []}}
+    assert captured['path'] == '/api/v1/trading/info/portfolio'
+    assert captured['params'] is None
 
 
 def test_etoro_open_position_sends_expected_demo_order_payload(monkeypatch):
@@ -333,7 +405,7 @@ def test_etoro_open_position_sends_expected_demo_order_payload(monkeypatch):
     assert client.position_instruments['9001'] == 100000
 
 
-def test_etoro_close_position_sends_expected_payload(monkeypatch):
+def test_etoro_close_position_sends_expected_payload_and_confirms_portfolio_closed(monkeypatch):
     settings = Settings(
         EAR_MODE='real',
         REAL_TRADING_ENABLED=True,
@@ -359,12 +431,16 @@ def test_etoro_close_position_sends_expected_payload(monkeypatch):
             'token': 'close-token',
         }
 
+    def fake_wait_until_position_closed(position_id):
+        assert position_id == '9001'
+
     def fail_if_called(order_id):
         raise AssertionError(
             'close order lookup should not be called for accepted demo close response'
         )
 
     monkeypatch.setattr(client, '_post', fake_post)
+    monkeypatch.setattr(client, '_wait_until_position_closed', fake_wait_until_position_closed)
     monkeypatch.setattr(client, '_wait_for_executed_order', fail_if_called)
 
     client.close_position('9001')
@@ -392,6 +468,7 @@ def test_etoro_close_position_falls_back_to_lookup_when_close_response_is_not_ac
     client.position_instruments['9001'] = 100000
     captured = {}
     waited_orders = []
+    confirmed_positions = []
 
     def fake_post(path, payload):
         captured['path'] = path
@@ -422,12 +499,16 @@ def test_etoro_close_position_falls_back_to_lookup_when_close_response_is_not_ac
             ],
         }
 
+    def fake_wait_until_position_closed(position_id):
+        confirmed_positions.append(position_id)
+
     monkeypatch.setattr(client, '_post', fake_post)
     monkeypatch.setattr(
         client,
         '_wait_for_executed_order',
         fake_wait_for_executed_order,
     )
+    monkeypatch.setattr(client, '_wait_until_position_closed', fake_wait_until_position_closed)
 
     client.close_position('9001')
 
@@ -439,6 +520,7 @@ def test_etoro_close_position_falls_back_to_lookup_when_close_response_is_not_ac
         'UnitsToDeduct': None,
     }
     assert waited_orders == ['362447424']
+    assert confirmed_positions == ['9001']
     assert '9001' not in client.position_instruments
 
 
@@ -762,3 +844,141 @@ def test_is_close_response_not_accepted_when_status_is_not_one():
         },
         '3549893989',
     )
+
+
+def test_contains_open_position_when_position_exists_in_client_portfolio():
+    settings = Settings(
+        ETORO_API_KEY='api-key',
+        ETORO_USER_KEY='user-key',
+    )
+
+    client = EtoroClient(settings=settings)
+
+    assert client._contains_open_position(
+        {
+            'clientPortfolio': {
+                'positions': [
+                    {
+                        'positionID': 3549893989,
+                        'instrumentID': 1001,
+                    }
+                ]
+            }
+        },
+        '3549893989',
+    )
+
+
+def test_contains_open_position_returns_false_when_position_is_missing():
+    settings = Settings(
+        ETORO_API_KEY='api-key',
+        ETORO_USER_KEY='user-key',
+    )
+
+    client = EtoroClient(settings=settings)
+
+    assert not client._contains_open_position(
+        {
+            'clientPortfolio': {
+                'positions': [
+                    {
+                        'positionID': 111,
+                        'instrumentID': 1001,
+                    }
+                ]
+            }
+        },
+        '3549893989',
+    )
+
+
+def test_contains_open_position_returns_false_when_position_is_explicitly_closed():
+    settings = Settings(
+        ETORO_API_KEY='api-key',
+        ETORO_USER_KEY='user-key',
+    )
+
+    client = EtoroClient(settings=settings)
+
+    assert not client._contains_open_position(
+        {
+            'clientPortfolio': {
+                'positions': [
+                    {
+                        'positionID': 3549893989,
+                        'instrumentID': 1001,
+                        'isOpen': False,
+                    }
+                ]
+            }
+        },
+        '3549893989',
+    )
+
+
+def test_is_position_open_reads_portfolio(monkeypatch):
+    settings = Settings(
+        ETORO_API_KEY='api-key',
+        ETORO_USER_KEY='user-key',
+    )
+
+    client = EtoroClient(settings=settings)
+
+    monkeypatch.setattr(
+        client,
+        'get_portfolio',
+        lambda: {
+            'clientPortfolio': {
+                'positions': [
+                    {
+                        'positionID': 3549893989,
+                        'instrumentID': 1001,
+                    }
+                ]
+            }
+        },
+    )
+
+    assert client.is_position_open('3549893989')
+
+
+def test_wait_until_position_closed_returns_when_position_disappears(monkeypatch):
+    settings = Settings(
+        ETORO_API_KEY='api-key',
+        ETORO_USER_KEY='user-key',
+    )
+
+    client = EtoroClient(settings=settings)
+    states = [True, False]
+
+    def fake_is_position_open(position_id):
+        assert position_id == '3549893989'
+        return states.pop(0)
+
+    monkeypatch.setattr(client, 'is_position_open', fake_is_position_open)
+
+    client._wait_until_position_closed(
+        position_id='3549893989',
+        attempts=2,
+        delay_seconds=0,
+    )
+
+    assert states == []
+
+
+def test_wait_until_position_closed_raises_when_position_stays_open(monkeypatch):
+    settings = Settings(
+        ETORO_API_KEY='api-key',
+        ETORO_USER_KEY='user-key',
+    )
+
+    client = EtoroClient(settings=settings)
+
+    monkeypatch.setattr(client, 'is_position_open', lambda position_id: True)
+
+    with pytest.raises(RuntimeError, match='still appears open'):
+        client._wait_until_position_closed(
+            position_id='3549893989',
+            attempts=2,
+            delay_seconds=0,
+        )

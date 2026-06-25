@@ -126,16 +126,20 @@ class EtoroClient(BrokerClient):
         close_order_id = self._extract_order_id(close_response)
 
         if self._is_close_response_accepted(close_response, position_id):
+            self._wait_until_position_closed(position_id)
+
             logger.info(
-                'eToro close accepted | position_id=%s | close_order_id=%s | response=%s',
+                'eToro close confirmed by portfolio | position_id=%s | close_order_id=%s | response=%s',
                 position_id,
                 close_order_id,
                 close_response,
             )
+
             self.position_instruments.pop(position_id, None)
             return
 
         close_details = self._wait_for_executed_order(close_order_id)
+        self._wait_until_position_closed(position_id)
 
         logger.info(
             'eToro close confirmed | position_id=%s | close_order_id=%s | details=%s',
@@ -154,6 +158,16 @@ class EtoroClient(BrokerClient):
             self._real_order_lookup_path(),
             params={'orderId': order_id},
         )
+
+    def get_portfolio(self) -> dict:
+        if self.settings.etoro_env == 'demo':
+            return self._get(self._demo_portfolio_path())
+
+        return self._get(self._real_portfolio_path())
+
+    def is_position_open(self, position_id: str) -> bool:
+        portfolio = self.get_portfolio()
+        return self._contains_open_position(portfolio, position_id)
 
     # -------------------------------------------------------------------------
     # HTTP helpers
@@ -253,6 +267,12 @@ class EtoroClient(BrokerClient):
 
     def _real_order_lookup_path(self) -> str:
         return '/api/v2/trading/info/orders:lookup'
+
+    def _demo_portfolio_path(self) -> str:
+        return '/api/v1/trading/info/demo/portfolio'
+
+    def _real_portfolio_path(self) -> str:
+        return '/api/v1/trading/info/portfolio'
 
     # -------------------------------------------------------------------------
     # Market data
@@ -391,6 +411,35 @@ class EtoroClient(BrokerClient):
 
         raise RuntimeError(f'eToro order was not executed after polling: order_id={order_id}')
 
+    def _wait_until_position_closed(
+        self,
+        position_id: str,
+        attempts: int = 10,
+        delay_seconds: float = 1.0,
+    ) -> None:
+        for attempt in range(1, attempts + 1):
+            if not self.is_position_open(position_id):
+                logger.info(
+                    'eToro position closure confirmed | position_id=%s | attempt=%s/%s',
+                    position_id,
+                    attempt,
+                    attempts,
+                )
+                return
+
+            logger.info(
+                'eToro position still open | position_id=%s | attempt=%s/%s',
+                position_id,
+                attempt,
+                attempts,
+            )
+
+            time.sleep(delay_seconds)
+
+        raise RuntimeError(
+            f'eToro position still appears open after close confirmation: position_id={position_id}'
+        )
+
     def _is_order_executed(self, payload: dict) -> bool:
         status = payload.get('status')
 
@@ -432,6 +481,65 @@ class EtoroClient(BrokerClient):
 
         return False
 
+    def _is_close_response_accepted(self, payload: dict, position_id: str) -> bool:
+        order_for_close = payload.get('orderForClose')
+
+        if not isinstance(order_for_close, dict):
+            return False
+
+        response_position_id = (
+            order_for_close.get('positionID')
+            or order_for_close.get('positionId')
+            or order_for_close.get('PositionID')
+            or order_for_close.get('PositionId')
+        )
+
+        if str(response_position_id) != str(position_id):
+            return False
+
+        status_id = order_for_close.get('statusID') or order_for_close.get('statusId')
+
+        return status_id == 1
+
+    def _contains_open_position(self, payload: dict, position_id: str) -> bool:
+        open_positions = self._extract_open_positions(payload)
+
+        for position in open_positions:
+            candidate_position_id = (
+                position.get('positionID')
+                or position.get('positionId')
+                or position.get('PositionID')
+                or position.get('PositionId')
+            )
+
+            if str(candidate_position_id) != str(position_id):
+                continue
+
+            is_open = position.get('isOpen')
+            if is_open is False:
+                return False
+
+            return True
+
+        return False
+
+    def _extract_open_positions(self, payload: dict) -> list[dict]:
+        client_portfolio = payload.get('clientPortfolio')
+        if isinstance(client_portfolio, dict):
+            positions = client_portfolio.get('positions')
+            if isinstance(positions, list):
+                return [position for position in positions if isinstance(position, dict)]
+
+        positions = payload.get('positions')
+        if isinstance(positions, list):
+            return [position for position in positions if isinstance(position, dict)]
+
+        data = payload.get('data')
+        if isinstance(data, dict):
+            return self._extract_open_positions(data)
+
+        return []
+
     def _extract_order_error_code(self, payload: dict) -> int | None:
         error_code = payload.get('errorCode')
 
@@ -459,26 +567,6 @@ class EtoroClient(BrokerClient):
                 return str(status_error_message)
 
         return None
-    
-    def _is_close_response_accepted(self, payload: dict, position_id: str) -> bool:
-        order_for_close = payload.get('orderForClose')
-
-        if not isinstance(order_for_close, dict):
-            return False
-
-        response_position_id = (
-            order_for_close.get('positionID')
-            or order_for_close.get('positionId')
-            or order_for_close.get('PositionID')
-            or order_for_close.get('PositionId')
-        )
-
-        if str(response_position_id) != str(position_id):
-            return False
-
-        status_id = order_for_close.get('statusID') or order_for_close.get('statusId')
-
-        return status_id == 1
 
     # -------------------------------------------------------------------------
     # Extractors
