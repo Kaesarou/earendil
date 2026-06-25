@@ -86,9 +86,7 @@ def process_symbol(
     close_signals = position_tracker.evaluate_snapshot(snapshot)
     for close_signal in close_signals:
         executor.close(close_signal.position_id)
-        closed_position = position_tracker.record_closed_position(
-            close_signal.position_id
-        )
+        closed_position = position_tracker.record_closed_position(close_signal)
         risk_manager.record_close_position(close_signal.symbol)
 
         trade_journal.write(
@@ -96,7 +94,7 @@ def process_symbol(
             {
                 'symbol': symbol,
                 'close_signal': close_signal,
-                'position': closed_position,
+                'closed_position': closed_position,
             },
         )
 
