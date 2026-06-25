@@ -34,8 +34,23 @@ class EtoroClient(BrokerClient):
     
     def _post(self, path: str, payload: dict) -> dict:
         url = f'{self.settings.etoro_api_base_url.rstrip("/")}/{path.lstrip("/")}'
-        response = requests.post(url, headers=self.headers, json=payload, timeout=10)
-        response.raise_for_status()
+
+        response = requests.post(
+            url,
+            headers=self.headers,
+            json=payload,
+            timeout=10,
+        )
+
+        if not response.ok:
+            logger.error(
+                'eToro POST failed | status=%s | url=%s | payload=%s | response=%s',
+                response.status_code,
+                url,
+                payload,
+                response.text,
+            )
+            response.raise_for_status()
 
         if not response.content:
             return {}
@@ -211,8 +226,7 @@ class EtoroClient(BrokerClient):
         payload = {
             'action': 'open',
             'transaction': 'buy',
-            'symbol': symbol,
-            'instrumentId': instrument_id,
+            'InstrumentID': instrument_id,
             'orderType': 'mkt',
             'leverage': 1,
             'amount': amount,
@@ -253,7 +267,7 @@ class EtoroClient(BrokerClient):
         }
 
         response = self._post(
-            f'/api/v1/trading/execution/market-close-orders/positions/{position_id}',
+            self._close_position_path(position_id),
             payload,
         )
 
@@ -274,6 +288,12 @@ class EtoroClient(BrokerClient):
             return '/api/v2/trading/execution/demo/orders'
 
         return '/api/v2/trading/execution/orders'
+    
+    def _close_position_path(self, position_id: str) -> str:
+        if self.settings.etoro_env == 'demo':
+            return f'/api/v1/trading/execution/demo/market-close-orders/positions/{position_id}'
+
+        return f'/api/v1/trading/execution/market-close-orders/positions/{position_id}'
 
     def _extract_position_id(self, payload: dict) -> str:
         for key in (

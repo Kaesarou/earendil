@@ -45,9 +45,9 @@ class PaperExecutor:
             take_profit=take_profit,
         )
 
-        logger.info('Paper position opened: %s', position_id)
+        logger.info('Position opened: %s', position_id)
         return position_id
     
     def close(self, position_id: str) -> None:
         self.broker.close_position(position_id)
-        logger.info('Paper position closed: %s', position_id)
+        logger.info('Position closed: %s', position_id)

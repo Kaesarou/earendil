@@ -190,8 +190,7 @@ def test_etoro_open_position_sends_expected_demo_order_payload(monkeypatch):
     assert captured['payload'] == {
         'action': 'open',
         'transaction': 'buy',
-        'symbol': 'BTC',
-        'instrumentId': 100000,
+        'InstrumentID': 100000,
         'orderType': 'mkt',
         'leverage': 1,
         'amount': 5.0,
@@ -228,3 +227,34 @@ def test_etoro_close_position_sends_expected_payload(monkeypatch):
         'UnitsToDeduct': None,
     }
     assert 'demo-position-1' not in client.position_instruments
+
+def test_etoro_close_position_path_uses_demo_endpoint_when_env_is_demo():
+    settings = Settings(
+        EAR_MODE='real',
+        REAL_TRADING_ENABLED=True,
+        ETORO_ENV='demo',
+        ETORO_API_KEY='api-key',
+        ETORO_USER_KEY='user-key',
+    )
+
+    client = EtoroClient(settings=settings)
+
+    assert client._close_position_path('123') == (
+        '/api/v1/trading/execution/demo/market-close-orders/positions/123'
+    )
+
+
+def test_etoro_close_position_path_uses_real_endpoint_when_env_is_real():
+    settings = Settings(
+        EAR_MODE='real',
+        REAL_TRADING_ENABLED=True,
+        ETORO_ENV='real',
+        ETORO_API_KEY='api-key',
+        ETORO_USER_KEY='user-key',
+    )
+
+    client = EtoroClient(settings=settings)
+
+    assert client._close_position_path('123') == (
+        '/api/v1/trading/execution/market-close-orders/positions/123'
+    )
