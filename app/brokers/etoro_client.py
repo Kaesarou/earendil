@@ -658,6 +658,8 @@ class EtoroClient(BrokerClient):
             'Balance',
             'cash',
             'Cash',
+            'credit',
+            'Credit',
             'availableBalance',
             'AvailableBalance',
             'availableCash',

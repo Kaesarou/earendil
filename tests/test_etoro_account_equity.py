@@ -109,3 +109,20 @@ def test_get_account_equity_uses_portfolio_payload(monkeypatch):
     )
 
     assert client.get_account_equity() == 43210.0
+
+def test_extract_account_equity_from_client_portfolio_credit():
+    client = build_client()
+
+    equity = client._extract_account_equity(
+        {
+            'clientPortfolio': {
+                'positions': [],
+                'mirrors': [],
+                'credit': 99973.89,
+                'orders': [],
+                'bonusCredit': 0.0,
+            }
+        }
+    )
+
+    assert equity == 99973.89
