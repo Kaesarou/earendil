@@ -5,6 +5,7 @@ from app.brokers.etoro_client import EtoroClient
 from app.brokers.fake_broker import FakeBrokerClient
 from app.config.settings import get_settings
 from app.execution.paper_executor import PaperExecutor
+from app.execution.position_tracker import PositionTracker
 from app.journal.jsonl_journal import JsonlJournal
 from app.market.candle_builder import CandleBuilder
 from app.market.service import MarketDataService
@@ -38,6 +39,7 @@ def main() -> None:
     strategy = BreakoutStrategy()
     risk_manager = RiskManager(settings)
     executor = PaperExecutor(execution_broker)
+    position_tracker = PositionTracker()
     trade_journal = JsonlJournal(settings.journal_path)
     market_journal = JsonlJournal(settings.market_log_path)
     candle_builder = CandleBuilder(timeframe_seconds=60)
@@ -47,6 +49,20 @@ def main() -> None:
         try:
             snapshot = market_data.snapshot(settings.default_symbol)
             market_journal.write('market_snapshot', {'snapshot': snapshot})
+
+            close_signals = position_tracker.evaluate_snapshot(snapshot)
+            for close_signal in close_signals:
+                executor.close(close_signal.position_id)
+                closed_position = position_tracker.record_closed_position(close_signal.position_id)
+                risk_manager.record_close_position()
+
+                trade_journal.write(
+                    'position_closed',
+                    {
+                        'close_signal': close_signal,
+                        'position': closed_position,
+                    },
+                )
 
             closed_candle = candle_builder.on_snapshot(snapshot)
             if closed_candle is not None:
@@ -79,11 +95,19 @@ def main() -> None:
 
                 position_id = executor.execute(plan)
                 if position_id:
+                    tracked_position = position_tracker.record_open_position(
+                        position_id=position_id,
+                        trade_plan=plan,
+                        entry_price=snapshot.last,
+                    )
+                
                     risk_manager.record_open_position()
+                
                     trade_journal.write(
                         'position_opened',
                         {
                             'position_id': position_id,
+                            'position': tracked_position,
                             'trade_plan': plan,
                         },
                     )
