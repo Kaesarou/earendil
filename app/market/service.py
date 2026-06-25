@@ -7,4 +7,7 @@ class MarketDataService:
         self.broker = broker
 
     def snapshot(self, symbol: str) -> MarketSnapshot:
+        return self.get_snapshot(symbol)
+
+    def get_snapshot(self, symbol: str) -> MarketSnapshot:
         return self.broker.get_market_snapshot(symbol)

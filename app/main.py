@@ -6,6 +6,7 @@ from app.brokers.fake_broker import FakeBrokerClient
 from app.config.settings import get_settings
 from app.execution.paper_executor import PaperExecutor
 from app.journal.jsonl_journal import JsonlJournal
+from app.market.candle_builder import CandleBuilder
 from app.market.service import MarketDataService
 from app.risk.risk_manager import RiskManager
 from app.strategies.breakout import BreakoutStrategy
@@ -39,11 +40,27 @@ def main() -> None:
     executor = PaperExecutor(execution_broker)
     trade_journal = JsonlJournal(settings.journal_path)
     market_journal = JsonlJournal(settings.market_log_path)
+    candle_builder = CandleBuilder(timeframe_seconds=60)
+    candle_journal = JsonlJournal('data/logs/candles.jsonl')
 
     while True:
         try:
             snapshot = market_data.snapshot(settings.default_symbol)
             market_journal.write('market_snapshot', {'snapshot': snapshot})
+
+            closed_candle = candle_builder.on_snapshot(snapshot)
+            if closed_candle is not None:
+                candle_journal.write('candle_closed', {'candle': closed_candle})
+                logger.info(
+                    'Candle closed | symbol=%s | open=%s | high=%s | low=%s | close=%s | opened_at=%s | closed_at=%s',
+                    closed_candle.symbol,
+                    closed_candle.open,
+                    closed_candle.high,
+                    closed_candle.low,
+                    closed_candle.close,
+                    closed_candle.opened_at.isoformat(),
+                    closed_candle.closed_at.isoformat(),
+                )
 
             signal = strategy.on_snapshot(snapshot)
             equity = execution_broker.get_account_equity()
