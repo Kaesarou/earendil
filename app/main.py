@@ -11,6 +11,7 @@ from app.journal.jsonl_journal import JsonlJournal
 from app.market.candle_builder import CandleBuilder
 from app.risk.position_sizing import build_position_sizing_strategy
 from app.risk.risk_manager import RiskManager
+from app.strategies.base import InvestmentStrategy
 from app.strategies.factory import build_investment_strategy
 from app.utils.logging import configure_logging
 
@@ -44,18 +45,147 @@ def build_risk_manager(settings: Settings) -> RiskManager:
     )
 
 
+def build_candle_builders(
+    settings: Settings,
+    symbols: list[str],
+) -> dict[str, CandleBuilder]:
+    return {
+        symbol: CandleBuilder(
+            timeframe_seconds=settings.candle_timeframe_seconds,
+        )
+        for symbol in symbols
+    }
+
+
+def build_strategies(
+    settings: Settings,
+    symbols: list[str],
+) -> dict[str, InvestmentStrategy]:
+    return {
+        symbol: build_investment_strategy(settings)
+        for symbol in symbols
+    }
+
+
+def process_symbol(
+    symbol: str,
+    market_data_broker: BrokerClient,
+    execution_broker: BrokerClient,
+    strategy: InvestmentStrategy,
+    risk_manager: RiskManager,
+    executor: TradeExecutor,
+    position_tracker: PositionTracker,
+    candle_builder: CandleBuilder,
+    trade_journal: JsonlJournal,
+    market_journal: JsonlJournal,
+    candle_journal: JsonlJournal,
+) -> None:
+    snapshot = market_data_broker.get_market_snapshot(symbol)
+    market_journal.write('market_snapshot', {'symbol': symbol, 'snapshot': snapshot})
+
+    close_signals = position_tracker.evaluate_snapshot(snapshot)
+    for close_signal in close_signals:
+        executor.close(close_signal.position_id)
+        closed_position = position_tracker.record_closed_position(
+            close_signal.position_id
+        )
+        risk_manager.record_close_position()
+
+        trade_journal.write(
+            'position_closed',
+            {
+                'symbol': symbol,
+                'close_signal': close_signal,
+                'position': closed_position,
+            },
+        )
+
+    closed_candle = candle_builder.on_snapshot(snapshot)
+    if closed_candle is None:
+        return
+
+    candle_journal.write(
+        'candle_closed',
+        {
+            'symbol': symbol,
+            'candle': closed_candle,
+        },
+    )
+
+    logger.info(
+        'Candle closed | symbol=%s | open=%s | high=%s | low=%s | close=%s | opened_at=%s | closed_at=%s',
+        closed_candle.symbol,
+        closed_candle.open,
+        closed_candle.high,
+        closed_candle.low,
+        closed_candle.close,
+        closed_candle.opened_at.isoformat(),
+        closed_candle.closed_at.isoformat(),
+    )
+
+    signal = strategy.on_candle(closed_candle)
+    logger.info(
+        'Strategy signal | symbol=%s | action=%s | confidence=%s | reason=%s | candle_close=%s',
+        symbol,
+        signal.action,
+        signal.confidence,
+        signal.reason,
+        closed_candle.close,
+    )
+
+    equity = execution_broker.get_account_equity()
+    plan = risk_manager.evaluate(signal, snapshot, equity)
+
+    trade_journal.write(
+        'decision',
+        {
+            'symbol': symbol,
+            'snapshot': snapshot,
+            'candle': closed_candle,
+            'signal': signal,
+            'equity': equity,
+            'trade_plan': plan,
+        },
+    )
+
+    position_id = executor.execute(plan)
+    if not position_id:
+        return
+
+    tracked_position = position_tracker.record_open_position(
+        position_id=position_id,
+        trade_plan=plan,
+        entry_price=snapshot.last,
+    )
+
+    risk_manager.record_open_position()
+
+    trade_journal.write(
+        'position_opened',
+        {
+            'symbol': symbol,
+            'position_id': position_id,
+            'position': tracked_position,
+            'trade_plan': plan,
+        },
+    )
+
+
 def main() -> None:
     settings = get_settings()
     configure_logging(settings.log_level)
 
+    symbols = settings.watchlist_symbols()
+
     logger.info(
-        'Starting Eärendil | mode=%s | broker=%s | etoro_env=%s | real_trading_enabled=%s | strategy=%s | risk_strategy=%s',
+        'Starting Eärendil | mode=%s | broker=%s | etoro_env=%s | real_trading_enabled=%s | strategy=%s | risk_strategy=%s | watchlist=%s',
         settings.ear_mode,
         settings.broker,
         settings.etoro_env,
         settings.real_trading_enabled,
         settings.investment_strategy,
         settings.risk_strategy,
+        symbols,
     )
 
     if settings.ear_mode == 'real' and not settings.real_trading_enabled:
@@ -66,7 +196,9 @@ def main() -> None:
     market_data_broker = build_market_data_broker(settings)
     execution_broker = build_execution_broker(settings)
 
-    strategy = build_investment_strategy(settings)
+    strategies = build_strategies(settings, symbols)
+    candle_builders = build_candle_builders(settings, symbols)
+
     risk_manager = build_risk_manager(settings)
     executor = TradeExecutor(execution_broker)
     position_tracker = PositionTracker()
@@ -75,88 +207,21 @@ def main() -> None:
     market_journal = JsonlJournal(settings.market_log_path)
     candle_journal = JsonlJournal(settings.candle_journal_path)
 
-    candle_builder = CandleBuilder(
-        timeframe_seconds=settings.candle_timeframe_seconds,
-    )
-
     while True:
         try:
-            snapshot = market_data_broker.get_market_snapshot(settings.default_symbol)
-            market_journal.write('market_snapshot', {'snapshot': snapshot})
-
-            close_signals = position_tracker.evaluate_snapshot(snapshot)
-            for close_signal in close_signals:
-                executor.close(close_signal.position_id)
-                closed_position = position_tracker.record_closed_position(
-                    close_signal.position_id
-                )
-                risk_manager.record_close_position()
-
-                trade_journal.write(
-                    'position_closed',
-                    {
-                        'close_signal': close_signal,
-                        'position': closed_position,
-                    },
-                )
-
-            closed_candle = candle_builder.on_snapshot(snapshot)
-            if closed_candle is None:
-                time.sleep(settings.poll_interval_seconds)
-                continue
-
-            candle_journal.write('candle_closed', {'candle': closed_candle})
-            logger.info(
-                'Candle closed | symbol=%s | open=%s | high=%s | low=%s | close=%s | opened_at=%s | closed_at=%s',
-                closed_candle.symbol,
-                closed_candle.open,
-                closed_candle.high,
-                closed_candle.low,
-                closed_candle.close,
-                closed_candle.opened_at.isoformat(),
-                closed_candle.closed_at.isoformat(),
-            )
-
-            signal = strategy.on_candle(closed_candle)
-            logger.info(
-                'Strategy signal | action=%s | confidence=%s | reason=%s | candle_close=%s',
-                signal.action,
-                signal.confidence,
-                signal.reason,
-                closed_candle.close,
-            )
-
-            equity = execution_broker.get_account_equity()
-            plan = risk_manager.evaluate(signal, snapshot, equity)
-
-            trade_journal.write(
-                'decision',
-                {
-                    'snapshot': snapshot,
-                    'candle': closed_candle,
-                    'signal': signal,
-                    'equity': equity,
-                    'trade_plan': plan,
-                },
-            )
-
-            position_id = executor.execute(plan)
-            if position_id:
-                tracked_position = position_tracker.record_open_position(
-                    position_id=position_id,
-                    trade_plan=plan,
-                    entry_price=snapshot.last,
-                )
-
-                risk_manager.record_open_position()
-
-                trade_journal.write(
-                    'position_opened',
-                    {
-                        'position_id': position_id,
-                        'position': tracked_position,
-                        'trade_plan': plan,
-                    },
+            for symbol in symbols:
+                process_symbol(
+                    symbol=symbol,
+                    market_data_broker=market_data_broker,
+                    execution_broker=execution_broker,
+                    strategy=strategies[symbol],
+                    risk_manager=risk_manager,
+                    executor=executor,
+                    position_tracker=position_tracker,
+                    candle_builder=candle_builders[symbol],
+                    trade_journal=trade_journal,
+                    market_journal=market_journal,
+                    candle_journal=candle_journal,
                 )
 
         except KeyboardInterrupt:

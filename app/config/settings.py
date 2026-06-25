@@ -24,6 +24,7 @@ class Settings(BaseSettings):
     etoro_user_key: str = Field(default='', alias='ETORO_USER_KEY')
 
     default_symbol: str = Field(default='BTC', alias='DEFAULT_SYMBOL')
+    watchlist: str = Field(default='', alias='WATCHLIST')
     base_currency: str = Field(default='USD', alias='BASE_CURRENCY')
 
     investment_strategy: str = Field(default='breakout', alias='INVESTMENT_STRATEGY')
@@ -56,6 +57,29 @@ class Settings(BaseSettings):
         default='data/logs/candles.jsonl',
         alias='CANDLE_JOURNAL_PATH',
     )
+
+    def watchlist_symbols(self) -> list[str]:
+        raw_symbols = self.watchlist if self.watchlist.strip() else self.default_symbol
+
+        symbols: list[str] = []
+        seen_symbols: set[str] = set()
+
+        for raw_symbol in raw_symbols.split(','):
+            symbol = raw_symbol.strip().upper()
+
+            if not symbol:
+                continue
+
+            if symbol in seen_symbols:
+                continue
+
+            symbols.append(symbol)
+            seen_symbols.add(symbol)
+
+        if not symbols:
+            raise ValueError('Watchlist cannot be empty.')
+
+        return symbols
 
 
 def get_settings() -> Settings:
