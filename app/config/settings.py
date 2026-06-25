@@ -6,6 +6,7 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file='.env', env_file_encoding='utf-8', extra='ignore')
 
     ear_mode: str = Field(default='paper', alias='EAR_MODE')
+    real_trading_enabled: bool = Field(default=False, alias='REAL_TRADING_ENABLED')
     log_level: str = Field(default='INFO', alias='LOG_LEVEL')
     poll_interval_seconds: int = Field(default=60, alias='POLL_INTERVAL_SECONDS')
 

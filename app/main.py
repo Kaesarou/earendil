@@ -36,7 +36,7 @@ def main() -> None:
     execution_broker = build_broker(settings)
     market_data_broker = build_market_data_broker(settings)
     market_data = MarketDataService(market_data_broker)
-    strategy = BreakoutStrategy()
+    strategy = BreakoutStrategy(lookback=1, min_breakout_percent=0.0)
     risk_manager = RiskManager(settings)
     executor = PaperExecutor(execution_broker)
     position_tracker = PositionTracker()

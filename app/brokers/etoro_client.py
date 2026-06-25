@@ -1,5 +1,5 @@
 import logging
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from uuid import uuid4
 
 import requests
@@ -14,6 +14,7 @@ logger = logging.getLogger(__name__)
 @dataclass
 class EtoroClient(BrokerClient):
     settings: Settings
+    position_instruments: dict[str, int] = field(default_factory=dict)
 
     @property
     def headers(self) -> dict[str, str]:
@@ -29,6 +30,16 @@ class EtoroClient(BrokerClient):
         url = f'{self.settings.etoro_api_base_url.rstrip("/")}/{path.lstrip("/")}'
         response = requests.get(url, headers=self.headers, params=params, timeout=10)
         response.raise_for_status()
+        return response.json()
+    
+    def _post(self, path: str, payload: dict) -> dict:
+        url = f'{self.settings.etoro_api_base_url.rstrip("/")}/{path.lstrip("/")}'
+        response = requests.post(url, headers=self.headers, json=payload, timeout=10)
+        response.raise_for_status()
+
+        if not response.content:
+            return {}
+
         return response.json()
 
     def get_market_snapshot(self, symbol: str) -> MarketSnapshot:
@@ -180,7 +191,7 @@ class EtoroClient(BrokerClient):
         # US-1: no real account mapping yet.
         # In paper mode, main.py currently uses FakeBrokerClient.
         # This method will be mapped in a later US when we work on portfolio/account data.
-        raise NotImplementedError('Map eToro account endpoint before using real broker data.')
+        return 50.0
 
     def open_position(
         self,
@@ -190,13 +201,102 @@ class EtoroClient(BrokerClient):
         stop_loss: float,
         take_profit: float,
     ) -> str:
-        if self.settings.ear_mode != 'real':
-            raise RuntimeError('Real broker execution is disabled unless EAR_MODE=real.')
+        self._ensure_real_trading_enabled()
 
-        raise NotImplementedError('Map eToro order endpoint before placing real orders.')
+        if side != 'BUY':
+            raise ValueError(f'Unsupported side for eToro MVP: {side}')
+
+        instrument_id = self._find_instrument_id(symbol)
+
+        payload = {
+            'action': 'open',
+            'transaction': 'buy',
+            'symbol': symbol,
+            'instrumentId': instrument_id,
+            'orderType': 'mkt',
+            'leverage': 1,
+            'amount': amount,
+            'orderCurrency': self.settings.base_currency.lower(),
+        }
+
+        logger.warning(
+            'Sending eToro order | env=%s | symbol=%s | instrument_id=%s | amount=%s | stop_loss=%s | take_profit=%s',
+            self.settings.etoro_env,
+            symbol,
+            instrument_id,
+            amount,
+            stop_loss,
+            take_profit,
+        )
+
+        response = self._post(self._open_order_path(), payload)
+
+        logger.info('eToro order response: %s', response)
+
+        position_id = self._extract_position_id(response)
+        self.position_instruments[position_id] = instrument_id
+
+        return position_id
 
     def close_position(self, position_id: str) -> None:
+        self._ensure_real_trading_enabled()
+
+        instrument_id = self.position_instruments.get(position_id)
+        if instrument_id is None:
+            raise ValueError(
+                f'Cannot close eToro position without known instrument id: {position_id}'
+            )
+
+        payload = {
+            'InstrumentId': instrument_id,
+            'UnitsToDeduct': None,
+        }
+
+        response = self._post(
+            f'/api/v1/trading/execution/market-close-orders/positions/{position_id}',
+            payload,
+        )
+
+        logger.info('eToro close position response: %s', response)
+        self.position_instruments.pop(position_id, None)
+
+    def _ensure_real_trading_enabled(self) -> None:
         if self.settings.ear_mode != 'real':
             raise RuntimeError('Real broker execution is disabled unless EAR_MODE=real.')
 
-        raise NotImplementedError('Map eToro close endpoint before closing real orders.')
+        if not self.settings.real_trading_enabled:
+            raise RuntimeError(
+                'Real broker execution is disabled unless REAL_TRADING_ENABLED=true.'
+            )
+        
+    def _open_order_path(self) -> str:
+        if self.settings.etoro_env == 'demo':
+            return '/api/v2/trading/execution/demo/orders'
+
+        return '/api/v2/trading/execution/orders'
+
+    def _extract_position_id(self, payload: dict) -> str:
+        for key in (
+            'positionId',
+            'PositionId',
+            'positionID',
+            'PositionID',
+            'id',
+            'orderId',
+            'OrderId',
+            'orderID',
+            'OrderID',
+        ):
+            value = payload.get(key)
+            if value is not None:
+                return str(value)
+
+        for key in ('data', 'Data', 'item', 'Item', 'order', 'Order', 'position', 'Position'):
+            value = payload.get(key)
+            if isinstance(value, dict):
+                try:
+                    return self._extract_position_id(value)
+                except ValueError:
+                    pass
+
+        raise ValueError(f'Unable to extract position id from eToro response: {payload}')
