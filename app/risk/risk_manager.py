@@ -1,3 +1,4 @@
+from collections import defaultdict
 from datetime import datetime
 
 from app.config.settings import Settings
@@ -17,6 +18,7 @@ class RiskManager:
         self.position_sizing_strategy = position_sizing_strategy
         self.trades_today = 0
         self.open_positions = 0
+        self.open_positions_by_symbol: dict[str, int] = defaultdict(int)
 
     def evaluate(
         self,
@@ -24,7 +26,7 @@ class RiskManager:
         snapshot: MarketSnapshot,
         account_equity: float,
     ) -> TradePlan:
-        rejection_reason = self._rejection_reason(signal)
+        rejection_reason = self._rejection_reason(signal, snapshot.symbol)
         if rejection_reason is not None:
             return TradePlan(approved=False, reason=rejection_reason)
 
@@ -45,19 +47,42 @@ class RiskManager:
 
         return TradePlan(approved=False, reason=f'unsupported_signal_{signal.action}')
 
-    def record_open_position(self) -> None:
+    def record_open_position(self, symbol: str) -> None:
+        normalized_symbol = self._normalize_symbol(symbol)
         self.open_positions += 1
+        self.open_positions_by_symbol[normalized_symbol] += 1
         self.trades_today += 1
 
-    def record_close_position(self) -> None:
+    def record_close_position(self, symbol: str) -> None:
+        normalized_symbol = self._normalize_symbol(symbol)
+
         self.open_positions = max(0, self.open_positions - 1)
 
-    def _rejection_reason(self, signal: Signal) -> str | None:
+        current_symbol_positions = self.open_positions_by_symbol.get(
+            normalized_symbol,
+            0,
+        )
+        next_symbol_positions = max(0, current_symbol_positions - 1)
+
+        if next_symbol_positions == 0:
+            self.open_positions_by_symbol.pop(normalized_symbol, None)
+            return
+
+        self.open_positions_by_symbol[normalized_symbol] = next_symbol_positions
+
+    def _rejection_reason(self, signal: Signal, symbol: str) -> str | None:
         if signal.action == 'HOLD':
             return signal.reason
 
         if self.open_positions >= self.settings.max_open_positions:
             return 'max_open_positions_reached'
+
+        normalized_symbol = self._normalize_symbol(symbol)
+        if (
+            self.open_positions_by_symbol.get(normalized_symbol, 0)
+            >= self.settings.max_open_positions_per_symbol
+            ):
+            return 'max_open_positions_per_symbol_reached'
 
         if self.trades_today >= self.settings.max_trades_per_day:
             return 'max_trades_per_day_reached'
@@ -89,3 +114,6 @@ class RiskManager:
             stop_loss=round(stop_loss, 2),
             take_profit=round(take_profit, 2),
         )
+
+    def _normalize_symbol(self, symbol: str) -> str:
+        return symbol.strip().upper()

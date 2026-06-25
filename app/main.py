@@ -89,7 +89,7 @@ def process_symbol(
         closed_position = position_tracker.record_closed_position(
             close_signal.position_id
         )
-        risk_manager.record_close_position()
+        risk_manager.record_close_position(close_signal.symbol)
 
         trade_journal.write(
             'position_closed',
@@ -158,7 +158,7 @@ def process_symbol(
         entry_price=snapshot.last,
     )
 
-    risk_manager.record_open_position()
+    risk_manager.record_open_position(symbol)
 
     trade_journal.write(
         'position_opened',

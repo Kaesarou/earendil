@@ -36,6 +36,10 @@ class Settings(BaseSettings):
 
     risk_strategy: str = Field(default='fixed_percent', alias='RISK_STRATEGY')
     max_open_positions: int = Field(default=1, alias='MAX_OPEN_POSITIONS')
+    max_open_positions_per_symbol: int = Field(
+        default=1,
+        alias='MAX_OPEN_POSITIONS_PER_SYMBOL',
+    )
     max_trades_per_day: int = Field(default=3, alias='MAX_TRADES_PER_DAY')
     max_position_size_percent: float = Field(
         default=20.0,
