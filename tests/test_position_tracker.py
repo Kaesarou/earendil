@@ -1,6 +1,6 @@
 from app.execution.position_tracker import PositionTracker
 from app.market.models import MarketSnapshot
-from app.risk.risk_manager import TradePlan
+from app.risk.models import TradePlan
 
 
 def buy_plan() -> TradePlan:

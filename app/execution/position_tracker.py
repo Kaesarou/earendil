@@ -1,11 +1,11 @@
 from dataclasses import dataclass
 
 from app.market.models import MarketSnapshot
-from app.risk.risk_manager import TradePlan
+from app.risk.models import TradePlan
 
 
 @dataclass(frozen=True)
-class PaperPosition:
+class TrackedPosition:
     position_id: str
     symbol: str
     side: str
@@ -26,14 +26,14 @@ class PositionCloseSignal:
 
 class PositionTracker:
     def __init__(self):
-        self.positions: dict[str, PaperPosition] = {}
+        self.positions: dict[str, TrackedPosition] = {}
 
     def record_open_position(
         self,
         position_id: str,
         trade_plan: TradePlan,
         entry_price: float,
-    ) -> PaperPosition:
+    ) -> TrackedPosition:
         if not trade_plan.symbol:
             raise ValueError(f'Cannot track position without symbol: {trade_plan}')
 
@@ -49,7 +49,7 @@ class PositionTracker:
         if trade_plan.take_profit is None:
             raise ValueError(f'Cannot track position without take_profit: {trade_plan}')
 
-        position = PaperPosition(
+        position = TrackedPosition(
             position_id=position_id,
             symbol=trade_plan.symbol,
             side=trade_plan.side,
@@ -70,32 +70,39 @@ class PositionTracker:
                 continue
 
             if position.side == 'BUY':
-                if snapshot.last <= position.stop_loss:
-                    close_signals.append(
-                        PositionCloseSignal(
-                            position_id=position.position_id,
-                            symbol=position.symbol,
-                            side=position.side,
-                            exit_price=snapshot.last,
-                            reason='stop_loss_hit',
-                        )
-                    )
-
-                elif snapshot.last >= position.take_profit:
-                    close_signals.append(
-                        PositionCloseSignal(
-                            position_id=position.position_id,
-                            symbol=position.symbol,
-                            side=position.side,
-                            exit_price=snapshot.last,
-                            reason='take_profit_hit',
-                        )
-                    )
+                close_signal = self._evaluate_buy_position(position, snapshot)
+                if close_signal is not None:
+                    close_signals.append(close_signal)
 
         return close_signals
 
-    def record_closed_position(self, position_id: str) -> PaperPosition | None:
+    def record_closed_position(self, position_id: str) -> TrackedPosition | None:
         return self.positions.pop(position_id, None)
 
     def has_open_positions(self) -> bool:
         return bool(self.positions)
+
+    def _evaluate_buy_position(
+        self,
+        position: TrackedPosition,
+        snapshot: MarketSnapshot,
+    ) -> PositionCloseSignal | None:
+        if snapshot.last <= position.stop_loss:
+            return PositionCloseSignal(
+                position_id=position.position_id,
+                symbol=position.symbol,
+                side=position.side,
+                exit_price=snapshot.last,
+                reason='stop_loss_hit',
+            )
+
+        if snapshot.last >= position.take_profit:
+            return PositionCloseSignal(
+                position_id=position.position_id,
+                symbol=position.symbol,
+                side=position.side,
+                exit_price=snapshot.last,
+                reason='take_profit_hit',
+            )
+
+        return None

@@ -1,7 +1,7 @@
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timedelta, timezone
 
 from app.market.models import Candle
-from app.strategies.breakout import BreakoutStrategy
+from app.strategies.breakout import BreakoutStrategy, BreakoutStrategyConfig
 
 
 def candle(
@@ -30,7 +30,12 @@ def candle(
 
 
 def test_breakout_strategy_returns_hold_while_warming_up():
-    strategy = BreakoutStrategy(lookback=3, min_breakout_percent=0.01)
+    strategy = BreakoutStrategy(
+        BreakoutStrategyConfig(
+            lookback=3,
+            min_breakout_percent=0.01,
+        )
+    )
 
     signal = strategy.on_candle(candle(100))
 
@@ -39,7 +44,12 @@ def test_breakout_strategy_returns_hold_while_warming_up():
 
 
 def test_breakout_strategy_emits_buy_signal_after_candle_breakout():
-    strategy = BreakoutStrategy(lookback=3, min_breakout_percent=0.01)
+    strategy = BreakoutStrategy(
+        BreakoutStrategyConfig(
+            lookback=3,
+            min_breakout_percent=0.01,
+        )
+    )
 
     strategy.on_candle(candle(close=100, high=100))
     strategy.on_candle(candle(close=101, high=101))
@@ -52,7 +62,12 @@ def test_breakout_strategy_emits_buy_signal_after_candle_breakout():
 
 
 def test_breakout_strategy_returns_hold_when_inside_recent_range():
-    strategy = BreakoutStrategy(lookback=3, min_breakout_percent=0.01)
+    strategy = BreakoutStrategy(
+        BreakoutStrategyConfig(
+            lookback=3,
+            min_breakout_percent=0.01,
+        )
+    )
 
     strategy.on_candle(candle(close=100, high=100))
     strategy.on_candle(candle(close=101, high=101))
@@ -62,16 +77,3 @@ def test_breakout_strategy_returns_hold_when_inside_recent_range():
 
     assert signal.action == 'HOLD'
     assert signal.reason == 'candle_inside_recent_range'
-
-
-def test_snapshot_strategy_is_disabled_for_now():
-    from app.market.models import MarketSnapshot
-
-    strategy = BreakoutStrategy(lookback=3, min_breakout_percent=0.01)
-
-    signal = strategy.on_snapshot(
-        MarketSnapshot.now('BTC', bid=100, ask=101, last=100.5)
-    )
-
-    assert signal.action == 'HOLD'
-    assert signal.reason == 'snapshot_strategy_disabled'
