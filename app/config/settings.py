@@ -34,6 +34,19 @@ class Settings(BaseSettings):
         alias='BREAKOUT_MIN_BREAKOUT_PERCENT',
     )
 
+    breakout_require_green_candle: bool = Field(
+        default=True,
+        alias='BREAKOUT_REQUIRE_GREEN_CANDLE',
+    )
+    breakout_min_close_position_percent: float = Field(
+        default=70.0,
+        alias='BREAKOUT_MIN_CLOSE_POSITION_PERCENT',
+    )
+    breakout_min_candle_range_percent: float = Field(
+        default=0.05,
+        alias='BREAKOUT_MIN_CANDLE_RANGE_PERCENT',
+    )
+
     risk_strategy: str = Field(default='fixed_percent', alias='RISK_STRATEGY')
     max_open_positions: int = Field(default=1, alias='MAX_OPEN_POSITIONS')
     max_open_positions_per_symbol: int = Field(
