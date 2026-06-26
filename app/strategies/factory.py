@@ -1,6 +1,10 @@
 from app.config.settings import Settings
 from app.strategies.base import InvestmentStrategy
 from app.strategies.breakout import BreakoutStrategy, BreakoutStrategyConfig
+from app.strategies.intraday_trend import (
+    IntradayTrendStrategy,
+    IntradayTrendStrategyConfig,
+)
 
 
 def build_investment_strategy(settings: Settings) -> InvestmentStrategy:
@@ -15,6 +19,21 @@ def build_investment_strategy(settings: Settings) -> InvestmentStrategy:
                 require_uptrend=settings.breakout_require_uptrend,
                 trend_fast_lookback=settings.breakout_trend_fast_lookback,
                 trend_slow_lookback=settings.breakout_trend_slow_lookback,
+            )
+        )
+
+    if settings.investment_strategy == 'intraday_trend':
+        return IntradayTrendStrategy(
+            IntradayTrendStrategyConfig(
+                lookback=settings.intraday_trend_lookback,
+                fast_lookback=settings.intraday_trend_fast_lookback,
+                slow_lookback=settings.intraday_trend_slow_lookback,
+                session_lookback=settings.intraday_trend_session_lookback,
+                min_session_move_percent=settings.intraday_trend_min_session_move_percent,
+                min_breakout_percent=settings.intraday_trend_min_breakout_percent,
+                min_candle_range_percent=settings.intraday_trend_min_candle_range_percent,
+                min_close_position_percent=settings.intraday_trend_min_close_position_percent,
+                allow_short=settings.intraday_trend_allow_short,
             )
         )
 

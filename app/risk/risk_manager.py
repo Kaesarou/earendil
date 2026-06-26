@@ -38,33 +38,30 @@ class RiskManager:
         if amount <= 0:
             return TradePlan(approved=False, reason='invalid_position_amount')
 
-        if signal.action == 'BUY':
-            expected_gross_profit = self._calculate_expected_gross_profit(amount)
-            estimated_fees = self.settings.estimated_round_trip_fees
-            expected_net_profit = expected_gross_profit - estimated_fees
+        expected_gross_profit = self._calculate_expected_gross_profit(amount)
+        estimated_fees = self.settings.estimated_round_trip_fees
+        expected_net_profit = expected_gross_profit - estimated_fees
 
-            if expected_net_profit < self.settings.min_expected_net_profit:
-                return TradePlan(
-                    approved=False,
-                    reason='expected_profit_too_low_after_fees',
-                    symbol=snapshot.symbol,
-                    side='BUY',
-                    amount=round(amount, 4),
-                    expected_gross_profit=round(expected_gross_profit, 4),
-                    estimated_fees=round(estimated_fees, 4),
-                    expected_net_profit=round(expected_net_profit, 4),
-                )
-
-            return self._build_buy_plan(
-                signal=signal,
-                snapshot=snapshot,
-                amount=amount,
-                expected_gross_profit=expected_gross_profit,
-                estimated_fees=estimated_fees,
-                expected_net_profit=expected_net_profit,
+        if expected_net_profit < self.settings.min_expected_net_profit:
+            return TradePlan(
+                approved=False,
+                reason='expected_profit_too_low_after_fees',
+                symbol=snapshot.symbol,
+                side=signal.action,
+                amount=round(amount, 4),
+                expected_gross_profit=round(expected_gross_profit, 4),
+                estimated_fees=round(estimated_fees, 4),
+                expected_net_profit=round(expected_net_profit, 4),
             )
 
-        return TradePlan(approved=False, reason=f'unsupported_signal_{signal.action}')
+        return self._build_trade_plan(
+            signal=signal,
+            snapshot=snapshot,
+            amount=amount,
+            expected_gross_profit=expected_gross_profit,
+            estimated_fees=estimated_fees,
+            expected_net_profit=expected_net_profit,
+        )
 
     def record_open_position(self, symbol: str) -> None:
         normalized_symbol = self._normalize_symbol(symbol)
@@ -93,6 +90,12 @@ class RiskManager:
         if signal.action == 'HOLD':
             return signal.reason
 
+        if signal.action not in ('BUY', 'SELL'):
+            return f'unsupported_signal_{signal.action}'
+
+        if signal.action == 'SELL' and not self.settings.short_selling_enabled:
+            return 'short_selling_disabled'
+
         if self.open_positions >= self.settings.max_open_positions:
             return 'max_open_positions_reached'
 
@@ -115,7 +118,7 @@ class RiskManager:
 
         return None
 
-    def _build_buy_plan(
+    def _build_trade_plan(
         self,
         signal: Signal,
         snapshot: MarketSnapshot,
@@ -124,17 +127,23 @@ class RiskManager:
         estimated_fees: float,
         expected_net_profit: float,
     ) -> TradePlan:
-        stop_loss = snapshot.last * (1 - self.settings.stop_loss_percent / 100)
-        take_profit = snapshot.last * (1 + self.settings.take_profit_percent / 100)
+        if signal.action == 'BUY':
+            stop_loss = snapshot.last * (1 - self.settings.stop_loss_percent / 100)
+            take_profit = snapshot.last * (1 + self.settings.take_profit_percent / 100)
+        elif signal.action == 'SELL':
+            stop_loss = snapshot.last * (1 + self.settings.stop_loss_percent / 100)
+            take_profit = snapshot.last * (1 - self.settings.take_profit_percent / 100)
+        else:
+            raise ValueError(f'Unsupported signal action for trade plan: {signal.action}')
 
         return TradePlan(
             approved=True,
             reason=signal.reason,
             symbol=snapshot.symbol,
-            side='BUY',
+            side=signal.action,
             amount=round(amount, 4),
-            stop_loss=round(stop_loss, 2),
-            take_profit=round(take_profit, 2),
+            stop_loss=round(stop_loss, 5),
+            take_profit=round(take_profit, 5),
             expected_gross_profit=round(expected_gross_profit, 4),
             estimated_fees=round(estimated_fees, 4),
             expected_net_profit=round(expected_net_profit, 4),

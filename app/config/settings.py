@@ -28,12 +28,12 @@ class Settings(BaseSettings):
     base_currency: str = Field(default='USD', alias='BASE_CURRENCY')
 
     investment_strategy: str = Field(default='breakout', alias='INVESTMENT_STRATEGY')
+
     breakout_lookback: int = Field(default=3, alias='BREAKOUT_LOOKBACK')
     breakout_min_breakout_percent: float = Field(
         default=0.05,
         alias='BREAKOUT_MIN_BREAKOUT_PERCENT',
     )
-
     breakout_require_green_candle: bool = Field(
         default=True,
         alias='BREAKOUT_REQUIRE_GREEN_CANDLE',
@@ -46,7 +46,6 @@ class Settings(BaseSettings):
         default=0.05,
         alias='BREAKOUT_MIN_CANDLE_RANGE_PERCENT',
     )
-
     breakout_require_uptrend: bool = Field(
         default=False,
         alias='BREAKOUT_REQUIRE_UPTREND',
@@ -58,6 +57,43 @@ class Settings(BaseSettings):
     breakout_trend_slow_lookback: int = Field(
         default=15,
         alias='BREAKOUT_TREND_SLOW_LOOKBACK',
+    )
+
+    intraday_trend_lookback: int = Field(
+        default=3,
+        alias='INTRADAY_TREND_LOOKBACK',
+    )
+    intraday_trend_fast_lookback: int = Field(
+        default=5,
+        alias='INTRADAY_TREND_FAST_LOOKBACK',
+    )
+    intraday_trend_slow_lookback: int = Field(
+        default=15,
+        alias='INTRADAY_TREND_SLOW_LOOKBACK',
+    )
+    intraday_trend_session_lookback: int = Field(
+        default=30,
+        alias='INTRADAY_TREND_SESSION_LOOKBACK',
+    )
+    intraday_trend_min_session_move_percent: float = Field(
+        default=0.15,
+        alias='INTRADAY_TREND_MIN_SESSION_MOVE_PERCENT',
+    )
+    intraday_trend_min_breakout_percent: float = Field(
+        default=0.05,
+        alias='INTRADAY_TREND_MIN_BREAKOUT_PERCENT',
+    )
+    intraday_trend_min_candle_range_percent: float = Field(
+        default=0.04,
+        alias='INTRADAY_TREND_MIN_CANDLE_RANGE_PERCENT',
+    )
+    intraday_trend_min_close_position_percent: float = Field(
+        default=70.0,
+        alias='INTRADAY_TREND_MIN_CLOSE_POSITION_PERCENT',
+    )
+    intraday_trend_allow_short: bool = Field(
+        default=False,
+        alias='INTRADAY_TREND_ALLOW_SHORT',
     )
 
     risk_strategy: str = Field(default='fixed_percent', alias='RISK_STRATEGY')
@@ -81,6 +117,16 @@ class Settings(BaseSettings):
         default=0.0,
         alias='MIN_EXPECTED_NET_PROFIT',
     )
+
+    short_selling_enabled: bool = Field(
+        default=False,
+        alias='SHORT_SELLING_ENABLED',
+    )
+    short_leverage: int = Field(
+        default=1,
+        alias='SHORT_LEVERAGE',
+    )
+
     force_close_hour: int = Field(default=21, alias='FORCE_CLOSE_HOUR')
     force_close_minute: int = Field(default=55, alias='FORCE_CLOSE_MINUTE')
 

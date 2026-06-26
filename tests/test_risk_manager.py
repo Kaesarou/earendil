@@ -11,6 +11,7 @@ def build_risk_manager(
     max_trades_per_day: int = 10,
     estimated_round_trip_fees: float = 0.0,
     min_expected_net_profit: float = 0.0,
+    short_selling_enabled: bool = False,
 ) -> RiskManager:
     settings = Settings(
         MAX_OPEN_POSITIONS=max_open_positions,
@@ -23,6 +24,7 @@ def build_risk_manager(
         MIN_EXPECTED_NET_PROFIT=min_expected_net_profit,
         FORCE_CLOSE_HOUR=23,
         FORCE_CLOSE_MINUTE=59,
+        SHORT_SELLING_ENABLED=short_selling_enabled,
     )
 
     return RiskManager(
@@ -47,6 +49,12 @@ def buy_signal() -> Signal:
         reason='test_buy',
     )
 
+def sell_signal() -> Signal:
+    return Signal(
+        action='SELL',
+        confidence=0.65,
+        reason='test_sell',
+    )
 
 def test_risk_manager_approves_buy_when_no_position_is_open():
     risk_manager = build_risk_manager()
@@ -228,3 +236,35 @@ def test_risk_manager_approves_when_expected_net_profit_matches_minimum():
     assert plan.expected_gross_profit == 0.2
     assert plan.estimated_fees == 0.05
     assert plan.expected_net_profit == 0.15
+
+def test_risk_manager_rejects_sell_when_short_selling_is_disabled():
+    risk_manager = build_risk_manager(short_selling_enabled=False)
+
+    plan = risk_manager.evaluate(
+        signal=sell_signal(),
+        snapshot=snapshot('AAPL'),
+        account_equity=100.0,
+    )
+
+    assert not plan.approved
+    assert plan.reason == 'short_selling_disabled'
+
+
+def test_risk_manager_approves_sell_when_short_selling_is_enabled():
+    risk_manager = build_risk_manager(short_selling_enabled=True)
+
+    plan = risk_manager.evaluate(
+        signal=sell_signal(),
+        snapshot=snapshot('AAPL'),
+        account_equity=100.0,
+    )
+
+    assert plan.approved
+    assert plan.symbol == 'AAPL'
+    assert plan.side == 'SELL'
+    assert plan.amount == 40.0
+    assert plan.stop_loss == 100.3
+    assert plan.take_profit == 99.5
+    assert plan.expected_gross_profit == 0.2
+    assert plan.estimated_fees == 0.0
+    assert plan.expected_net_profit == 0.2

@@ -16,6 +16,16 @@ def buy_plan() -> TradePlan:
         take_profit=110.0,
     )
 
+def sell_plan() -> TradePlan:
+    return TradePlan(
+        approved=True,
+        reason='test_sell',
+        symbol='BTC',
+        side='SELL',
+        amount=10.0,
+        stop_loss=105.0,
+        take_profit=90.0,
+    )
 
 def snapshot(
     symbol: str = 'BTC',
@@ -188,3 +198,94 @@ def test_position_tracker_returns_none_when_closing_unknown_position():
     closed_position = tracker.record_closed_position(close_signal)
 
     assert closed_position is None
+
+def test_position_tracker_closes_sell_when_stop_loss_is_hit():
+    tracker = PositionTracker()
+    tracker.record_open_position(
+        position_id='paper-1',
+        trade_plan=sell_plan(),
+        entry_price=100.0,
+    )
+
+    close_signals = tracker.evaluate_snapshot(snapshot(last=105.5))
+
+    assert len(close_signals) == 1
+    assert close_signals[0].position_id == 'paper-1'
+    assert close_signals[0].side == 'SELL'
+    assert close_signals[0].reason == 'stop_loss_hit'
+    assert close_signals[0].exit_price == 105.5
+
+
+def test_position_tracker_closes_sell_when_take_profit_is_hit():
+    tracker = PositionTracker()
+    tracker.record_open_position(
+        position_id='paper-1',
+        trade_plan=sell_plan(),
+        entry_price=100.0,
+    )
+
+    close_signals = tracker.evaluate_snapshot(snapshot(last=89.5))
+
+    assert len(close_signals) == 1
+    assert close_signals[0].position_id == 'paper-1'
+    assert close_signals[0].side == 'SELL'
+    assert close_signals[0].reason == 'take_profit_hit'
+    assert close_signals[0].exit_price == 89.5
+
+
+def test_position_tracker_calculates_positive_pnl_for_sell_take_profit():
+    tracker = PositionTracker()
+    opened_at = datetime(2026, 6, 25, 12, 0, tzinfo=timezone.utc)
+
+    tracker.record_open_position(
+        position_id='paper-1',
+        trade_plan=sell_plan(),
+        entry_price=100.0,
+        opened_at=opened_at,
+    )
+
+    close_signal = PositionCloseSignal(
+        position_id='paper-1',
+        symbol='BTC',
+        side='SELL',
+        exit_price=90.0,
+        reason='take_profit_hit',
+        detected_at=opened_at + timedelta(minutes=5),
+    )
+
+    closed_position = tracker.record_closed_position(close_signal)
+
+    assert closed_position is not None
+    assert closed_position.side == 'SELL'
+    assert closed_position.gross_pnl_percent == 10.0
+    assert closed_position.gross_pnl == 1.0
+    assert closed_position.close_reason == 'take_profit_hit'
+
+
+def test_position_tracker_calculates_negative_pnl_for_sell_stop_loss():
+    tracker = PositionTracker()
+    opened_at = datetime(2026, 6, 25, 12, 0, tzinfo=timezone.utc)
+
+    tracker.record_open_position(
+        position_id='paper-1',
+        trade_plan=sell_plan(),
+        entry_price=100.0,
+        opened_at=opened_at,
+    )
+
+    close_signal = PositionCloseSignal(
+        position_id='paper-1',
+        symbol='BTC',
+        side='SELL',
+        exit_price=106.0,
+        reason='stop_loss_hit',
+        detected_at=opened_at + timedelta(minutes=2),
+    )
+
+    closed_position = tracker.record_closed_position(close_signal)
+
+    assert closed_position is not None
+    assert closed_position.side == 'SELL'
+    assert closed_position.gross_pnl_percent == -6.0
+    assert closed_position.gross_pnl == -0.6
+    assert closed_position.close_reason == 'stop_loss_hit'

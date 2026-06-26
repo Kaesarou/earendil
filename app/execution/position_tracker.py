@@ -94,8 +94,13 @@ class PositionTracker:
 
             if position.side == 'BUY':
                 close_signal = self._evaluate_buy_position(position, snapshot)
-                if close_signal is not None:
-                    close_signals.append(close_signal)
+            elif position.side == 'SELL':
+                close_signal = self._evaluate_sell_position(position, snapshot)
+            else:
+                raise ValueError(f'Unsupported tracked position side: {position.side}')
+
+            if close_signal is not None:
+                close_signals.append(close_signal)
 
         return close_signals
 
@@ -158,6 +163,33 @@ class PositionTracker:
             )
 
         if snapshot.last >= position.take_profit:
+            return PositionCloseSignal(
+                position_id=position.position_id,
+                symbol=position.symbol,
+                side=position.side,
+                exit_price=snapshot.last,
+                reason='take_profit_hit',
+                detected_at=snapshot.timestamp,
+            )
+
+        return None
+
+    def _evaluate_sell_position(
+        self,
+        position: TrackedPosition,
+        snapshot: MarketSnapshot,
+    ) -> PositionCloseSignal | None:
+        if snapshot.last >= position.stop_loss:
+            return PositionCloseSignal(
+                position_id=position.position_id,
+                symbol=position.symbol,
+                side=position.side,
+                exit_price=snapshot.last,
+                reason='stop_loss_hit',
+                detected_at=snapshot.timestamp,
+            )
+
+        if snapshot.last <= position.take_profit:
             return PositionCloseSignal(
                 position_id=position.position_id,
                 symbol=position.symbol,

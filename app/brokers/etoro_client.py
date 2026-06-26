@@ -52,29 +52,27 @@ class EtoroClient(BrokerClient):
     ) -> str:
         self._ensure_real_trading_enabled()
 
-        if side != 'BUY':
-            raise ValueError(f'Unsupported side for eToro MVP: {side}')
+        normalized_side = self._normalize_side(side)
+        self._ensure_side_is_allowed(normalized_side)
 
         instrument_id = self._find_instrument_id(symbol)
-
-        payload = {
-            'action': 'open',
-            'transaction': 'buy',
-            'InstrumentID': instrument_id,
-            'orderType': 'mkt',
-            'leverage': 1,
-            'amount': amount,
-            'orderCurrency': self.settings.base_currency.lower(),
-        }
+        payload = self._build_open_order_payload(
+            instrument_id=instrument_id,
+            side=normalized_side,
+            amount=amount,
+        )
 
         logger.warning(
-            'Sending eToro order | env=%s | symbol=%s | instrument_id=%s | amount=%s | stop_loss=%s | take_profit=%s',
+            'Sending eToro order | env=%s | symbol=%s | side=%s | transaction=%s | instrument_id=%s | amount=%s | stop_loss=%s | take_profit=%s | leverage=%s',
             self.settings.etoro_env,
             symbol,
+            normalized_side,
+            payload.get('transaction'),
             instrument_id,
             amount,
             stop_loss,
             take_profit,
+            payload.get('leverage'),
         )
 
         order_response = self._post(self._open_order_path(), payload)
@@ -101,10 +99,11 @@ class EtoroClient(BrokerClient):
         self.position_instruments[position_id] = instrument_id
 
         logger.info(
-            'eToro position confirmed | order_id=%s | position_id=%s | instrument_id=%s',
+            'eToro position confirmed | order_id=%s | position_id=%s | instrument_id=%s | side=%s',
             order_id,
             position_id,
             instrument_id,
+            normalized_side,
         )
 
         return position_id
@@ -253,6 +252,59 @@ class EtoroClient(BrokerClient):
                 'Real broker execution is disabled unless REAL_TRADING_ENABLED=true.'
             )
 
+    def _normalize_side(self, side: str) -> str:
+        return side.strip().upper()
+
+    def _ensure_side_is_allowed(self, side: str) -> None:
+        if side == 'BUY':
+            return
+
+        if side == 'SELL':
+            if not self.settings.short_selling_enabled:
+                raise RuntimeError(
+                    'Short selling is disabled unless SHORT_SELLING_ENABLED=true.'
+                )
+            return
+
+        raise ValueError(f'Unsupported side for eToro order: {side}')
+
+    def _build_open_order_payload(
+        self,
+        instrument_id: int,
+        side: str,
+        amount: float,
+    ) -> dict:
+        transaction = self._open_transaction_for_side(side)
+
+        payload = {
+            'action': 'open',
+            'transaction': transaction,
+            'InstrumentID': instrument_id,
+            'orderType': 'mkt',
+            'leverage': self._leverage_for_side(side),
+            'amount': amount,
+            'orderCurrency': self.settings.base_currency.lower(),
+        }
+
+        if side == 'SELL':
+            payload['settlementType'] = 'cfd'
+
+        return payload
+
+    def _open_transaction_for_side(self, side: str) -> str:
+        if side == 'BUY':
+            return 'buy'
+
+        if side == 'SELL':
+            return 'sellShort'
+
+        raise ValueError(f'Unsupported side for eToro transaction: {side}')
+
+    def _leverage_for_side(self, side: str) -> int:
+        if side == 'SELL':
+            return self.settings.short_leverage
+
+        return 1
     # -------------------------------------------------------------------------
     # Endpoint paths
     # -------------------------------------------------------------------------
