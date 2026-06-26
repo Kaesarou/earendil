@@ -98,11 +98,18 @@ def _float_metadata(metadata: dict, key: str) -> float:
     if value is None:
         return 0.0
 
-    return float(value)
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return 0.0
 
 
 def _spread_percent(snapshot: MarketSnapshot) -> float:
     if snapshot.last <= 0:
         return 100.0
 
-    return ((snapshot.ask - snapshot.bid) / snapshot.last) * 100
+    if snapshot.bid <= 0 or snapshot.ask <= 0:
+        return 100.0
+
+    spread = max(0.0, snapshot.ask - snapshot.bid)
+    return (spread / snapshot.last) * 100

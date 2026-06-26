@@ -91,18 +91,36 @@ def process_symbol(
 
     close_signals = position_tracker.evaluate_snapshot(snapshot)
     for close_signal in close_signals:
-        executor.close(close_signal.position_id)
-        closed_position = position_tracker.record_closed_position(close_signal)
-        risk_manager.record_close_position(close_signal.symbol)
+        try:
+            executor.close(close_signal.position_id)
+            closed_position = position_tracker.record_closed_position(close_signal)
+            risk_manager.record_close_position(close_signal.symbol)
 
-        trade_journal.write(
-            'position_closed',
-            {
-                'symbol': symbol,
-                'close_signal': close_signal,
-                'closed_position': closed_position,
-            },
-        )
+            trade_journal.write(
+                'position_closed',
+                {
+                    'symbol': symbol,
+                    'close_signal': close_signal,
+                    'closed_position': closed_position,
+                },
+            )
+
+        except Exception as exc:
+            logger.exception(
+                'Position close error | symbol=%s | position_id=%s | reason=%s | error=%s',
+                symbol,
+                close_signal.position_id,
+                close_signal.reason,
+                exc,
+            )
+            trade_journal.write(
+                'position_close_error',
+                {
+                    'symbol': symbol,
+                    'close_signal': close_signal,
+                    'message': str(exc),
+                },
+            )
 
     closed_candle = candle_builder.on_snapshot(snapshot)
     if closed_candle is None:
@@ -222,48 +240,67 @@ def execute_ranked_candidates(
     )
 
     for candidate in ranked_candidates:
-        equity = execution_broker.get_account_equity()
-        plan = risk_manager.evaluate(
-            signal=candidate.signal,
-            snapshot=candidate.snapshot,
-            account_equity=equity,
-        )
+        try:
+            equity = execution_broker.get_account_equity()
+            plan = risk_manager.evaluate(
+                signal=candidate.signal,
+                snapshot=candidate.snapshot,
+                account_equity=equity,
+            )
 
-        trade_journal.write(
-            'decision',
-            {
-                'symbol': candidate.symbol,
-                'snapshot': candidate.snapshot,
-                'candle': candidate.candle,
-                'signal': candidate.signal,
-                'candidate': candidate,
-                'equity': equity,
-                'trade_plan': plan,
-            },
-        )
+            trade_journal.write(
+                'decision',
+                {
+                    'symbol': candidate.symbol,
+                    'snapshot': candidate.snapshot,
+                    'candle': candidate.candle,
+                    'signal': candidate.signal,
+                    'candidate': candidate,
+                    'equity': equity,
+                    'trade_plan': plan,
+                },
+            )
 
-        position_id = executor.execute(plan)
-        if not position_id:
+            position_id = executor.execute(plan)
+            if not position_id:
+                continue
+
+            tracked_position = position_tracker.record_open_position(
+                position_id=position_id,
+                trade_plan=plan,
+                entry_price=candidate.snapshot.last,
+            )
+
+            risk_manager.record_open_position(candidate.symbol)
+
+            trade_journal.write(
+                'position_opened',
+                {
+                    'symbol': candidate.symbol,
+                    'position_id': position_id,
+                    'position': tracked_position,
+                    'candidate': candidate,
+                    'trade_plan': plan,
+                },
+            )
+
+        except Exception as exc:
+            logger.exception(
+                'Candidate execution error | symbol=%s | action=%s | score=%s | error=%s',
+                candidate.symbol,
+                candidate.signal.action,
+                candidate.score,
+                exc,
+            )
+            trade_journal.write(
+                'candidate_execution_error',
+                {
+                    'symbol': candidate.symbol,
+                    'candidate': candidate,
+                    'message': str(exc),
+                },
+            )
             continue
-
-        tracked_position = position_tracker.record_open_position(
-            position_id=position_id,
-            trade_plan=plan,
-            entry_price=candidate.snapshot.last,
-        )
-
-        risk_manager.record_open_position(candidate.symbol)
-
-        trade_journal.write(
-            'position_opened',
-            {
-                'symbol': candidate.symbol,
-                'position_id': position_id,
-                'position': tracked_position,
-                'candidate': candidate,
-                'trade_plan': plan,
-            },
-        )
 
 def main() -> None:
     settings = get_settings()
@@ -350,6 +387,15 @@ def main() -> None:
         except KeyboardInterrupt:
             logger.info('Stopping Eärendil')
             break
+
+        except Exception as exc:
+            logger.exception('Bot loop error: %s', exc)
+            trade_journal.write(
+                'error',
+                {
+                    'message': str(exc),
+                },
+            )
 
         time.sleep(settings.poll_interval_seconds)
 

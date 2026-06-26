@@ -271,12 +271,30 @@ class EtoroClient(BrokerClient):
     def _post(self, path: str, payload: dict) -> dict:
         url = f'{self.settings.etoro_api_base_url.rstrip("/")}/{path.lstrip("/")}'
 
-        response = requests.post(
-            url,
-            headers=self.headers,
-            json=payload,
-            timeout=10,
-        )
+        try:
+            response = requests.post(
+                url,
+                headers=self.headers,
+                json=payload,
+                timeout=10,
+            )
+        except requests.Timeout as exc:
+            logger.error(
+                'eToro POST timeout | url=%s | payload=%s | error=%s',
+                url,
+                payload,
+                exc,
+            )
+            raise
+
+        except requests.RequestException as exc:
+            logger.error(
+                'eToro POST request failed | url=%s | payload=%s | error=%s',
+                url,
+                payload,
+                exc,
+            )
+            raise
 
         if not response.ok:
             logger.error(
@@ -493,10 +511,13 @@ class EtoroClient(BrokerClient):
         attempts: int = 10,
         delay_seconds: float = 1.0,
     ) -> dict:
+        last_lookup_error: Exception | None = None
+
         for attempt in range(1, attempts + 1):
             try:
                 details = self.get_order_details(order_id)
-            except requests.HTTPError as exc:
+            except (requests.RequestException, RuntimeError, ValueError) as exc:
+                last_lookup_error = exc
                 logger.warning(
                     'eToro order lookup failed | order_id=%s | attempt=%s/%s | error=%s',
                     order_id,
@@ -533,7 +554,10 @@ class EtoroClient(BrokerClient):
 
             time.sleep(delay_seconds)
 
-        raise RuntimeError(f'eToro order was not executed after polling: order_id={order_id}')
+        raise RuntimeError(
+            f'eToro order was not executed after polling: '
+            f'order_id={order_id}, last_lookup_error={last_lookup_error}'
+        )
 
     def _wait_until_position_closed(
         self,
@@ -541,27 +565,41 @@ class EtoroClient(BrokerClient):
         attempts: int = 10,
         delay_seconds: float = 1.0,
     ) -> None:
+        last_lookup_error: Exception | None = None
+
         for attempt in range(1, attempts + 1):
-            if not self.is_position_open(position_id):
+            try:
+                if not self.is_position_open(position_id):
+                    logger.info(
+                        'eToro position closure confirmed | position_id=%s | attempt=%s/%s',
+                        position_id,
+                        attempt,
+                        attempts,
+                    )
+                    return
+
                 logger.info(
-                    'eToro position closure confirmed | position_id=%s | attempt=%s/%s',
+                    'eToro position still open | position_id=%s | attempt=%s/%s',
                     position_id,
                     attempt,
                     attempts,
                 )
-                return
 
-            logger.info(
-                'eToro position still open | position_id=%s | attempt=%s/%s',
-                position_id,
-                attempt,
-                attempts,
-            )
+            except (requests.RequestException, RuntimeError, ValueError) as exc:
+                last_lookup_error = exc
+                logger.warning(
+                    'eToro position close lookup failed | position_id=%s | attempt=%s/%s | error=%s',
+                    position_id,
+                    attempt,
+                    attempts,
+                    exc,
+                )
 
             time.sleep(delay_seconds)
 
         raise RuntimeError(
-            f'eToro position still appears open after close confirmation: position_id={position_id}'
+            f'eToro position still appears open after close confirmation: '
+            f'position_id={position_id}, last_lookup_error={last_lookup_error}'
         )
 
     def _is_order_executed(self, payload: dict) -> bool:
