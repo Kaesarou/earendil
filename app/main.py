@@ -14,6 +14,7 @@ from app.risk.risk_manager import RiskManager
 from app.strategies.base import InvestmentStrategy
 from app.strategies.factory import build_investment_strategy
 from app.utils.logging import configure_logging
+from app.risk.models import TradePlan
 
 logger = logging.getLogger(__name__)
 
@@ -130,6 +131,29 @@ def process_symbol(
         signal.reason,
         closed_candle.close,
     )
+
+    if signal.action == 'HOLD':
+        plan = TradePlan(
+            approved=False,
+            reason=signal.reason,
+            symbol=symbol,
+            side=signal.action,
+        )
+
+        trade_journal.write(
+            'decision',
+            {
+                'symbol': symbol,
+                'snapshot': snapshot,
+                'candle': closed_candle,
+                'signal': signal,
+                'equity': None,
+                'trade_plan': plan,
+            },
+        )
+
+        logger.info('Trade rejected: %s', plan.reason)
+        return
 
     equity = execution_broker.get_account_equity()
     plan = risk_manager.evaluate(signal, snapshot, equity)

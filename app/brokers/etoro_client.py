@@ -16,6 +16,7 @@ logger = logging.getLogger(__name__)
 class EtoroClient(BrokerClient):
     settings: Settings
     position_instruments: dict[str, int] = field(default_factory=dict)
+    instrument_ids_by_symbol: dict[str, int] = field(default_factory=dict)
 
     # -------------------------------------------------------------------------
     # Public broker API
@@ -338,13 +339,18 @@ class EtoroClient(BrokerClient):
     # -------------------------------------------------------------------------
 
     def _find_instrument_id(self, symbol: str) -> int:
+        normalized_symbol = symbol.upper()
+
+        cached_instrument_id = self.instrument_ids_by_symbol.get(normalized_symbol)
+        if cached_instrument_id is not None:
+            return cached_instrument_id
+
         payload = self._get(
             '/api/v1/market-data/search',
             params={'internalSymbolFull': symbol},
         )
 
         items = self._extract_items(payload)
-        normalized_symbol = symbol.upper()
 
         exact_matches = [
             item for item in items
@@ -381,15 +387,18 @@ class EtoroClient(BrokerClient):
                 f'Unable to find instrument id for symbol={symbol}. Instrument={instrument}'
             )
 
+        resolved_instrument_id = int(instrument_id)
+        self.instrument_ids_by_symbol[normalized_symbol] = resolved_instrument_id
+
         logger.info(
             'Selected eToro instrument | symbol=%s | display_name=%s | instrument_id=%s | current_rate=%s',
             instrument.get('internalSymbolFull'),
             instrument.get('internalInstrumentDisplayName'),
-            instrument_id,
+            resolved_instrument_id,
             instrument.get('currentRate'),
         )
 
-        return int(instrument_id)
+        return resolved_instrument_id
 
     def _get_market_rates(self, instrument_id: int) -> dict:
         return self._get(
