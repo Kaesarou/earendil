@@ -232,26 +232,37 @@ def main() -> None:
     while True:
         try:
             for symbol in symbols:
-                process_symbol(
-                    symbol=symbol,
-                    market_data_broker=market_data_broker,
-                    execution_broker=execution_broker,
-                    strategy=strategies[symbol],
-                    risk_manager=risk_manager,
-                    executor=executor,
-                    position_tracker=position_tracker,
-                    candle_builder=candle_builders[symbol],
-                    trade_journal=trade_journal,
-                    market_journal=market_journal,
-                    candle_journal=candle_journal,
-                )
+                try:
+                    process_symbol(
+                        symbol=symbol,
+                        market_data_broker=market_data_broker,
+                        execution_broker=execution_broker,
+                        strategy=strategies[symbol],
+                        risk_manager=risk_manager,
+                        executor=executor,
+                        position_tracker=position_tracker,
+                        candle_builder=candle_builders[symbol],
+                        trade_journal=trade_journal,
+                        market_journal=market_journal,
+                        candle_journal=candle_journal,
+                    )
+                except Exception as exc:
+                    logger.exception(
+                        'Symbol processing error | symbol=%s | error=%s',
+                        symbol,
+                        exc,
+                    )
+                    trade_journal.write(
+                        'error',
+                        {
+                            'symbol': symbol,
+                            'message': str(exc),
+                        },
+                    )
 
         except KeyboardInterrupt:
             logger.info('Stopping Eärendil')
             break
-        except Exception as exc:
-            logger.exception('Bot loop error: %s', exc)
-            trade_journal.write('error', {'message': str(exc)})
 
         time.sleep(settings.poll_interval_seconds)
 

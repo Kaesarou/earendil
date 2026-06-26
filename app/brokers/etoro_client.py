@@ -192,28 +192,79 @@ class EtoroClient(BrokerClient):
 
     def _get(self, path: str, params: dict | None = None) -> dict:
         url = f'{self.settings.etoro_api_base_url.rstrip("/")}/{path.lstrip("/")}'
+        max_attempts = 3
+        retry_status_codes = {429, 500, 502, 503, 504}
 
-        response = requests.get(
-            url,
-            headers=self.headers,
-            params=params,
-            timeout=10,
-        )
+        for attempt in range(1, max_attempts + 1):
+            try:
+                response = requests.get(
+                    url,
+                    headers=self.headers,
+                    params=params,
+                    timeout=10,
+                )
+            except requests.Timeout as exc:
+                logger.warning(
+                    'eToro GET timeout | attempt=%s/%s | url=%s | params=%s | error=%s',
+                    attempt,
+                    max_attempts,
+                    url,
+                    params,
+                    exc,
+                )
 
-        if not response.ok:
-            logger.error(
-                'eToro GET failed | status=%s | url=%s | params=%s | response=%s',
-                response.status_code,
-                url,
-                params,
-                response.text,
-            )
-            response.raise_for_status()
+                if attempt == max_attempts:
+                    raise
 
-        if not response.content:
-            return {}
+                time.sleep(attempt)
+                continue
 
-        return response.json()
+            except requests.RequestException as exc:
+                logger.warning(
+                    'eToro GET request failed | attempt=%s/%s | url=%s | params=%s | error=%s',
+                    attempt,
+                    max_attempts,
+                    url,
+                    params,
+                    exc,
+                )
+
+                if attempt == max_attempts:
+                    raise
+
+                time.sleep(attempt)
+                continue
+
+            if response.status_code in retry_status_codes and attempt < max_attempts:
+                logger.warning(
+                    'eToro GET retryable error | attempt=%s/%s | status=%s | url=%s | params=%s | response=%s',
+                    attempt,
+                    max_attempts,
+                    response.status_code,
+                    url,
+                    params,
+                    response.text,
+                )
+
+                time.sleep(attempt)
+                continue
+
+            if not response.ok:
+                logger.error(
+                    'eToro GET failed | status=%s | url=%s | params=%s | response=%s',
+                    response.status_code,
+                    url,
+                    params,
+                    response.text,
+                )
+                response.raise_for_status()
+
+            if not response.content:
+                return {}
+
+            return response.json()
+
+        raise RuntimeError(f'eToro GET failed after retries | url={url} | params={params}')
 
     def _post(self, path: str, payload: dict) -> dict:
         url = f'{self.settings.etoro_api_base_url.rstrip("/")}/{path.lstrip("/")}'
