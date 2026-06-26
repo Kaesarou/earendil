@@ -69,6 +69,11 @@ class RiskManager:
         self.open_positions_by_symbol[normalized_symbol] += 1
         self.trades_today += 1
 
+    def restore_open_position(self, symbol: str) -> None:
+        normalized_symbol = self._normalize_symbol(symbol)
+        self.open_positions += 1
+        self.open_positions_by_symbol[normalized_symbol] += 1
+
     def record_close_position(self, symbol: str) -> None:
         normalized_symbol = self._normalize_symbol(symbol)
 

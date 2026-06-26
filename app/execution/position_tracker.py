@@ -48,6 +48,12 @@ class ClosedPosition:
 class PositionTracker:
     def __init__(self):
         self.positions: dict[str, TrackedPosition] = {}
+    
+    def restore_open_position(self, position: TrackedPosition) -> None:
+        self.positions[position.position_id] = position
+
+    def open_positions_snapshot(self) -> list[TrackedPosition]:
+        return list(self.positions.values())
 
     def record_open_position(
         self,

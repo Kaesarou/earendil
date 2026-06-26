@@ -177,6 +177,17 @@ class EtoroClient(BrokerClient):
     def is_position_open(self, position_id: str) -> bool:
         portfolio = self.get_portfolio()
         return self._contains_open_position(portfolio, position_id)
+    
+    def remember_position_instrument(self, position_id: str, symbol: str) -> None:
+        instrument_id = self._find_instrument_id(symbol)
+        self.position_instruments[position_id] = instrument_id
+
+        logger.info(
+            'eToro restored position instrument | position_id=%s | symbol=%s | instrument_id=%s',
+            position_id,
+            symbol,
+            instrument_id,
+        )
 
     # -------------------------------------------------------------------------
     # HTTP helpers

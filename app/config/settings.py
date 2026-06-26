@@ -9,6 +9,10 @@ class Settings(BaseSettings):
         extra='ignore',
     )
     app_log_path: str = Field(default='data/logs/earendil.log', alias='APP_LOG_PATH')
+    position_store_path: str = Field(
+        default='data/earendil.sqlite',
+        alias='POSITION_STORE_PATH',
+    )
     ear_mode: str = Field(default='paper', alias='EAR_MODE')
     real_trading_enabled: bool = Field(default=False, alias='REAL_TRADING_ENABLED')
     log_level: str = Field(default='INFO', alias='LOG_LEVEL')

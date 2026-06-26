@@ -3,6 +3,7 @@ from datetime import datetime, timedelta, timezone
 from app.execution.position_tracker import PositionCloseSignal, PositionTracker
 from app.market.models import MarketSnapshot
 from app.risk.models import TradePlan
+from app.execution.position_tracker import PositionTracker, TrackedPosition
 
 
 def buy_plan() -> TradePlan:
@@ -289,3 +290,22 @@ def test_position_tracker_calculates_negative_pnl_for_sell_stop_loss():
     assert closed_position.gross_pnl_percent == -6.0
     assert closed_position.gross_pnl == -0.6
     assert closed_position.close_reason == 'stop_loss_hit'
+
+def test_position_tracker_restores_open_position():
+    tracker = PositionTracker()
+
+    position = TrackedPosition(
+        position_id='position-1',
+        symbol='MSFT',
+        side='BUY',
+        amount=500.0,
+        entry_price=100.0,
+        stop_loss=99.0,
+        take_profit=102.0,
+        opened_at=datetime(2026, 6, 26, 16, 0, tzinfo=timezone.utc),
+    )
+
+    tracker.restore_open_position(position)
+
+    assert tracker.has_open_positions()
+    assert tracker.open_positions_snapshot() == [position]

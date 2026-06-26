@@ -20,6 +20,7 @@ from app.execution.candidate_ranking import (
     rank_trade_candidates,
 )
 from app.execution.trade_candidate import TradeCandidate
+from app.persistence.position_store import PositionStore
 
 logger = logging.getLogger(__name__)
 
@@ -72,11 +73,59 @@ def build_strategies(
         for symbol in symbols
     }
 
+def restore_persisted_positions(
+    position_store: PositionStore,
+    position_tracker: PositionTracker,
+    risk_manager: RiskManager,
+    execution_broker: BrokerClient,
+    trade_journal: JsonlJournal,
+) -> None:
+    restored_positions = position_store.load_open_positions()
+
+    if not restored_positions:
+        logger.info('No persisted open positions to restore')
+        return
+
+    logger.warning(
+        'Restoring persisted open positions | count=%s',
+        len(restored_positions),
+    )
+
+    for position in restored_positions:
+        position_tracker.restore_open_position(position)
+        risk_manager.restore_open_position(position.symbol)
+
+        if isinstance(execution_broker, EtoroClient):
+            try:
+                execution_broker.remember_position_instrument(
+                    position_id=position.position_id,
+                    symbol=position.symbol,
+                )
+            except Exception as exc:
+                logger.exception(
+                    'Failed to restore eToro instrument mapping | position_id=%s | symbol=%s | error=%s',
+                    position.position_id,
+                    position.symbol,
+                    exc,
+                )
+                trade_journal.write(
+                    'position_restore_warning',
+                    {
+                        'position': position,
+                        'message': str(exc),
+                    },
+                )
+
+        trade_journal.write(
+            'position_restored',
+            {
+                'position': position,
+            },
+        )
 
 def process_symbol(
     symbol: str,
     market_data_broker: BrokerClient,
-    execution_broker: BrokerClient,
     strategy: InvestmentStrategy,
     risk_manager: RiskManager,
     executor: TradeExecutor,
@@ -85,6 +134,7 @@ def process_symbol(
     trade_journal: JsonlJournal,
     market_journal: JsonlJournal,
     candle_journal: JsonlJournal,
+    position_store: PositionStore | None = None,
 ) -> TradeCandidate | None:
     snapshot = market_data_broker.get_market_snapshot(symbol)
     market_journal.write('market_snapshot', {'symbol': symbol, 'snapshot': snapshot})
@@ -95,6 +145,24 @@ def process_symbol(
             executor.close(close_signal.position_id)
             closed_position = position_tracker.record_closed_position(close_signal)
             risk_manager.record_close_position(close_signal.symbol)
+
+            if position_store is not None:
+                try:
+                    position_store.delete_open_position(close_signal.position_id)
+                except Exception as exc:
+                    logger.exception(
+                        'Position persistence delete error | position_id=%s | error=%s',
+                        close_signal.position_id,
+                        exc,
+                    )
+                    trade_journal.write(
+                        'position_persistence_error',
+                        {
+                            'symbol': symbol,
+                            'position_id': close_signal.position_id,
+                            'message': str(exc),
+                        },
+                    )
 
             trade_journal.write(
                 'position_closed',
@@ -213,6 +281,7 @@ def execute_ranked_candidates(
     executor: TradeExecutor,
     position_tracker: PositionTracker,
     trade_journal: JsonlJournal,
+    position_store: PositionStore | None = None,
 ) -> None:
     if not candidates:
         return
@@ -272,6 +341,26 @@ def execute_ranked_candidates(
             )
 
             risk_manager.record_open_position(candidate.symbol)
+
+            if position_store is not None:
+                try:
+                    position_store.save_open_position(tracked_position)
+                except Exception as exc:
+                    logger.exception(
+                        'Position persistence save error | position_id=%s | symbol=%s | error=%s',
+                        tracked_position.position_id,
+                        tracked_position.symbol,
+                        exc,
+                    )
+                    trade_journal.write(
+                        'position_persistence_error',
+                        {
+                            'symbol': tracked_position.symbol,
+                            'position_id': tracked_position.position_id,
+                            'position': tracked_position,
+                            'message': str(exc),
+                        },
+                    )
 
             trade_journal.write(
                 'position_opened',
@@ -336,10 +425,19 @@ def main() -> None:
     risk_manager = build_risk_manager(settings)
     executor = TradeExecutor(execution_broker)
     position_tracker = PositionTracker()
+    position_store = PositionStore(settings.position_store_path)
 
     trade_journal = JsonlJournal(settings.journal_path)
     market_journal = JsonlJournal(settings.market_log_path)
     candle_journal = JsonlJournal(settings.candle_journal_path)
+
+    restore_persisted_positions(
+        position_store=position_store,
+        position_tracker=position_tracker,
+        risk_manager=risk_manager,
+        execution_broker=execution_broker,
+        trade_journal=trade_journal,
+    )
 
     while True:
         try:
@@ -350,7 +448,6 @@ def main() -> None:
                     candidate = process_symbol(
                         symbol=symbol,
                         market_data_broker=market_data_broker,
-                        execution_broker=execution_broker,
                         strategy=strategies[symbol],
                         risk_manager=risk_manager,
                         executor=executor,
@@ -359,6 +456,7 @@ def main() -> None:
                         trade_journal=trade_journal,
                         market_journal=market_journal,
                         candle_journal=candle_journal,
+                        position_store=position_store,
                     )
 
                     if candidate is not None:
@@ -385,6 +483,7 @@ def main() -> None:
                 executor=executor,
                 position_tracker=position_tracker,
                 trade_journal=trade_journal,
+                position_store=position_store,
             )
 
         except KeyboardInterrupt:
