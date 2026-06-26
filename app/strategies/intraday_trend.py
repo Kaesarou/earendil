@@ -74,15 +74,17 @@ class IntradayTrendStrategy:
         session_move_percent = self._session_move_percent()
 
         if session_move_percent >= self.config.min_session_move_percent:
-            return self._evaluate_long_setup()
+            return self._evaluate_long_setup(session_move_percent)
 
         if session_move_percent <= -self.config.min_session_move_percent:
-            return self._evaluate_short_setup()
+            return self._evaluate_short_setup(session_move_percent)
 
         return Signal.hold('session_trend_neutral')
 
-    def _evaluate_long_setup(self) -> Signal:
-        if not self._is_short_term_uptrend():
+    def _evaluate_long_setup(self, session_move_percent: float) -> Signal:
+        fast_ma, slow_ma = self._moving_averages()
+
+        if fast_ma <= slow_ma:
             return Signal.hold('bullish_trend_not_confirmed')
 
         current_candle = self.candles[-1]
@@ -100,17 +102,34 @@ class IntradayTrendStrategy:
         if rejection_reason is not None:
             return Signal.hold(rejection_reason)
 
+        trend_strength_percent = self._trend_strength_percent(fast_ma, slow_ma)
+        breakout_percent = ((current_candle.close - range_high) / range_high) * 100
+        candle_range_percent = self._candle_range_percent(current_candle)
+        close_position_percent = self._close_position_percent(current_candle)
+
         return Signal(
             action='BUY',
             confidence=0.8,
             reason='intraday_bullish_breakout',
+            metadata={
+                'session_move_percent': round(session_move_percent, 4),
+                'trend_strength_percent': round(trend_strength_percent, 4),
+                'breakout_percent': round(breakout_percent, 4),
+                'candle_range_percent': round(candle_range_percent, 4),
+                'close_position_percent': round(close_position_percent, 4),
+                'fast_ma': round(fast_ma, 5),
+                'slow_ma': round(slow_ma, 5),
+                'range_high': round(range_high, 5),
+            },
         )
 
-    def _evaluate_short_setup(self) -> Signal:
+    def _evaluate_short_setup(self, session_move_percent: float) -> Signal:
         if not self.config.allow_short:
             return Signal.hold('short_signals_disabled_by_strategy')
 
-        if not self._is_short_term_downtrend():
+        fast_ma, slow_ma = self._moving_averages()
+
+        if fast_ma >= slow_ma:
             return Signal.hold('bearish_trend_not_confirmed')
 
         current_candle = self.candles[-1]
@@ -128,10 +147,25 @@ class IntradayTrendStrategy:
         if rejection_reason is not None:
             return Signal.hold(rejection_reason)
 
+        trend_strength_percent = self._trend_strength_percent(fast_ma, slow_ma)
+        breakdown_percent = ((range_low - current_candle.close) / range_low) * 100
+        candle_range_percent = self._candle_range_percent(current_candle)
+        close_position_percent = self._close_position_percent(current_candle)
+
         return Signal(
             action='SELL',
             confidence=0.8,
             reason='intraday_bearish_breakdown',
+            metadata={
+                'session_move_percent': round(session_move_percent, 4),
+                'trend_strength_percent': round(trend_strength_percent, 4),
+                'breakdown_percent': round(breakdown_percent, 4),
+                'candle_range_percent': round(candle_range_percent, 4),
+                'close_position_percent': round(close_position_percent, 4),
+                'fast_ma': round(fast_ma, 5),
+                'slow_ma': round(slow_ma, 5),
+                'range_low': round(range_low, 5),
+            },
         )
 
     def _required_candles(self) -> int:
@@ -152,14 +186,6 @@ class IntradayTrendStrategy:
             )
 
         return ((current_close - reference_close) / reference_close) * 100
-
-    def _is_short_term_uptrend(self) -> bool:
-        fast_ma, slow_ma = self._moving_averages()
-        return fast_ma > slow_ma
-
-    def _is_short_term_downtrend(self) -> bool:
-        fast_ma, slow_ma = self._moving_averages()
-        return fast_ma < slow_ma
 
     def _moving_averages(self) -> tuple[float, float]:
         closes = [candle.close for candle in self.candles]
@@ -184,11 +210,11 @@ class IntradayTrendStrategy:
         if candle.open <= 0:
             return 'invalid_candle_open'
 
-        candle_range_percent = (candle_range / candle.open) * 100
+        candle_range_percent = self._candle_range_percent(candle)
         if candle_range_percent < self.config.min_candle_range_percent:
             return 'candle_range_too_small'
 
-        close_position_percent = ((candle.close - candle.low) / candle_range) * 100
+        close_position_percent = self._close_position_percent(candle)
         if close_position_percent < self.config.min_close_position_percent:
             return 'long_close_not_near_high'
 
@@ -205,17 +231,37 @@ class IntradayTrendStrategy:
         if candle.open <= 0:
             return 'invalid_candle_open'
 
-        candle_range_percent = (candle_range / candle.open) * 100
+        candle_range_percent = self._candle_range_percent(candle)
         if candle_range_percent < self.config.min_candle_range_percent:
             return 'candle_range_too_small'
 
-        close_position_percent = ((candle.close - candle.low) / candle_range) * 100
+        close_position_percent = self._close_position_percent(candle)
         max_close_position_for_short = 100 - self.config.min_close_position_percent
 
         if close_position_percent > max_close_position_for_short:
             return 'short_close_not_near_low'
 
         return None
+
+    def _candle_range_percent(self, candle: Candle) -> float:
+        if candle.open <= 0:
+            raise ValueError(f'Cannot calculate candle range with invalid open={candle.open}')
+
+        return ((candle.high - candle.low) / candle.open) * 100
+
+    def _close_position_percent(self, candle: Candle) -> float:
+        candle_range = candle.high - candle.low
+
+        if candle_range <= 0:
+            raise ValueError('Cannot calculate close position from candle without range')
+
+        return ((candle.close - candle.low) / candle_range) * 100
+
+    def _trend_strength_percent(self, fast_ma: float, slow_ma: float) -> float:
+        if slow_ma <= 0:
+            raise ValueError(f'Cannot calculate trend strength with invalid slow_ma={slow_ma}')
+
+        return ((fast_ma - slow_ma) / slow_ma) * 100
 
     def _average(self, values: list[float]) -> float:
         if not values:

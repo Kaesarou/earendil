@@ -15,6 +15,11 @@ from app.strategies.base import InvestmentStrategy
 from app.strategies.factory import build_investment_strategy
 from app.utils.logging import configure_logging
 from app.risk.models import TradePlan
+from app.execution.candidate_ranking import (
+    build_trade_candidate,
+    rank_trade_candidates,
+)
+from app.execution.trade_candidate import TradeCandidate
 
 logger = logging.getLogger(__name__)
 
@@ -80,7 +85,7 @@ def process_symbol(
     trade_journal: JsonlJournal,
     market_journal: JsonlJournal,
     candle_journal: JsonlJournal,
-) -> None:
+) -> TradeCandidate | None:
     snapshot = market_data_broker.get_market_snapshot(symbol)
     market_journal.write('market_snapshot', {'symbol': symbol, 'snapshot': snapshot})
 
@@ -155,43 +160,110 @@ def process_symbol(
         logger.info('Trade rejected: %s', plan.reason)
         return
 
-    equity = execution_broker.get_account_equity()
-    plan = risk_manager.evaluate(signal, snapshot, equity)
+    candidate = build_trade_candidate(
+        symbol=symbol,
+        snapshot=snapshot,
+        candle=closed_candle,
+        signal=signal,
+    )
 
     trade_journal.write(
-        'decision',
+        'candidate_detected',
         {
             'symbol': symbol,
             'snapshot': snapshot,
             'candle': closed_candle,
             'signal': signal,
-            'equity': equity,
-            'trade_plan': plan,
+            'candidate': candidate,
         },
     )
 
-    position_id = executor.execute(plan)
-    if not position_id:
+    logger.info(
+        'Trade candidate detected | symbol=%s | action=%s | score=%s | reason=%s',
+        symbol,
+        signal.action,
+        candidate.score,
+        candidate.rank_reason,
+    )
+
+    return candidate
+
+def execute_ranked_candidates(
+    candidates: list[TradeCandidate],
+    execution_broker: BrokerClient,
+    risk_manager: RiskManager,
+    executor: TradeExecutor,
+    position_tracker: PositionTracker,
+    trade_journal: JsonlJournal,
+) -> None:
+    if not candidates:
         return
 
-    tracked_position = position_tracker.record_open_position(
-        position_id=position_id,
-        trade_plan=plan,
-        entry_price=snapshot.last,
-    )
-
-    risk_manager.record_open_position(symbol)
+    ranked_candidates = rank_trade_candidates(candidates)
 
     trade_journal.write(
-        'position_opened',
+        'candidate_ranking',
         {
-            'symbol': symbol,
-            'position_id': position_id,
-            'position': tracked_position,
-            'trade_plan': plan,
+            'candidates': ranked_candidates,
         },
     )
 
+    logger.info(
+        'Candidate ranking | candidates=%s',
+        [
+            {
+                'symbol': candidate.symbol,
+                'action': candidate.signal.action,
+                'score': candidate.score,
+                'reason': candidate.rank_reason,
+            }
+            for candidate in ranked_candidates
+        ],
+    )
+
+    for candidate in ranked_candidates:
+        equity = execution_broker.get_account_equity()
+        plan = risk_manager.evaluate(
+            signal=candidate.signal,
+            snapshot=candidate.snapshot,
+            account_equity=equity,
+        )
+
+        trade_journal.write(
+            'decision',
+            {
+                'symbol': candidate.symbol,
+                'snapshot': candidate.snapshot,
+                'candle': candidate.candle,
+                'signal': candidate.signal,
+                'candidate': candidate,
+                'equity': equity,
+                'trade_plan': plan,
+            },
+        )
+
+        position_id = executor.execute(plan)
+        if not position_id:
+            continue
+
+        tracked_position = position_tracker.record_open_position(
+            position_id=position_id,
+            trade_plan=plan,
+            entry_price=candidate.snapshot.last,
+        )
+
+        risk_manager.record_open_position(candidate.symbol)
+
+        trade_journal.write(
+            'position_opened',
+            {
+                'symbol': candidate.symbol,
+                'position_id': position_id,
+                'position': tracked_position,
+                'candidate': candidate,
+                'trade_plan': plan,
+            },
+        )
 
 def main() -> None:
     settings = get_settings()
@@ -231,9 +303,11 @@ def main() -> None:
 
     while True:
         try:
+            candidates: list[TradeCandidate] = []
+
             for symbol in symbols:
                 try:
-                    process_symbol(
+                    candidate = process_symbol(
                         symbol=symbol,
                         market_data_broker=market_data_broker,
                         execution_broker=execution_broker,
@@ -246,6 +320,10 @@ def main() -> None:
                         market_journal=market_journal,
                         candle_journal=candle_journal,
                     )
+
+                    if candidate is not None:
+                        candidates.append(candidate)
+
                 except Exception as exc:
                     logger.exception(
                         'Symbol processing error | symbol=%s | error=%s',
@@ -259,6 +337,15 @@ def main() -> None:
                             'message': str(exc),
                         },
                     )
+
+            execute_ranked_candidates(
+                candidates=candidates,
+                execution_broker=execution_broker,
+                risk_manager=risk_manager,
+                executor=executor,
+                position_tracker=position_tracker,
+                trade_journal=trade_journal,
+            )
 
         except KeyboardInterrupt:
             logger.info('Stopping Eärendil')
