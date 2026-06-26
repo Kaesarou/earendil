@@ -80,6 +80,9 @@ class FakeExecutionBroker(BrokerClient):
 
     def close_position(self, position_id: str) -> None:
         raise NotImplementedError
+    
+    def is_position_open(self, position_id: str) -> bool:
+        raise NotImplementedError
 
 
 class FakeRiskManager:
