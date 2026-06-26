@@ -304,7 +304,10 @@ def execute_ranked_candidates(
 
 def main() -> None:
     settings = get_settings()
-    configure_logging(settings.log_level)
+    configure_logging(
+        level=settings.log_level,
+        log_file_path=settings.app_log_path,
+    )
 
     symbols = settings.watchlist_symbols()
 

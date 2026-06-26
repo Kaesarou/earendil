@@ -6,3 +6,5 @@ __pycache__/
 .venv/
 data/logs/*.jsonl
 .DS_Store
+data/logs/*.log
+data/logs/*.log.*
