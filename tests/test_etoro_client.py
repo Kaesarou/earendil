@@ -982,3 +982,105 @@ def test_wait_until_position_closed_raises_when_position_stays_open(monkeypatch)
             attempts=2,
             delay_seconds=0,
         )
+
+def test_etoro_open_short_position_sends_stop_loss_rate(monkeypatch):
+    settings = Settings(
+        EAR_MODE='real',
+        REAL_TRADING_ENABLED=True,
+        ETORO_ENV='demo',
+        BASE_CURRENCY='USD',
+        SHORT_SELLING_ENABLED=True,
+        SHORT_LEVERAGE=1,
+        ETORO_API_KEY='api-key',
+        ETORO_USER_KEY='user-key',
+    )
+
+    client = EtoroClient(settings=settings)
+    captured = {}
+
+    monkeypatch.setattr(client, '_find_instrument_id', lambda symbol: 1261)
+
+    def fake_post(path, payload):
+        captured['path'] = path
+        captured['payload'] = payload
+        return {
+            'orderId': 362406475,
+            'referenceId': 'ref-short-1',
+        }
+
+    def fake_wait_for_executed_order(order_id):
+        assert order_id == '362406475'
+        return {
+            'status': {
+                'id': 1,
+                'name': 'Executed',
+            },
+            'positionExecutions': [
+                {
+                    'positionId': 9002,
+                    'state': 'open',
+                }
+            ],
+        }
+
+    monkeypatch.setattr(client, '_post', fake_post)
+    monkeypatch.setattr(
+        client,
+        '_wait_for_executed_order',
+        fake_wait_for_executed_order,
+    )
+
+    position_id = client.open_position(
+        symbol='SAF.PA',
+        side='SELL',
+        amount=497.26,
+        stop_loss=337.4092,
+        take_profit=334.8862,
+    )
+
+    assert position_id == '9002'
+    assert captured['path'] == '/api/v2/trading/execution/demo/orders'
+    assert captured['payload'] == {
+        'action': 'open',
+        'transaction': 'sellShort',
+        'InstrumentID': 1261,
+        'orderType': 'mkt',
+        'leverage': 1,
+        'amount': 497.26,
+        'orderCurrency': 'usd',
+        'settlementType': 'cfd',
+        'StopLossRate': 337.4092,
+    }
+    assert client.position_instruments['9002'] == 1261
+
+def test_etoro_buy_payload_does_not_include_short_only_fields():
+    settings = Settings(
+        EAR_MODE='real',
+        REAL_TRADING_ENABLED=True,
+        ETORO_ENV='demo',
+        BASE_CURRENCY='USD',
+        SHORT_SELLING_ENABLED=True,
+        SHORT_LEVERAGE=1,
+        ETORO_API_KEY='api-key',
+        ETORO_USER_KEY='user-key',
+    )
+
+    client = EtoroClient(settings=settings)
+
+    payload = client._build_open_order_payload(
+        instrument_id=1234,
+        side='BUY',
+        amount=500.0,
+        stop_loss=99.0,
+        take_profit=101.0,
+    )
+
+    assert payload == {
+        'action': 'open',
+        'transaction': 'buy',
+        'InstrumentID': 1234,
+        'orderType': 'mkt',
+        'leverage': 1,
+        'amount': 500.0,
+        'orderCurrency': 'usd',
+    }
