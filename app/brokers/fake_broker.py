@@ -37,3 +37,6 @@ class FakeBrokerClient(BrokerClient):
 
     def close_position(self, position_id: str) -> None:
         self.positions.pop(position_id, None)
+
+    def is_position_open(self, position_id: str) -> bool:
+        return position_id in self.positions

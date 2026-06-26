@@ -92,6 +92,40 @@ def restore_persisted_positions(
     )
 
     for position in restored_positions:
+        try:
+            if not execution_broker.is_position_open(position.position_id):
+                logger.warning(
+                    'Persisted position no longer open at broker | position_id=%s | symbol=%s',
+                    position.position_id,
+                    position.symbol,
+                )
+
+                position_store.delete_open_position(position.position_id)
+
+                trade_journal.write(
+                    'position_reconciled_closed',
+                    {
+                        'position': position,
+                    },
+                )
+
+                continue
+
+        except Exception as exc:
+            logger.exception(
+                'Position reconciliation check failed | position_id=%s | symbol=%s | error=%s',
+                position.position_id,
+                position.symbol,
+                exc,
+            )
+            trade_journal.write(
+                'position_reconciliation_warning',
+                {
+                    'position': position,
+                    'message': str(exc),
+                },
+            )
+
         position_tracker.restore_open_position(position)
         risk_manager.restore_open_position(position.symbol)
 
