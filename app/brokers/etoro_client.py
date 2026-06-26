@@ -61,6 +61,8 @@ class EtoroClient(BrokerClient):
             instrument_id=instrument_id,
             side=normalized_side,
             amount=amount,
+            stop_loss=stop_loss,
+            take_profit=take_profit,
         )
 
         logger.warning(
@@ -325,6 +327,8 @@ class EtoroClient(BrokerClient):
         instrument_id: int,
         side: str,
         amount: float,
+        stop_loss: float,
+        take_profit: float,
     ) -> dict:
         transaction = self._open_transaction_for_side(side)
 
@@ -340,6 +344,7 @@ class EtoroClient(BrokerClient):
 
         if side == 'SELL':
             payload['settlementType'] = 'cfd'
+            payload['StopLossRate'] = stop_loss
 
         return payload
 
