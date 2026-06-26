@@ -12,6 +12,9 @@ def build_investment_strategy(settings: Settings) -> InvestmentStrategy:
                 require_green_candle=settings.breakout_require_green_candle,
                 min_close_position_percent=settings.breakout_min_close_position_percent,
                 min_candle_range_percent=settings.breakout_min_candle_range_percent,
+                require_uptrend=settings.breakout_require_uptrend,
+                trend_fast_lookback=settings.breakout_trend_fast_lookback,
+                trend_slow_lookback=settings.breakout_trend_slow_lookback,
             )
         )
 

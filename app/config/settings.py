@@ -47,6 +47,19 @@ class Settings(BaseSettings):
         alias='BREAKOUT_MIN_CANDLE_RANGE_PERCENT',
     )
 
+    breakout_require_uptrend: bool = Field(
+        default=False,
+        alias='BREAKOUT_REQUIRE_UPTREND',
+    )
+    breakout_trend_fast_lookback: int = Field(
+        default=5,
+        alias='BREAKOUT_TREND_FAST_LOOKBACK',
+    )
+    breakout_trend_slow_lookback: int = Field(
+        default=15,
+        alias='BREAKOUT_TREND_SLOW_LOOKBACK',
+    )
+
     risk_strategy: str = Field(default='fixed_percent', alias='RISK_STRATEGY')
     max_open_positions: int = Field(default=1, alias='MAX_OPEN_POSITIONS')
     max_open_positions_per_symbol: int = Field(
