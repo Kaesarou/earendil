@@ -129,14 +129,18 @@ def test_cached_broker_batches_only_uncached_market_snapshots():
     assert 'DOGE' in broker.market_snapshot_cache
 
 
-def test_etoro_batch_market_snapshots_use_search_market_data():
+def test_etoro_batch_market_snapshots_use_paginated_search_market_data():
     delegate = EtoroSearchBroker()
     broker = CachedBrokerClient(delegate=delegate, market_snapshot_ttl_seconds=60.0)
 
     snapshots = broker.get_market_snapshots(['BTC', 'ETH'])
 
     assert list(snapshots) == ['BTC', 'ETH']
-    assert delegate.captured_search_params == {'internalSymbolFull': 'BTC,ETH'}
+    assert delegate.captured_search_params == {
+        'fields': 'instrumentId,internalSymbolFull,cvtBid,cvtAsk,currentRate',
+        'pageSize': 500,
+        'pageNumber': 1,
+    }
     assert snapshots['BTC'].bid == 99.0
     assert snapshots['BTC'].ask == 101.0
     assert snapshots['BTC'].last == 100.0
