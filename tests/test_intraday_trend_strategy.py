@@ -35,7 +35,14 @@ def candle(
     )
 
 
-def config(allow_short: bool = True) -> IntradayTrendStrategyConfig:
+def config(
+    allow_short: bool = True,
+    market_regime_filter_enabled: bool = False,
+    market_regime_min_trend_strength_percent: float = 0.02,
+    market_regime_min_atr_percent: float = 0.0,
+    market_regime_max_atr_percent: float = 0.0,
+    market_regime_max_noise_ratio: float = 0.0,
+) -> IntradayTrendStrategyConfig:
     return IntradayTrendStrategyConfig(
         lookback=3,
         fast_lookback=3,
@@ -47,19 +54,22 @@ def config(allow_short: bool = True) -> IntradayTrendStrategyConfig:
         min_close_position_percent=70.0,
         allow_short=allow_short,
         atr_lookback=5,
+        market_regime_filter_enabled=market_regime_filter_enabled,
+        market_regime_min_trend_strength_percent=market_regime_min_trend_strength_percent,
+        market_regime_min_atr_percent=market_regime_min_atr_percent,
+        market_regime_max_atr_percent=market_regime_max_atr_percent,
+        market_regime_max_noise_ratio=market_regime_max_noise_ratio,
     )
 
 
-def test_intraday_trend_emits_buy_when_session_and_breakout_are_bullish():
-    strategy = IntradayTrendStrategy(config())
-
+def feed_bullish_breakout_setup(strategy: IntradayTrendStrategy):
     strategy.on_candle(candle(open=100.0, close=100.0, high=100.1, low=99.8))
     strategy.on_candle(candle(open=101.0, close=101.0, high=101.1, low=100.8))
     strategy.on_candle(candle(open=102.0, close=102.0, high=102.1, low=101.8))
     strategy.on_candle(candle(open=103.0, close=103.0, high=103.1, low=102.8))
     strategy.on_candle(candle(open=104.0, close=104.0, high=104.1, low=103.8))
 
-    signal = strategy.on_candle(
+    return strategy.on_candle(
         candle(
             open=104.0,
             close=105.2,
@@ -68,11 +78,18 @@ def test_intraday_trend_emits_buy_when_session_and_breakout_are_bullish():
         )
     )
 
+
+def test_intraday_trend_emits_buy_when_session_and_breakout_are_bullish():
+    strategy = IntradayTrendStrategy(config())
+
+    signal = feed_bullish_breakout_setup(strategy)
+
     assert signal.action == 'BUY'
     assert signal.reason == 'intraday_bullish_breakout'
     assert signal.confidence == 0.8
     assert signal.metadata is not None
     assert signal.metadata['atr_percent'] > 0
+    assert signal.metadata['market_regime'] == 'TRENDING'
 
 
 def test_intraday_trend_emits_sell_when_session_and_breakdown_are_bearish():
@@ -98,6 +115,7 @@ def test_intraday_trend_emits_sell_when_session_and_breakdown_are_bearish():
     assert signal.confidence == 0.8
     assert signal.metadata is not None
     assert signal.metadata['atr_percent'] > 0
+    assert signal.metadata['market_regime'] == 'TRENDING'
 
 
 def test_intraday_trend_returns_hold_when_session_move_is_neutral():
@@ -113,6 +131,39 @@ def test_intraday_trend_returns_hold_when_session_move_is_neutral():
 
     assert signal.action == 'HOLD'
     assert signal.reason == 'session_trend_neutral'
+
+
+def test_intraday_trend_rejects_dead_market_when_regime_filter_is_enabled():
+    strategy = IntradayTrendStrategy(config(market_regime_filter_enabled=True))
+
+    strategy.on_candle(candle(open=100.0, close=100.0))
+    strategy.on_candle(candle(open=100.0, close=100.01))
+    strategy.on_candle(candle(open=100.01, close=100.02))
+    strategy.on_candle(candle(open=100.02, close=100.03))
+    strategy.on_candle(candle(open=100.03, close=100.04))
+
+    signal = strategy.on_candle(candle(open=100.04, close=100.05))
+
+    assert signal.action == 'HOLD'
+    assert signal.reason == 'market_regime_dead_market'
+    assert signal.metadata is not None
+    assert signal.metadata['market_regime'] == 'DEAD_MARKET'
+
+
+def test_intraday_trend_rejects_volatile_noisy_market_when_regime_filter_is_enabled():
+    strategy = IntradayTrendStrategy(
+        config(
+            market_regime_filter_enabled=True,
+            market_regime_max_noise_ratio=0.2,
+        )
+    )
+
+    signal = feed_bullish_breakout_setup(strategy)
+
+    assert signal.action == 'HOLD'
+    assert signal.reason == 'market_regime_volatile_noisy'
+    assert signal.metadata is not None
+    assert signal.metadata['market_regime'] == 'VOLATILE_NOISY'
 
 
 def test_intraday_trend_does_not_emit_short_when_short_is_disabled():
