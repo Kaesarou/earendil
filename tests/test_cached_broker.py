@@ -43,14 +43,7 @@ class CountingBroker(BrokerClient):
         self.equity_calls += 1
         return 1000.0 + self.equity_calls
 
-    def open_position(
-        self,
-        symbol: str,
-        side: str,
-        amount: float,
-        stop_loss: float,
-        take_profit: float,
-    ) -> str:
+    def open_position(self, symbol: str, side: str, amount: float, stop_loss: float, take_profit: float) -> str:
         self.open_calls += 1
         position_id = f'position-{self.open_calls}'
         self.positions[position_id] = True
@@ -66,74 +59,45 @@ class CountingBroker(BrokerClient):
 
 
 @dataclass
-class EtoroLikeBroker(CountingBroker):
-    captured_rates_params: dict | None = None
-
-    def _find_instrument_id(self, symbol: str) -> int:
-        return {
-            'BTC': 100000,
-            'ETH': 100001,
-        }[symbol]
+class EtoroSearchBroker(CountingBroker):
+    captured_search_params: dict | None = None
 
     def _get(self, path: str, params: dict | None = None) -> dict:
-        if path == '/api/v1/market-data/search':
-            symbol = params['internalSymbolFull']
-            return {
-                'items': [
-                    {
-                        'internalSymbolFull': symbol,
-                        'internalInstrumentDisplayName': symbol,
-                        'internalInstrumentId': self._find_instrument_id(symbol),
-                        'instrumentId': self._find_instrument_id(symbol) + 10_000,
-                        'currentRate': 100.0,
-                    }
-                ]
-            }
+        if path != '/api/v1/market-data/search':
+            raise AssertionError(f'Unexpected path={path}')
 
-        if path == '/api/v1/market-data/instruments/rates':
-            self.captured_rates_params = params
-            return {
-                'data': [
-                    {
-                        'instrumentId': 110000,
-                        'Bid': 99.0,
-                        'Ask': 101.0,
-                        'Price': 100.0,
-                    },
-                    {
-                        'instrumentId': 110001,
-                        'Bid': 199.0,
-                        'Ask': 201.0,
-                        'Price': 200.0,
-                    },
-                ]
-            }
-
-        raise AssertionError(f'Unexpected path={path}')
+        self.captured_search_params = params
+        return {
+            'items': [
+                {
+                    'internalSymbolFull': 'BTC',
+                    'internalInstrumentDisplayName': 'Bitcoin',
+                    'instrumentId': 100000,
+                    'cvtBid': 99.0,
+                    'cvtAsk': 101.0,
+                    'currentRate': 100.0,
+                },
+                {
+                    'internalSymbolFull': 'ETH',
+                    'internalInstrumentDisplayName': 'Ethereum',
+                    'instrumentId': 100001,
+                    'cvtBid': 199.0,
+                    'cvtAsk': 201.0,
+                    'currentRate': 200.0,
+                },
+            ]
+        }
 
     def _extract_items(self, payload: dict) -> list[dict]:
-        for key in ('items', 'data'):
-            value = payload.get(key)
-            if isinstance(value, list):
-                return value
+        value = payload.get('items')
+        if isinstance(value, list):
+            return value
         return []
-
-    def _to_market_snapshot(self, symbol: str, rates_payload: dict) -> MarketSnapshot:
-        return MarketSnapshot(
-            symbol=symbol,
-            bid=float(rates_payload['Bid']),
-            ask=float(rates_payload['Ask']),
-            last=float(rates_payload['Price']),
-            timestamp=datetime(2026, 6, 27, 12, 0, tzinfo=timezone.utc),
-        )
 
 
 def test_cached_broker_caches_market_snapshots_by_symbol():
     delegate = CountingBroker()
-    broker = CachedBrokerClient(
-        delegate=delegate,
-        market_snapshot_ttl_seconds=60.0,
-    )
+    broker = CachedBrokerClient(delegate=delegate, market_snapshot_ttl_seconds=60.0)
 
     first_snapshot = broker.get_market_snapshot('btc')
     second_snapshot = broker.get_market_snapshot(' BTC ')
@@ -144,10 +108,7 @@ def test_cached_broker_caches_market_snapshots_by_symbol():
 
 def test_cached_broker_batches_missing_market_snapshots():
     delegate = CountingBroker()
-    broker = CachedBrokerClient(
-        delegate=delegate,
-        market_snapshot_ttl_seconds=60.0,
-    )
+    broker = CachedBrokerClient(delegate=delegate, market_snapshot_ttl_seconds=60.0)
 
     snapshots = broker.get_market_snapshots(['BTC', 'ETH', 'DOGE'])
 
@@ -158,10 +119,7 @@ def test_cached_broker_batches_missing_market_snapshots():
 
 def test_cached_broker_batches_only_uncached_market_snapshots():
     delegate = CountingBroker()
-    broker = CachedBrokerClient(
-        delegate=delegate,
-        market_snapshot_ttl_seconds=60.0,
-    )
+    broker = CachedBrokerClient(delegate=delegate, market_snapshot_ttl_seconds=60.0)
 
     broker.get_market_snapshots(['BTC', 'ETH'])
     broker.get_market_snapshots(['BTC', 'ETH', 'DOGE'])
@@ -171,27 +129,25 @@ def test_cached_broker_batches_only_uncached_market_snapshots():
     assert 'DOGE' in broker.market_snapshot_cache
 
 
-def test_etoro_batch_market_snapshots_use_public_instrument_id():
-    delegate = EtoroLikeBroker()
-    broker = CachedBrokerClient(
-        delegate=delegate,
-        market_snapshot_ttl_seconds=60.0,
-    )
+def test_etoro_batch_market_snapshots_use_search_market_data():
+    delegate = EtoroSearchBroker()
+    broker = CachedBrokerClient(delegate=delegate, market_snapshot_ttl_seconds=60.0)
 
     snapshots = broker.get_market_snapshots(['BTC', 'ETH'])
 
     assert list(snapshots) == ['BTC', 'ETH']
-    assert delegate.captured_rates_params == {'instrumentIds': '110000,110001'}
+    assert delegate.captured_search_params == {'internalSymbolFull': 'BTC,ETH'}
+    assert snapshots['BTC'].bid == 99.0
+    assert snapshots['BTC'].ask == 101.0
     assert snapshots['BTC'].last == 100.0
+    assert snapshots['ETH'].bid == 199.0
+    assert snapshots['ETH'].ask == 201.0
     assert snapshots['ETH'].last == 200.0
 
 
 def test_cached_broker_caches_account_equity():
     delegate = CountingBroker()
-    broker = CachedBrokerClient(
-        delegate=delegate,
-        account_equity_ttl_seconds=60.0,
-    )
+    broker = CachedBrokerClient(delegate=delegate, account_equity_ttl_seconds=60.0)
 
     first_equity = broker.get_account_equity()
     second_equity = broker.get_account_equity()
@@ -202,10 +158,7 @@ def test_cached_broker_caches_account_equity():
 
 def test_cached_broker_caches_position_status():
     delegate = CountingBroker(positions={'position-1': True})
-    broker = CachedBrokerClient(
-        delegate=delegate,
-        position_status_ttl_seconds=60.0,
-    )
+    broker = CachedBrokerClient(delegate=delegate, position_status_ttl_seconds=60.0)
 
     assert broker.is_position_open('position-1') is True
     assert broker.is_position_open('position-1') is True
@@ -223,13 +176,7 @@ def test_cached_broker_invalidates_account_and_position_cache_after_open():
     broker.get_account_equity()
     broker.is_position_open('position-1')
 
-    broker.open_position(
-        symbol='BTC',
-        side='BUY',
-        amount=10.0,
-        stop_loss=99.0,
-        take_profit=105.0,
-    )
+    broker.open_position('BTC', 'BUY', 10.0, 99.0, 105.0)
 
     broker.get_account_equity()
     broker.is_position_open('position-1')
