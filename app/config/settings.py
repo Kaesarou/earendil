@@ -123,6 +123,13 @@ class Settings(BaseSettings):
     )
     max_spread_percent: float = Field(default=0.0, alias='MAX_SPREAD_PERCENT')
     min_move_spread_ratio: float = Field(default=0.0, alias='MIN_MOVE_SPREAD_RATIO')
+    dynamic_sl_tp_enabled: bool = Field(default=False, alias='DYNAMIC_SL_TP_ENABLED')
+    stop_loss_atr_multiplier: float = Field(default=1.5, alias='STOP_LOSS_ATR_MULTIPLIER')
+    take_profit_atr_multiplier: float = Field(default=2.5, alias='TAKE_PROFIT_ATR_MULTIPLIER')
+    min_stop_loss_percent: float = Field(default=0.0, alias='MIN_STOP_LOSS_PERCENT')
+    max_stop_loss_percent: float = Field(default=0.0, alias='MAX_STOP_LOSS_PERCENT')
+    min_take_profit_percent: float = Field(default=0.0, alias='MIN_TAKE_PROFIT_PERCENT')
+    max_take_profit_percent: float = Field(default=0.0, alias='MAX_TAKE_PROFIT_PERCENT')
 
     crypto_symbols: str = Field(default='', alias='CRYPTO_SYMBOLS')
     equity_us_symbols: str = Field(default='', alias='EQUITY_US_SYMBOLS')
@@ -168,6 +175,34 @@ class Settings(BaseSettings):
         default=4.0,
         alias='CRYPTO_MIN_MOVE_SPREAD_RATIO',
     )
+    crypto_dynamic_sl_tp_enabled: bool = Field(
+        default=False,
+        alias='CRYPTO_DYNAMIC_SL_TP_ENABLED',
+    )
+    crypto_stop_loss_atr_multiplier: float = Field(
+        default=1.5,
+        alias='CRYPTO_STOP_LOSS_ATR_MULTIPLIER',
+    )
+    crypto_take_profit_atr_multiplier: float = Field(
+        default=2.5,
+        alias='CRYPTO_TAKE_PROFIT_ATR_MULTIPLIER',
+    )
+    crypto_min_stop_loss_percent: float = Field(
+        default=0.8,
+        alias='CRYPTO_MIN_STOP_LOSS_PERCENT',
+    )
+    crypto_max_stop_loss_percent: float = Field(
+        default=2.5,
+        alias='CRYPTO_MAX_STOP_LOSS_PERCENT',
+    )
+    crypto_min_take_profit_percent: float = Field(
+        default=1.5,
+        alias='CRYPTO_MIN_TAKE_PROFIT_PERCENT',
+    )
+    crypto_max_take_profit_percent: float = Field(
+        default=5.0,
+        alias='CRYPTO_MAX_TAKE_PROFIT_PERCENT',
+    )
 
     equity_us_max_position_size_percent: float = Field(
         default=0.75,
@@ -209,6 +244,34 @@ class Settings(BaseSettings):
         default=3.0,
         alias='EQUITY_US_MIN_MOVE_SPREAD_RATIO',
     )
+    equity_us_dynamic_sl_tp_enabled: bool = Field(
+        default=False,
+        alias='EQUITY_US_DYNAMIC_SL_TP_ENABLED',
+    )
+    equity_us_stop_loss_atr_multiplier: float = Field(
+        default=1.2,
+        alias='EQUITY_US_STOP_LOSS_ATR_MULTIPLIER',
+    )
+    equity_us_take_profit_atr_multiplier: float = Field(
+        default=2.0,
+        alias='EQUITY_US_TAKE_PROFIT_ATR_MULTIPLIER',
+    )
+    equity_us_min_stop_loss_percent: float = Field(
+        default=0.4,
+        alias='EQUITY_US_MIN_STOP_LOSS_PERCENT',
+    )
+    equity_us_max_stop_loss_percent: float = Field(
+        default=1.5,
+        alias='EQUITY_US_MAX_STOP_LOSS_PERCENT',
+    )
+    equity_us_min_take_profit_percent: float = Field(
+        default=0.8,
+        alias='EQUITY_US_MIN_TAKE_PROFIT_PERCENT',
+    )
+    equity_us_max_take_profit_percent: float = Field(
+        default=3.0,
+        alias='EQUITY_US_MAX_TAKE_PROFIT_PERCENT',
+    )
 
     equity_eu_max_position_size_percent: float = Field(
         default=0.75,
@@ -249,6 +312,34 @@ class Settings(BaseSettings):
     equity_eu_min_move_spread_ratio: float = Field(
         default=3.0,
         alias='EQUITY_EU_MIN_MOVE_SPREAD_RATIO',
+    )
+    equity_eu_dynamic_sl_tp_enabled: bool = Field(
+        default=False,
+        alias='EQUITY_EU_DYNAMIC_SL_TP_ENABLED',
+    )
+    equity_eu_stop_loss_atr_multiplier: float = Field(
+        default=1.2,
+        alias='EQUITY_EU_STOP_LOSS_ATR_MULTIPLIER',
+    )
+    equity_eu_take_profit_atr_multiplier: float = Field(
+        default=2.0,
+        alias='EQUITY_EU_TAKE_PROFIT_ATR_MULTIPLIER',
+    )
+    equity_eu_min_stop_loss_percent: float = Field(
+        default=0.4,
+        alias='EQUITY_EU_MIN_STOP_LOSS_PERCENT',
+    )
+    equity_eu_max_stop_loss_percent: float = Field(
+        default=1.5,
+        alias='EQUITY_EU_MAX_STOP_LOSS_PERCENT',
+    )
+    equity_eu_min_take_profit_percent: float = Field(
+        default=0.8,
+        alias='EQUITY_EU_MIN_TAKE_PROFIT_PERCENT',
+    )
+    equity_eu_max_take_profit_percent: float = Field(
+        default=3.0,
+        alias='EQUITY_EU_MAX_TAKE_PROFIT_PERCENT',
     )
 
     short_selling_enabled: bool = Field(
