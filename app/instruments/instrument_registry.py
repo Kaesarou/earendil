@@ -49,6 +49,8 @@ class InstrumentRegistry:
                 force_close_enabled=self.settings.crypto_force_close_enabled,
                 force_close_hour=self.settings.crypto_force_close_hour,
                 force_close_minute=self.settings.crypto_force_close_minute,
+                max_spread_percent=self.settings.crypto_max_spread_percent,
+                min_move_spread_ratio=self.settings.crypto_min_move_spread_ratio,
             )
 
         if instrument_profile.asset_class == AssetClass.EQUITY_US:
@@ -62,6 +64,8 @@ class InstrumentRegistry:
                 force_close_enabled=self.settings.equity_us_force_close_enabled,
                 force_close_hour=self.settings.equity_us_force_close_hour,
                 force_close_minute=self.settings.equity_us_force_close_minute,
+                max_spread_percent=self.settings.equity_us_max_spread_percent,
+                min_move_spread_ratio=self.settings.equity_us_min_move_spread_ratio,
             )
 
         if instrument_profile.asset_class == AssetClass.EQUITY_EU:
@@ -75,6 +79,8 @@ class InstrumentRegistry:
                 force_close_enabled=self.settings.equity_eu_force_close_enabled,
                 force_close_hour=self.settings.equity_eu_force_close_hour,
                 force_close_minute=self.settings.equity_eu_force_close_minute,
+                max_spread_percent=self.settings.equity_eu_max_spread_percent,
+                min_move_spread_ratio=self.settings.equity_eu_min_move_spread_ratio,
             )
 
         return RiskProfile(
@@ -87,6 +93,8 @@ class InstrumentRegistry:
             force_close_enabled=True,
             force_close_hour=self.settings.force_close_hour,
             force_close_minute=self.settings.force_close_minute,
+            max_spread_percent=self.settings.max_spread_percent,
+            min_move_spread_ratio=self.settings.min_move_spread_ratio,
         )
 
     def _parse_symbols(self, raw_symbols: str) -> set[str]:
