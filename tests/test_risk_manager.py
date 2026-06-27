@@ -1,4 +1,5 @@
 from app.config.settings import Settings
+from app.instruments.instrument_registry import InstrumentRegistry
 from app.market.models import MarketSnapshot
 from app.risk.position_sizing import FixedPercentPositionSizing
 from app.risk.risk_manager import RiskManager
@@ -12,6 +13,13 @@ def build_risk_manager(
     estimated_round_trip_fees: float = 0.0,
     min_expected_net_profit: float = 0.0,
     short_selling_enabled: bool = False,
+    crypto_symbols: str = '',
+    crypto_max_position_size_percent: float = 0.75,
+    crypto_stop_loss_percent: float = 1.5,
+    crypto_take_profit_percent: float = 3.0,
+    crypto_estimated_round_trip_fees: float = 3.0,
+    crypto_min_expected_net_profit: float = 8.0,
+    crypto_force_close_enabled: bool = False,
 ) -> RiskManager:
     settings = Settings(
         MAX_OPEN_POSITIONS=max_open_positions,
@@ -25,11 +33,19 @@ def build_risk_manager(
         FORCE_CLOSE_HOUR=23,
         FORCE_CLOSE_MINUTE=59,
         SHORT_SELLING_ENABLED=short_selling_enabled,
+        CRYPTO_SYMBOLS=crypto_symbols,
+        CRYPTO_MAX_POSITION_SIZE_PERCENT=crypto_max_position_size_percent,
+        CRYPTO_STOP_LOSS_PERCENT=crypto_stop_loss_percent,
+        CRYPTO_TAKE_PROFIT_PERCENT=crypto_take_profit_percent,
+        CRYPTO_ESTIMATED_ROUND_TRIP_FEES=crypto_estimated_round_trip_fees,
+        CRYPTO_MIN_EXPECTED_NET_PROFIT=crypto_min_expected_net_profit,
+        CRYPTO_FORCE_CLOSE_ENABLED=crypto_force_close_enabled,
     )
 
     return RiskManager(
         settings=settings,
         position_sizing_strategy=FixedPercentPositionSizing(),
+        instrument_registry=InstrumentRegistry(settings),
     )
 
 
@@ -49,12 +65,14 @@ def buy_signal() -> Signal:
         reason='test_buy',
     )
 
+
 def sell_signal() -> Signal:
     return Signal(
         action='SELL',
         confidence=0.65,
         reason='test_sell',
     )
+
 
 def test_risk_manager_approves_buy_when_no_position_is_open():
     risk_manager = build_risk_manager()
@@ -73,6 +91,32 @@ def test_risk_manager_approves_buy_when_no_position_is_open():
     assert plan.expected_gross_profit == 0.2
     assert plan.estimated_fees == 0.0
     assert plan.expected_net_profit == 0.2
+
+
+def test_risk_manager_uses_crypto_risk_profile_for_crypto_symbol():
+    risk_manager = build_risk_manager(
+        crypto_symbols='DOGE',
+        crypto_max_position_size_percent=1.0,
+        crypto_stop_loss_percent=1.5,
+        crypto_take_profit_percent=3.0,
+        crypto_estimated_round_trip_fees=0.5,
+        crypto_min_expected_net_profit=2.0,
+    )
+
+    plan = risk_manager.evaluate(
+        signal=buy_signal(),
+        snapshot=snapshot('DOGE'),
+        account_equity=1000.0,
+    )
+
+    assert plan.approved
+    assert plan.symbol == 'DOGE'
+    assert plan.amount == 10.0
+    assert plan.stop_loss == 98.5
+    assert plan.take_profit == 103.0
+    assert plan.expected_gross_profit == 0.3
+    assert plan.estimated_fees == 0.5
+    assert plan.expected_net_profit == -0.2
 
 
 def test_risk_manager_rejects_when_total_open_positions_limit_is_reached():
@@ -236,6 +280,7 @@ def test_risk_manager_approves_when_expected_net_profit_matches_minimum():
     assert plan.expected_gross_profit == 0.2
     assert plan.estimated_fees == 0.05
     assert plan.expected_net_profit == 0.15
+
 
 def test_risk_manager_rejects_sell_when_short_selling_is_disabled():
     risk_manager = build_risk_manager(short_selling_enabled=False)
