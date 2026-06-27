@@ -5,23 +5,21 @@ from app.brokers.base import BrokerClient
 from app.brokers.etoro_client import EtoroClient
 from app.brokers.fake_broker import FakeBrokerClient
 from app.config.settings import Settings, get_settings
+from app.execution.candidate_ranking import build_trade_candidate
 from app.execution.position_tracker import PositionTracker
+from app.execution.pre_scan import PreScanConfig, pre_scan_candidates
+from app.execution.trade_candidate import TradeCandidate
 from app.execution.trade_executor import TradeExecutor
+from app.instruments.instrument_registry import InstrumentRegistry
 from app.journal.jsonl_journal import JsonlJournal
 from app.market.candle_builder import CandleBuilder
+from app.persistence.position_store import PositionStore
+from app.risk.models import TradePlan
 from app.risk.position_sizing import build_position_sizing_strategy
 from app.risk.risk_manager import RiskManager
 from app.strategies.base import InvestmentStrategy
 from app.strategies.factory import build_investment_strategy
 from app.utils.logging import configure_logging
-from app.risk.models import TradePlan
-from app.execution.candidate_ranking import (
-    build_trade_candidate,
-    rank_trade_candidates,
-)
-from app.execution.trade_candidate import TradeCandidate
-from app.instruments.instrument_registry import InstrumentRegistry
-from app.persistence.position_store import PositionStore
 
 logger = logging.getLogger(__name__)
 
@@ -62,9 +60,7 @@ def build_candle_builders(
     symbols: list[str],
 ) -> dict[str, CandleBuilder]:
     return {
-        symbol: CandleBuilder(
-            timeframe_seconds=settings.candle_timeframe_seconds,
-        )
+        symbol: CandleBuilder(timeframe_seconds=settings.candle_timeframe_seconds)
         for symbol in symbols
     }
 
@@ -73,10 +69,7 @@ def build_strategies(
     settings: Settings,
     symbols: list[str],
 ) -> dict[str, InvestmentStrategy]:
-    return {
-        symbol: build_investment_strategy(settings)
-        for symbol in symbols
-    }
+    return {symbol: build_investment_strategy(settings) for symbol in symbols}
 
 
 def restore_persisted_positions(
@@ -105,16 +98,11 @@ def restore_persisted_positions(
                     position.position_id,
                     position.symbol,
                 )
-
                 position_store.delete_open_position(position.position_id)
-
                 trade_journal.write(
                     'position_reconciled_closed',
-                    {
-                        'position': position,
-                    },
+                    {'position': position},
                 )
-
                 continue
 
         except Exception as exc:
@@ -126,10 +114,7 @@ def restore_persisted_positions(
             )
             trade_journal.write(
                 'position_reconciliation_warning',
-                {
-                    'position': position,
-                    'message': str(exc),
-                },
+                {'position': position, 'message': str(exc)},
             )
 
         position_tracker.restore_open_position(position)
@@ -150,10 +135,7 @@ def restore_persisted_positions(
                 )
                 trade_journal.write(
                     'position_restore_warning',
-                    {
-                        'position': position,
-                        'message': str(exc),
-                    },
+                    {'position': position, 'message': str(exc)},
                 )
 
         trade_journal.write(
@@ -235,15 +217,9 @@ def process_symbol(
 
     closed_candle = candle_builder.on_snapshot(snapshot)
     if closed_candle is None:
-        return
+        return None
 
-    candle_journal.write(
-        'candle_closed',
-        {
-            'symbol': symbol,
-            'candle': closed_candle,
-        },
-    )
+    candle_journal.write('candle_closed', {'symbol': symbol, 'candle': closed_candle})
 
     logger.info(
         'Candle closed | symbol=%s | open=%s | high=%s | low=%s | close=%s | opened_at=%s | closed_at=%s',
@@ -273,7 +249,6 @@ def process_symbol(
             symbol=symbol,
             side=signal.action,
         )
-
         trade_journal.write(
             'decision',
             {
@@ -287,9 +262,8 @@ def process_symbol(
                 'risk_profile': risk_manager.risk_profile_for(symbol),
             },
         )
-
         logger.info('Trade rejected: %s', plan.reason)
-        return
+        return None
 
     candidate = build_trade_candidate(
         symbol=symbol,
@@ -330,18 +304,44 @@ def execute_ranked_candidates(
     position_tracker: PositionTracker,
     trade_journal: JsonlJournal,
     position_store: PositionStore | None = None,
+    settings: Settings | None = None,
 ) -> None:
     if not candidates:
         return
 
-    ranked_candidates = rank_trade_candidates(candidates)
-
-    trade_journal.write(
-        'candidate_ranking',
-        {
-            'candidates': ranked_candidates,
-        },
+    pre_scan_config = (
+        PreScanConfig.from_settings(settings)
+        if settings is not None
+        else PreScanConfig(enabled=False)
     )
+    pre_scan_result = pre_scan_candidates(candidates, pre_scan_config)
+    ranked_candidates = pre_scan_result.selected_candidates
+
+    if pre_scan_config.enabled:
+        trade_journal.write(
+            'pre_scan',
+            {
+                'config': pre_scan_config,
+                'selected_candidates': pre_scan_result.selected_candidates,
+                'rejected_candidates': pre_scan_result.rejected_candidates,
+            },
+        )
+        logger.info(
+            'Pre-scan | selected=%s | rejected=%s',
+            [candidate.symbol for candidate in pre_scan_result.selected_candidates],
+            [
+                {
+                    'symbol': rejected.candidate.symbol,
+                    'reason': rejected.reason,
+                }
+                for rejected in pre_scan_result.rejected_candidates
+            ],
+        )
+
+    if not ranked_candidates:
+        return
+
+    trade_journal.write('candidate_ranking', {'candidates': ranked_candidates})
 
     logger.info(
         'Candidate ranking | candidates=%s',
@@ -391,7 +391,6 @@ def execute_ranked_candidates(
                 trade_plan=plan,
                 entry_price=candidate.snapshot.last,
             )
-
             risk_manager.record_open_position(candidate.symbol)
 
             if position_store is not None:
@@ -448,10 +447,7 @@ def execute_ranked_candidates(
 
 def main() -> None:
     settings = get_settings()
-    configure_logging(
-        level=settings.log_level,
-        log_file_path=settings.app_log_path,
-    )
+    configure_logging(level=settings.log_level, log_file_path=settings.app_log_path)
 
     symbols = settings.watchlist_symbols()
     instrument_registry = InstrumentRegistry(settings)
@@ -474,14 +470,9 @@ def main() -> None:
 
     market_data_broker = build_market_data_broker(settings)
     execution_broker = build_execution_broker(settings)
-
     strategies = build_strategies(settings, symbols)
     candle_builders = build_candle_builders(settings, symbols)
-
-    risk_manager = build_risk_manager(
-        settings=settings,
-        instrument_registry=instrument_registry,
-    )
+    risk_manager = build_risk_manager(settings=settings, instrument_registry=instrument_registry)
     executor = TradeExecutor(execution_broker)
     position_tracker = PositionTracker()
     position_store = PositionStore(settings.position_store_path)
@@ -501,7 +492,6 @@ def main() -> None:
     while True:
         try:
             candidates: list[TradeCandidate] = []
-
             for symbol in symbols:
                 try:
                     candidate = process_symbol(
@@ -522,18 +512,8 @@ def main() -> None:
                         candidates.append(candidate)
 
                 except Exception as exc:
-                    logger.exception(
-                        'Symbol processing error | symbol=%s | error=%s',
-                        symbol,
-                        exc,
-                    )
-                    trade_journal.write(
-                        'error',
-                        {
-                            'symbol': symbol,
-                            'message': str(exc),
-                        },
-                    )
+                    logger.exception('Symbol processing error | symbol=%s | error=%s', symbol, exc)
+                    trade_journal.write('error', {'symbol': symbol, 'message': str(exc)})
 
             execute_ranked_candidates(
                 candidates=candidates,
@@ -543,20 +523,15 @@ def main() -> None:
                 position_tracker=position_tracker,
                 trade_journal=trade_journal,
                 position_store=position_store,
+                settings=settings,
             )
 
         except KeyboardInterrupt:
             logger.info('Stopping Eärendil')
             break
-
         except Exception as exc:
             logger.exception('Bot loop error: %s', exc)
-            trade_journal.write(
-                'error',
-                {
-                    'message': str(exc),
-                },
-            )
+            trade_journal.write('error', {'message': str(exc)})
 
         time.sleep(settings.poll_interval_seconds)
 
