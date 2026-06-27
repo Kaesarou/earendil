@@ -20,6 +20,7 @@ from app.execution.candidate_ranking import (
     rank_trade_candidates,
 )
 from app.execution.trade_candidate import TradeCandidate
+from app.instruments.instrument_registry import InstrumentRegistry
 from app.persistence.position_store import PositionStore
 
 logger = logging.getLogger(__name__)
@@ -45,10 +46,14 @@ def build_execution_broker(settings: Settings) -> BrokerClient:
     raise ValueError(f'Unsupported execution mode: {settings.ear_mode}')
 
 
-def build_risk_manager(settings: Settings) -> RiskManager:
+def build_risk_manager(
+    settings: Settings,
+    instrument_registry: InstrumentRegistry,
+) -> RiskManager:
     return RiskManager(
         settings=settings,
-        position_sizing_strategy=build_position_sizing_strategy(settings),
+        position_sizing_strategy=build_position_sizing_strategy(settings.risk_strategy),
+        instrument_registry=instrument_registry,
     )
 
 
@@ -72,6 +77,7 @@ def build_strategies(
         symbol: build_investment_strategy(settings)
         for symbol in symbols
     }
+
 
 def restore_persisted_positions(
     position_store: PositionStore,
@@ -154,8 +160,11 @@ def restore_persisted_positions(
             'position_restored',
             {
                 'position': position,
+                'instrument_profile': risk_manager.instrument_profile_for(position.symbol),
+                'risk_profile': risk_manager.risk_profile_for(position.symbol),
             },
         )
+
 
 def process_symbol(
     symbol: str,
@@ -274,6 +283,8 @@ def process_symbol(
                 'signal': signal,
                 'equity': None,
                 'trade_plan': plan,
+                'instrument_profile': risk_manager.instrument_profile_for(symbol),
+                'risk_profile': risk_manager.risk_profile_for(symbol),
             },
         )
 
@@ -295,6 +306,8 @@ def process_symbol(
             'candle': closed_candle,
             'signal': signal,
             'candidate': candidate,
+            'instrument_profile': risk_manager.instrument_profile_for(symbol),
+            'risk_profile': risk_manager.risk_profile_for(symbol),
         },
     )
 
@@ -307,6 +320,7 @@ def process_symbol(
     )
 
     return candidate
+
 
 def execute_ranked_candidates(
     candidates: list[TradeCandidate],
@@ -350,6 +364,8 @@ def execute_ranked_candidates(
                 snapshot=candidate.snapshot,
                 account_equity=equity,
             )
+            instrument_profile = risk_manager.instrument_profile_for(candidate.symbol)
+            risk_profile = risk_manager.risk_profile_for(candidate.symbol)
 
             trade_journal.write(
                 'decision',
@@ -361,6 +377,8 @@ def execute_ranked_candidates(
                     'candidate': candidate,
                     'equity': equity,
                     'trade_plan': plan,
+                    'instrument_profile': instrument_profile,
+                    'risk_profile': risk_profile,
                 },
             )
 
@@ -404,6 +422,8 @@ def execute_ranked_candidates(
                     'position': tracked_position,
                     'candidate': candidate,
                     'trade_plan': plan,
+                    'instrument_profile': instrument_profile,
+                    'risk_profile': risk_profile,
                 },
             )
 
@@ -425,6 +445,7 @@ def execute_ranked_candidates(
             )
             continue
 
+
 def main() -> None:
     settings = get_settings()
     configure_logging(
@@ -433,6 +454,7 @@ def main() -> None:
     )
 
     symbols = settings.watchlist_symbols()
+    instrument_registry = InstrumentRegistry(settings)
 
     logger.info(
         'Starting Eärendil | mode=%s | broker=%s | etoro_env=%s | real_trading_enabled=%s | strategy=%s | risk_strategy=%s | watchlist=%s',
@@ -456,7 +478,10 @@ def main() -> None:
     strategies = build_strategies(settings, symbols)
     candle_builders = build_candle_builders(settings, symbols)
 
-    risk_manager = build_risk_manager(settings)
+    risk_manager = build_risk_manager(
+        settings=settings,
+        instrument_registry=instrument_registry,
+    )
     executor = TradeExecutor(execution_broker)
     position_tracker = PositionTracker()
     position_store = PositionStore(settings.position_store_path)
