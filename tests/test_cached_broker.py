@@ -59,39 +59,11 @@ class CountingBroker(BrokerClient):
 
 
 @dataclass
-class EtoroSearchBroker(CountingBroker):
-    captured_search_params: dict | None = None
-
+class EtoroLikeBroker(CountingBroker):
     def _get(self, path: str, params: dict | None = None) -> dict:
-        if path != '/api/v1/market-data/search':
-            raise AssertionError(f'Unexpected path={path}')
-
-        self.captured_search_params = params
-        return {
-            'items': [
-                {
-                    'internalSymbolFull': 'BTC',
-                    'internalInstrumentDisplayName': 'Bitcoin',
-                    'instrumentId': 100000,
-                    'cvtBid': 99.0,
-                    'cvtAsk': 101.0,
-                    'currentRate': 100.0,
-                },
-                {
-                    'internalSymbolFull': 'ETH',
-                    'internalInstrumentDisplayName': 'Ethereum',
-                    'instrumentId': 100001,
-                    'cvtBid': 199.0,
-                    'cvtAsk': 201.0,
-                    'currentRate': 200.0,
-                },
-            ]
-        }
+        raise AssertionError('eToro-like cached fallback should use per-symbol snapshot loading')
 
     def _extract_items(self, payload: dict) -> list[dict]:
-        value = payload.get('items')
-        if isinstance(value, list):
-            return value
         return []
 
 
@@ -129,24 +101,15 @@ def test_cached_broker_batches_only_uncached_market_snapshots():
     assert 'DOGE' in broker.market_snapshot_cache
 
 
-def test_etoro_batch_market_snapshots_use_paginated_search_market_data():
-    delegate = EtoroSearchBroker()
+def test_cached_broker_uses_per_symbol_loading_for_etoro_like_delegate():
+    delegate = EtoroLikeBroker()
     broker = CachedBrokerClient(delegate=delegate, market_snapshot_ttl_seconds=60.0)
 
     snapshots = broker.get_market_snapshots(['BTC', 'ETH'])
 
     assert list(snapshots) == ['BTC', 'ETH']
-    assert delegate.captured_search_params == {
-        'fields': 'instrumentId,internalSymbolFull,cvtBid,cvtAsk,currentRate',
-        'pageSize': 500,
-        'pageNumber': 1,
-    }
-    assert snapshots['BTC'].bid == 99.0
-    assert snapshots['BTC'].ask == 101.0
-    assert snapshots['BTC'].last == 100.0
-    assert snapshots['ETH'].bid == 199.0
-    assert snapshots['ETH'].ask == 201.0
-    assert snapshots['ETH'].last == 200.0
+    assert delegate.snapshot_calls == 2
+    assert delegate.batch_snapshot_calls == 0
 
 
 def test_cached_broker_caches_account_equity():
