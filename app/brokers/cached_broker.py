@@ -29,8 +29,7 @@ class CachedBrokerClient(BrokerClient):
     batch_market_rates_disabled_until: float = 0.0
 
     def get_market_snapshot(self, symbol: str) -> MarketSnapshot:
-        snapshots = self.get_market_snapshots([symbol])
-        return snapshots[symbol]
+        return self.get_market_snapshots([symbol])[symbol]
 
     def get_market_snapshots(self, symbols: list[str]) -> dict[str, MarketSnapshot]:
         snapshots: dict[str, MarketSnapshot] = {}
@@ -48,11 +47,10 @@ class CachedBrokerClient(BrokerClient):
                 key=normalized_symbol,
                 cache_name='market_snapshot',
             )
-            if cached_snapshot is not None:
+            if cached_snapshot is None:
+                symbols_to_load.append(symbol)
+            else:
                 snapshots[symbol] = cached_snapshot
-                continue
-
-            symbols_to_load.append(symbol)
 
         if symbols_to_load:
             loaded_snapshots = self._load_market_snapshots(symbols_to_load)
@@ -65,11 +63,7 @@ class CachedBrokerClient(BrokerClient):
                     ttl_seconds=self.market_snapshot_ttl_seconds,
                 )
 
-        return {
-            symbol: snapshots[symbol]
-            for symbol in symbols
-            if symbol in snapshots
-        }
+        return {symbol: snapshots[symbol] for symbol in symbols if symbol in snapshots}
 
     def get_account_equity(self) -> float:
         now = self._now()
@@ -83,28 +77,11 @@ class CachedBrokerClient(BrokerClient):
 
         self._log_cache_miss('account_equity', 'account')
         equity = self.delegate.get_account_equity()
-        if self.account_equity_ttl_seconds > 0:
-            self.account_equity_cache = CacheEntry(
-                expires_at=now + self.account_equity_ttl_seconds,
-                value=equity,
-            )
+        self.account_equity_cache = self._build_entry(equity, self.account_equity_ttl_seconds)
         return equity
 
-    def open_position(
-        self,
-        symbol: str,
-        side: str,
-        amount: float,
-        stop_loss: float,
-        take_profit: float,
-    ) -> str:
-        position_id = self.delegate.open_position(
-            symbol=symbol,
-            side=side,
-            amount=amount,
-            stop_loss=stop_loss,
-            take_profit=take_profit,
-        )
+    def open_position(self, symbol: str, side: str, amount: float, stop_loss: float, take_profit: float) -> str:
+        position_id = self.delegate.open_position(symbol, side, amount, stop_loss, take_profit)
         self.invalidate_account_and_positions()
         return position_id
 
@@ -139,7 +116,6 @@ class CachedBrokerClient(BrokerClient):
         if symbol is None:
             self.market_snapshot_cache.clear()
             return
-
         self.market_snapshot_cache.pop(self._normalize_symbol(symbol), None)
 
     def invalidate_account_and_positions(self) -> None:
@@ -153,19 +129,76 @@ class CachedBrokerClient(BrokerClient):
             except Exception as exc:
                 if self._is_broker_auth_error(exc):
                     raise
-
                 self._disable_batch_market_rates_temporarily(exc)
 
-        return {
-            symbol: self.delegate.get_market_snapshot(symbol)
-            for symbol in symbols
-        }
+        return {symbol: self.delegate.get_market_snapshot(symbol) for symbol in symbols}
+
+    def _load_batch_market_snapshots(self, symbols: list[str]) -> dict[str, MarketSnapshot]:
+        if self._looks_like_etoro_delegate():
+            return self._load_etoro_search_market_snapshots(symbols)
+
+        return self.delegate.get_market_snapshots(symbols)
+
+    def _load_etoro_search_market_snapshots(self, symbols: list[str]) -> dict[str, MarketSnapshot]:
+        normalized_symbols = [self._normalize_symbol(symbol) for symbol in symbols]
+        payload = self.delegate._get(
+            '/api/v1/market-data/search',
+            params={'internalSymbolFull': ','.join(normalized_symbols)},
+        )
+        items_by_symbol = self._index_search_items_by_symbol(self.delegate._extract_items(payload))
+
+        missing_symbols = [symbol for symbol in normalized_symbols if symbol not in items_by_symbol]
+        if missing_symbols:
+            raise ValueError(f'Missing search market data for symbols={missing_symbols}')
+
+        snapshots: dict[str, MarketSnapshot] = {}
+        for symbol in symbols:
+            normalized_symbol = self._normalize_symbol(symbol)
+            snapshots[symbol] = self._to_market_snapshot_from_search_item(
+                symbol=symbol,
+                item=items_by_symbol[normalized_symbol],
+            )
+
+        logger.info('eToro batch market snapshots resolved from search | symbols=%s', list(snapshots))
+        return snapshots
+
+    def _looks_like_etoro_delegate(self) -> bool:
+        return all(hasattr(self.delegate, name) for name in ('_get', '_extract_items'))
+
+    def _index_search_items_by_symbol(self, items: list[dict]) -> dict[str, dict]:
+        indexed_items: dict[str, dict] = {}
+        for item in items:
+            symbol = item.get('internalSymbolFull')
+            if symbol is not None:
+                indexed_items[self._normalize_symbol(str(symbol))] = item
+        return indexed_items
+
+    def _to_market_snapshot_from_search_item(self, symbol: str, item: dict) -> MarketSnapshot:
+        bid = self._extract_required_float(item, ('cvtBid', 'CvtBid', 'bid', 'Bid', 'bidPrice'))
+        ask = self._extract_required_float(item, ('cvtAsk', 'CvtAsk', 'ask', 'Ask', 'askPrice'))
+        last = self._extract_optional_float(
+            item,
+            ('currentRate', 'CurrentRate', 'last', 'Last', 'lastPrice', 'price', 'Price'),
+        )
+        if last is None:
+            last = (bid + ask) / 2
+        return MarketSnapshot.now(symbol=symbol, bid=bid, ask=ask, last=last)
+
+    def _extract_required_float(self, payload: dict, keys: tuple[str, ...]) -> float:
+        value = self._extract_optional_float(payload, keys)
+        if value is None:
+            raise ValueError(f'Unable to extract required float keys={keys}')
+        return value
+
+    def _extract_optional_float(self, payload: dict, keys: tuple[str, ...]) -> float | None:
+        for key in keys:
+            value = payload.get(key)
+            if value is not None:
+                return float(value)
+        return None
 
     def _should_use_batch_market_rates(self) -> bool:
-        return (
-            self.batch_market_rates_enabled
-            and self.batch_market_rates_disabled_until <= self._now()
-        )
+        return self.batch_market_rates_enabled and self.batch_market_rates_disabled_until <= self._now()
 
     def _disable_batch_market_rates_temporarily(self, exc: Exception) -> None:
         self.batch_market_rates_disabled_until = self._now() + self.batch_retry_after_seconds
@@ -175,191 +208,32 @@ class CachedBrokerClient(BrokerClient):
             exc,
         )
 
-    def _load_batch_market_snapshots(self, symbols: list[str]) -> dict[str, MarketSnapshot]:
-        if self._looks_like_etoro_delegate():
-            return self._load_etoro_batch_market_snapshots(symbols)
-
-        delegate_batch_loader = getattr(self.delegate, 'get_market_snapshots', None)
-        if delegate_batch_loader is None:
-            raise RuntimeError('Delegate does not expose batch market snapshots')
-
-        return delegate_batch_loader(symbols)
-
-    def _looks_like_etoro_delegate(self) -> bool:
-        return all(
-            hasattr(self.delegate, name)
-            for name in (
-                '_find_instrument_id',
-                '_get',
-                '_extract_items',
-                '_to_market_snapshot',
-            )
-        )
-
-    def _load_etoro_batch_market_snapshots(
-        self,
-        symbols: list[str],
-    ) -> dict[str, MarketSnapshot]:
-        symbol_by_instrument_id: dict[int, str] = {}
-        for symbol in symbols:
-            instrument_id = self._find_etoro_rates_instrument_id(symbol)
-            symbol_by_instrument_id[instrument_id] = symbol
-
-        rates_payload = self.delegate._get(
-            '/api/v1/market-data/instruments/rates',
-            params={'instrumentIds': ','.join(str(item) for item in symbol_by_instrument_id)},
-        )
-        rates_by_instrument_id = self._index_rates_by_instrument_id(
-            self.delegate._extract_items(rates_payload),
-        )
-
-        snapshots: dict[str, MarketSnapshot] = {}
-        for instrument_id, symbol in symbol_by_instrument_id.items():
-            rate = rates_by_instrument_id.get(instrument_id)
-            if rate is None:
-                raise ValueError(
-                    f'Missing eToro batch rate for symbol={symbol} instrument_id={instrument_id}. Payload={rates_payload}'
-                )
-
-            snapshots[symbol] = self.delegate._to_market_snapshot(
-                symbol=symbol,
-                rates_payload=rate,
-            )
-
-        logger.info(
-            'eToro batch market snapshots resolved | symbols=%s | instrument_ids=%s',
-            list(snapshots),
-            list(symbol_by_instrument_id),
-        )
-        return snapshots
-
-    def _find_etoro_rates_instrument_id(self, symbol: str) -> int:
-        normalized_symbol = self._normalize_symbol(symbol)
-        payload = self.delegate._get(
-            '/api/v1/market-data/search',
-            params={'internalSymbolFull': symbol},
-        )
-        items = self.delegate._extract_items(payload)
-
-        exact_matches = [
-            item for item in items
-            if str(item.get('internalSymbolFull', '')).upper() == normalized_symbol
-        ]
-        if not exact_matches:
-            raise ValueError(f'No exact eToro instrument match found for symbol={symbol}. Payload={payload}')
-
-        instrument = exact_matches[0]
-        instrument_id = self._extract_search_instrument_id(instrument)
-        if instrument_id is None:
-            raise ValueError(f'Unable to find eToro instrumentId for symbol={symbol}. Instrument={instrument}')
-
-        internal_instrument_id = self._extract_search_internal_instrument_id(instrument)
-        resolved_instrument_id = int(instrument_id)
-
-        logger.info(
-            'Selected eToro rates instrument | symbol=%s | display_name=%s | instrument_id=%s | internal_instrument_id=%s | current_rate=%s',
-            instrument.get('internalSymbolFull'),
-            instrument.get('internalInstrumentDisplayName'),
-            resolved_instrument_id,
-            internal_instrument_id,
-            instrument.get('currentRate'),
-        )
-        return resolved_instrument_id
-
-    def _extract_search_instrument_id(self, instrument: dict) -> int | None:
-        for key in (
-            'instrumentId',
-            'InstrumentId',
-            'instrumentID',
-            'InstrumentID',
-            'id',
-        ):
-            value = instrument.get(key)
-            if value is not None:
-                return int(value)
-
-        return None
-
-    def _extract_search_internal_instrument_id(self, instrument: dict) -> int | None:
-        for key in (
-            'internalInstrumentId',
-            'internalInstrumentID',
-            'InternalInstrumentId',
-            'InternalInstrumentID',
-        ):
-            value = instrument.get(key)
-            if value is not None:
-                return int(value)
-
-        return None
-
-    def _index_rates_by_instrument_id(self, rates: list[dict]) -> dict[int, dict]:
-        indexed_rates: dict[int, dict] = {}
-        for rate in rates:
-            instrument_id = self._extract_rate_instrument_id(rate)
-            if instrument_id is None:
-                continue
-
-            indexed_rates[instrument_id] = rate
-
-        return indexed_rates
-
-    def _extract_rate_instrument_id(self, rate: dict) -> int | None:
-        for key in (
-            'instrumentId',
-            'instrumentID',
-            'InstrumentId',
-            'InstrumentID',
-            'internalInstrumentId',
-            'internalInstrumentID',
-            'id',
-        ):
-            value = rate.get(key)
-            if value is not None:
-                return int(value)
-
-        return None
-
     def _is_broker_auth_error(self, exc: Exception) -> bool:
         response = getattr(exc, 'response', None)
         status_code = getattr(response, 'status_code', None)
         return status_code in (401, 403)
 
-    def _get_cache_entry(
-        self,
-        cache: dict[str, CacheEntry],
-        key: str,
-        cache_name: str,
-    ):
+    def _get_cache_entry(self, cache: dict[str, CacheEntry], key: str, cache_name: str):
         entry = cache.get(key)
         now = self._now()
-
         if entry is None:
             self._log_cache_miss(cache_name, key)
             return None
-
         if entry.expires_at <= now:
             cache.pop(key, None)
             self._log_cache_miss(cache_name, key)
             return None
-
         self._log_cache_hit(cache_name, key)
         return entry.value
 
-    def _put_cache_entry(
-        self,
-        cache: dict[str, CacheEntry],
-        key: str,
-        value,
-        ttl_seconds: float,
-    ) -> None:
-        if ttl_seconds <= 0:
-            return
+    def _put_cache_entry(self, cache: dict[str, CacheEntry], key: str, value, ttl_seconds: float) -> None:
+        if ttl_seconds > 0:
+            cache[key] = self._build_entry(value, ttl_seconds)
 
-        cache[key] = CacheEntry(
-            expires_at=self._now() + ttl_seconds,
-            value=value,
-        )
+    def _build_entry(self, value, ttl_seconds: float) -> CacheEntry | None:
+        if ttl_seconds <= 0:
+            return None
+        return CacheEntry(expires_at=self._now() + ttl_seconds, value=value)
 
     def _log_cache_hit(self, cache_name: str, key: str) -> None:
         if self.logging_enabled:
