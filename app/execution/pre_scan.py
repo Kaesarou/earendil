@@ -100,9 +100,6 @@ def _pre_scan_rejection_reason(
 ) -> str | None:
     metadata = candidate.signal.metadata or {}
 
-    if candidate.score < config.min_score:
-        return 'pre_scan_score_too_low'
-
     market_regime = str(metadata.get('market_regime', '')).upper()
     if config.allowed_market_regimes and market_regime:
         if market_regime not in config.allowed_market_regimes:
@@ -152,6 +149,9 @@ def _pre_scan_rejection_reason(
     noise_ratio = _first_float_metadata(metadata, 'regime_noise_ratio')
     if config.max_noise_ratio > 0 and noise_ratio > config.max_noise_ratio:
         return 'pre_scan_noise_ratio_too_high'
+
+    if candidate.score < config.min_score:
+        return 'pre_scan_score_too_low'
 
     return None
 
