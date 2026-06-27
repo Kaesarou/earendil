@@ -13,3 +13,8 @@ class TradePlan:
     expected_gross_profit: float | None = None
     estimated_fees: float | None = None
     expected_net_profit: float | None = None
+    spread_percent: float | None = None
+    max_spread_percent: float | None = None
+    expected_move_percent: float | None = None
+    min_required_move_percent: float | None = None
+    min_move_spread_ratio: float | None = None
