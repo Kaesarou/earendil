@@ -52,6 +52,17 @@ class Settings(BaseSettings):
     intraday_trend_market_regime_max_atr_percent: float = Field(default=0.0, alias='INTRADAY_TREND_MARKET_REGIME_MAX_ATR_PERCENT')
     intraday_trend_market_regime_max_noise_ratio: float = Field(default=0.0, alias='INTRADAY_TREND_MARKET_REGIME_MAX_NOISE_RATIO')
 
+    pre_scan_enabled: bool = Field(default=False, alias='PRE_SCAN_ENABLED')
+    pre_scan_top_n: int = Field(default=0, alias='PRE_SCAN_TOP_N')
+    pre_scan_min_score: float = Field(default=0.0, alias='PRE_SCAN_MIN_SCORE')
+    pre_scan_allowed_market_regimes: str = Field(default='TRENDING', alias='PRE_SCAN_ALLOWED_MARKET_REGIMES')
+    pre_scan_max_spread_percent: float = Field(default=0.0, alias='PRE_SCAN_MAX_SPREAD_PERCENT')
+    pre_scan_min_session_move_percent: float = Field(default=0.0, alias='PRE_SCAN_MIN_SESSION_MOVE_PERCENT')
+    pre_scan_min_trend_strength_percent: float = Field(default=0.0, alias='PRE_SCAN_MIN_TREND_STRENGTH_PERCENT')
+    pre_scan_min_atr_percent: float = Field(default=0.0, alias='PRE_SCAN_MIN_ATR_PERCENT')
+    pre_scan_max_atr_percent: float = Field(default=0.0, alias='PRE_SCAN_MAX_ATR_PERCENT')
+    pre_scan_max_noise_ratio: float = Field(default=0.0, alias='PRE_SCAN_MAX_NOISE_RATIO')
+
     risk_strategy: str = Field(default='fixed_percent', alias='RISK_STRATEGY')
     max_open_positions: int = Field(default=1, alias='MAX_OPEN_POSITIONS')
     max_open_positions_per_symbol: int = Field(default=1, alias='MAX_OPEN_POSITIONS_PER_SYMBOL')
