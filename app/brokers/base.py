@@ -36,3 +36,12 @@ class BrokerClient(ABC):
     @abstractmethod
     def is_position_open(self, position_id: str) -> bool:
         raise NotImplementedError
+
+    def remember_position_instrument(self, position_id: str, symbol: str) -> None:
+        """Optional hook for brokers that must restore local position metadata.
+
+        Some execution brokers, like eToro, need to know the instrument id attached
+        to a restored position before they can close it. Generic brokers do not need
+        any extra state, so the default implementation is intentionally a no-op.
+        """
+        return None
