@@ -122,6 +122,109 @@ class Settings(BaseSettings):
         alias='MIN_EXPECTED_NET_PROFIT',
     )
 
+    crypto_symbols: str = Field(default='', alias='CRYPTO_SYMBOLS')
+    equity_us_symbols: str = Field(default='', alias='EQUITY_US_SYMBOLS')
+    equity_eu_symbols: str = Field(default='', alias='EQUITY_EU_SYMBOLS')
+
+    crypto_max_position_size_percent: float = Field(
+        default=0.75,
+        alias='CRYPTO_MAX_POSITION_SIZE_PERCENT',
+    )
+    crypto_stop_loss_percent: float = Field(
+        default=1.50,
+        alias='CRYPTO_STOP_LOSS_PERCENT',
+    )
+    crypto_take_profit_percent: float = Field(
+        default=3.00,
+        alias='CRYPTO_TAKE_PROFIT_PERCENT',
+    )
+    crypto_estimated_round_trip_fees: float = Field(
+        default=3.00,
+        alias='CRYPTO_ESTIMATED_ROUND_TRIP_FEES',
+    )
+    crypto_min_expected_net_profit: float = Field(
+        default=8.00,
+        alias='CRYPTO_MIN_EXPECTED_NET_PROFIT',
+    )
+    crypto_force_close_enabled: bool = Field(
+        default=False,
+        alias='CRYPTO_FORCE_CLOSE_ENABLED',
+    )
+    crypto_force_close_hour: int = Field(
+        default=23,
+        alias='CRYPTO_FORCE_CLOSE_HOUR',
+    )
+    crypto_force_close_minute: int = Field(
+        default=59,
+        alias='CRYPTO_FORCE_CLOSE_MINUTE',
+    )
+
+    equity_us_max_position_size_percent: float = Field(
+        default=0.75,
+        alias='EQUITY_US_MAX_POSITION_SIZE_PERCENT',
+    )
+    equity_us_stop_loss_percent: float = Field(
+        default=0.90,
+        alias='EQUITY_US_STOP_LOSS_PERCENT',
+    )
+    equity_us_take_profit_percent: float = Field(
+        default=1.60,
+        alias='EQUITY_US_TAKE_PROFIT_PERCENT',
+    )
+    equity_us_estimated_round_trip_fees: float = Field(
+        default=2.50,
+        alias='EQUITY_US_ESTIMATED_ROUND_TRIP_FEES',
+    )
+    equity_us_min_expected_net_profit: float = Field(
+        default=5.00,
+        alias='EQUITY_US_MIN_EXPECTED_NET_PROFIT',
+    )
+    equity_us_force_close_enabled: bool = Field(
+        default=True,
+        alias='EQUITY_US_FORCE_CLOSE_ENABLED',
+    )
+    equity_us_force_close_hour: int = Field(
+        default=21,
+        alias='EQUITY_US_FORCE_CLOSE_HOUR',
+    )
+    equity_us_force_close_minute: int = Field(
+        default=55,
+        alias='EQUITY_US_FORCE_CLOSE_MINUTE',
+    )
+
+    equity_eu_max_position_size_percent: float = Field(
+        default=0.75,
+        alias='EQUITY_EU_MAX_POSITION_SIZE_PERCENT',
+    )
+    equity_eu_stop_loss_percent: float = Field(
+        default=0.80,
+        alias='EQUITY_EU_STOP_LOSS_PERCENT',
+    )
+    equity_eu_take_profit_percent: float = Field(
+        default=1.40,
+        alias='EQUITY_EU_TAKE_PROFIT_PERCENT',
+    )
+    equity_eu_estimated_round_trip_fees: float = Field(
+        default=2.50,
+        alias='EQUITY_EU_ESTIMATED_ROUND_TRIP_FEES',
+    )
+    equity_eu_min_expected_net_profit: float = Field(
+        default=5.00,
+        alias='EQUITY_EU_MIN_EXPECTED_NET_PROFIT',
+    )
+    equity_eu_force_close_enabled: bool = Field(
+        default=True,
+        alias='EQUITY_EU_FORCE_CLOSE_ENABLED',
+    )
+    equity_eu_force_close_hour: int = Field(
+        default=17,
+        alias='EQUITY_EU_FORCE_CLOSE_HOUR',
+    )
+    equity_eu_force_close_minute: int = Field(
+        default=25,
+        alias='EQUITY_EU_FORCE_CLOSE_MINUTE',
+    )
+
     short_selling_enabled: bool = Field(
         default=False,
         alias='SHORT_SELLING_ENABLED',
