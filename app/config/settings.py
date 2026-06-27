@@ -121,6 +121,8 @@ class Settings(BaseSettings):
         default=0.0,
         alias='MIN_EXPECTED_NET_PROFIT',
     )
+    max_spread_percent: float = Field(default=0.0, alias='MAX_SPREAD_PERCENT')
+    min_move_spread_ratio: float = Field(default=0.0, alias='MIN_MOVE_SPREAD_RATIO')
 
     crypto_symbols: str = Field(default='', alias='CRYPTO_SYMBOLS')
     equity_us_symbols: str = Field(default='', alias='EQUITY_US_SYMBOLS')
@@ -158,6 +160,14 @@ class Settings(BaseSettings):
         default=59,
         alias='CRYPTO_FORCE_CLOSE_MINUTE',
     )
+    crypto_max_spread_percent: float = Field(
+        default=0.35,
+        alias='CRYPTO_MAX_SPREAD_PERCENT',
+    )
+    crypto_min_move_spread_ratio: float = Field(
+        default=4.0,
+        alias='CRYPTO_MIN_MOVE_SPREAD_RATIO',
+    )
 
     equity_us_max_position_size_percent: float = Field(
         default=0.75,
@@ -191,6 +201,14 @@ class Settings(BaseSettings):
         default=55,
         alias='EQUITY_US_FORCE_CLOSE_MINUTE',
     )
+    equity_us_max_spread_percent: float = Field(
+        default=0.10,
+        alias='EQUITY_US_MAX_SPREAD_PERCENT',
+    )
+    equity_us_min_move_spread_ratio: float = Field(
+        default=3.0,
+        alias='EQUITY_US_MIN_MOVE_SPREAD_RATIO',
+    )
 
     equity_eu_max_position_size_percent: float = Field(
         default=0.75,
@@ -223,6 +241,14 @@ class Settings(BaseSettings):
     equity_eu_force_close_minute: int = Field(
         default=25,
         alias='EQUITY_EU_FORCE_CLOSE_MINUTE',
+    )
+    equity_eu_max_spread_percent: float = Field(
+        default=0.15,
+        alias='EQUITY_EU_MAX_SPREAD_PERCENT',
+    )
+    equity_eu_min_move_spread_ratio: float = Field(
+        default=3.0,
+        alias='EQUITY_EU_MIN_MOVE_SPREAD_RATIO',
     )
 
     short_selling_enabled: bool = Field(
