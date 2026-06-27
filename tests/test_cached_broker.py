@@ -9,6 +9,7 @@ from app.market.models import MarketSnapshot
 @dataclass
 class CountingBroker(BrokerClient):
     snapshot_calls: int = 0
+    batch_snapshot_calls: int = 0
     equity_calls: int = 0
     position_status_calls: int = 0
     open_calls: int = 0
@@ -24,6 +25,19 @@ class CountingBroker(BrokerClient):
             last=100.0 + self.snapshot_calls,
             timestamp=datetime(2026, 6, 27, 12, 0, tzinfo=timezone.utc),
         )
+
+    def get_market_snapshots(self, symbols: list[str]) -> dict[str, MarketSnapshot]:
+        self.batch_snapshot_calls += 1
+        return {
+            symbol: MarketSnapshot(
+                symbol=symbol,
+                bid=99.0 + index,
+                ask=101.0 + index,
+                last=100.0 + index,
+                timestamp=datetime(2026, 6, 27, 12, 0, tzinfo=timezone.utc),
+            )
+            for index, symbol in enumerate(symbols, start=1)
+        }
 
     def get_account_equity(self) -> float:
         self.equity_calls += 1
@@ -62,7 +76,36 @@ def test_cached_broker_caches_market_snapshots_by_symbol():
     second_snapshot = broker.get_market_snapshot(' BTC ')
 
     assert first_snapshot == second_snapshot
-    assert delegate.snapshot_calls == 1
+    assert delegate.batch_snapshot_calls == 1
+
+
+def test_cached_broker_batches_missing_market_snapshots():
+    delegate = CountingBroker()
+    broker = CachedBrokerClient(
+        delegate=delegate,
+        market_snapshot_ttl_seconds=60.0,
+    )
+
+    snapshots = broker.get_market_snapshots(['BTC', 'ETH', 'DOGE'])
+
+    assert list(snapshots) == ['BTC', 'ETH', 'DOGE']
+    assert delegate.batch_snapshot_calls == 1
+    assert delegate.snapshot_calls == 0
+
+
+def test_cached_broker_batches_only_uncached_market_snapshots():
+    delegate = CountingBroker()
+    broker = CachedBrokerClient(
+        delegate=delegate,
+        market_snapshot_ttl_seconds=60.0,
+    )
+
+    broker.get_market_snapshots(['BTC', 'ETH'])
+    broker.get_market_snapshots(['BTC', 'ETH', 'DOGE'])
+
+    assert delegate.batch_snapshot_calls == 2
+    assert delegate.snapshot_calls == 0
+    assert 'DOGE' in broker.market_snapshot_cache
 
 
 def test_cached_broker_caches_account_equity():
@@ -123,6 +166,7 @@ def test_cached_broker_does_not_cache_when_ttl_is_disabled():
         delegate=delegate,
         market_snapshot_ttl_seconds=0.0,
         account_equity_ttl_seconds=0.0,
+        batch_market_rates_enabled=False,
     )
 
     broker.get_market_snapshot('BTC')
