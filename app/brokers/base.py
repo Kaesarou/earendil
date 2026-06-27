@@ -8,6 +8,12 @@ class BrokerClient(ABC):
     def get_market_snapshot(self, symbol: str) -> MarketSnapshot:
         raise NotImplementedError
 
+    def get_market_snapshots(self, symbols: list[str]) -> dict[str, MarketSnapshot]:
+        return {
+            symbol: self.get_market_snapshot(symbol)
+            for symbol in symbols
+        }
+
     @abstractmethod
     def get_account_equity(self) -> float:
         raise NotImplementedError
