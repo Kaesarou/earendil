@@ -1,16 +1,16 @@
 from datetime import datetime, timezone
-from app.brokers.base import BrokerClient
 from typing import cast
 
+from app.brokers.base import BrokerClient
+from app.execution.position_tracker import PositionTracker
 from app.execution.trade_candidate import TradeCandidate
+from app.execution.trade_executor import TradeExecutor
+from app.journal.jsonl_journal import JsonlJournal
 from app.main import execute_ranked_candidates
 from app.market.models import Candle, MarketSnapshot
 from app.risk.models import TradePlan
-from app.strategies.signals import Signal
-from app.execution.position_tracker import PositionTracker
-from app.execution.trade_executor import TradeExecutor
-from app.journal.jsonl_journal import JsonlJournal
 from app.risk.risk_manager import RiskManager
+from app.strategies.signals import Signal
 
 
 def snapshot(symbol: str) -> MarketSnapshot:
@@ -80,7 +80,7 @@ class FakeExecutionBroker(BrokerClient):
 
     def close_position(self, position_id: str) -> None:
         raise NotImplementedError
-    
+
     def is_position_open(self, position_id: str) -> bool:
         raise NotImplementedError
 
@@ -99,6 +99,18 @@ class FakeRiskManager:
             stop_loss=99.0,
             take_profit=102.0,
         )
+
+    def instrument_profile_for(self, symbol: str) -> dict[str, str]:
+        return {
+            'symbol': symbol,
+            'asset_class': 'TEST',
+        }
+
+    def risk_profile_for(self, symbol: str) -> dict[str, str]:
+        return {
+            'symbol': symbol,
+            'asset_class': 'TEST',
+        }
 
     def record_open_position(self, symbol: str) -> None:
         self.opened_symbols.append(symbol)
