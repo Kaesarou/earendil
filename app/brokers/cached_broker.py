@@ -22,9 +22,11 @@ class CachedBrokerClient(BrokerClient):
     position_status_ttl_seconds: float = 0.0
     batch_market_rates_enabled: bool = True
     logging_enabled: bool = False
+    batch_retry_after_seconds: float = 300.0
     market_snapshot_cache: dict[str, CacheEntry] = field(default_factory=dict)
     account_equity_cache: CacheEntry | None = None
     position_status_cache: dict[str, CacheEntry] = field(default_factory=dict)
+    batch_market_rates_disabled_until: float = 0.0
 
     def get_market_snapshot(self, symbol: str) -> MarketSnapshot:
         snapshots = self.get_market_snapshots([symbol])
@@ -145,23 +147,33 @@ class CachedBrokerClient(BrokerClient):
         self.position_status_cache.clear()
 
     def _load_market_snapshots(self, symbols: list[str]) -> dict[str, MarketSnapshot]:
-        if self.batch_market_rates_enabled:
+        if self._should_use_batch_market_rates():
             try:
                 return self._load_batch_market_snapshots(symbols)
             except Exception as exc:
                 if self._is_broker_auth_error(exc):
                     raise
 
-                logger.warning(
-                    'Batch market snapshot loading failed, falling back to per-symbol loading | symbols=%s | error=%s',
-                    symbols,
-                    exc,
-                )
+                self._disable_batch_market_rates_temporarily(exc)
 
         return {
             symbol: self.delegate.get_market_snapshot(symbol)
             for symbol in symbols
         }
+
+    def _should_use_batch_market_rates(self) -> bool:
+        return (
+            self.batch_market_rates_enabled
+            and self.batch_market_rates_disabled_until <= self._now()
+        )
+
+    def _disable_batch_market_rates_temporarily(self, exc: Exception) -> None:
+        self.batch_market_rates_disabled_until = self._now() + self.batch_retry_after_seconds
+        logger.warning(
+            'Batch market snapshot loading failed, falling back to per-symbol loading and disabling batch temporarily | retry_after_seconds=%s | error=%s',
+            self.batch_retry_after_seconds,
+            exc,
+        )
 
     def _load_batch_market_snapshots(self, symbols: list[str]) -> dict[str, MarketSnapshot]:
         if self._looks_like_etoro_delegate():
