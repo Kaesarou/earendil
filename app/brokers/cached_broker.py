@@ -1,6 +1,7 @@
 import logging
 import time
 from dataclasses import dataclass, field
+from typing import cast
 
 from app.brokers.base import BrokerClient
 from app.market.models import MarketSnapshot
@@ -16,17 +17,23 @@ class CacheEntry:
 
 @dataclass
 class CachedBrokerClient(BrokerClient):
+    """Small caching decorator around any BrokerClient.
+
+    This class owns only cache concerns. Broker-specific endpoint choices stay in
+    the concrete broker implementation. If a delegate supports a true batch API,
+    enabling batch calls lets it use `get_market_snapshots`; otherwise the base
+    BrokerClient implementation simply calls `get_market_snapshot` per symbol.
+    """
+
     delegate: BrokerClient
     market_snapshot_ttl_seconds: float = 0.0
     account_equity_ttl_seconds: float = 0.0
     position_status_ttl_seconds: float = 0.0
-    batch_market_rates_enabled: bool = True
+    batch_market_rates_enabled: bool = False
     logging_enabled: bool = False
-    batch_retry_after_seconds: float = 300.0
     market_snapshot_cache: dict[str, CacheEntry] = field(default_factory=dict)
     account_equity_cache: CacheEntry | None = None
     position_status_cache: dict[str, CacheEntry] = field(default_factory=dict)
-    batch_market_rates_disabled_until: float = 0.0
 
     def get_market_snapshot(self, symbol: str) -> MarketSnapshot:
         return self.get_market_snapshots([symbol])[symbol]
@@ -34,13 +41,13 @@ class CachedBrokerClient(BrokerClient):
     def get_market_snapshots(self, symbols: list[str]) -> dict[str, MarketSnapshot]:
         snapshots: dict[str, MarketSnapshot] = {}
         symbols_to_load: list[str] = []
-        seen_symbols: set[str] = set()
+        original_symbol_by_normalized: dict[str, str] = {}
 
         for symbol in symbols:
             normalized_symbol = self._normalize_symbol(symbol)
-            if normalized_symbol in seen_symbols:
+            if normalized_symbol in original_symbol_by_normalized:
                 continue
-            seen_symbols.add(normalized_symbol)
+            original_symbol_by_normalized[normalized_symbol] = symbol
 
             cached_snapshot = self._get_cache_entry(
                 cache=self.market_snapshot_cache,
@@ -50,7 +57,7 @@ class CachedBrokerClient(BrokerClient):
             if cached_snapshot is None:
                 symbols_to_load.append(symbol)
             else:
-                snapshots[symbol] = cached_snapshot
+                snapshots[symbol] = cast(MarketSnapshot, cached_snapshot)
 
         if symbols_to_load:
             loaded_snapshots = self._load_market_snapshots(symbols_to_load)
@@ -109,8 +116,7 @@ class CachedBrokerClient(BrokerClient):
         return is_open
 
     def remember_position_instrument(self, position_id: str, symbol: str) -> None:
-        if hasattr(self.delegate, 'remember_position_instrument'):
-            self.delegate.remember_position_instrument(position_id, symbol)
+        self.delegate.remember_position_instrument(position_id, symbol)
 
     def invalidate_market_snapshot(self, symbol: str | None = None) -> None:
         if symbol is None:
@@ -123,120 +129,25 @@ class CachedBrokerClient(BrokerClient):
         self.position_status_cache.clear()
 
     def _load_market_snapshots(self, symbols: list[str]) -> dict[str, MarketSnapshot]:
-        if self._should_use_batch_market_rates():
+        if self.batch_market_rates_enabled:
             try:
-                return self._load_batch_market_snapshots(symbols)
+                return self.delegate.get_market_snapshots(symbols)
             except Exception as exc:
                 if self._is_broker_auth_error(exc):
                     raise
-                self._disable_batch_market_rates_temporarily(exc)
+                logger.warning(
+                    'Batch market snapshot loading failed; falling back to per-symbol loading | error=%s',
+                    exc,
+                )
 
         return {symbol: self.delegate.get_market_snapshot(symbol) for symbol in symbols}
-
-    def _load_batch_market_snapshots(self, symbols: list[str]) -> dict[str, MarketSnapshot]:
-        if self._looks_like_etoro_delegate():
-            return self._load_etoro_search_market_snapshots(symbols)
-
-        return self.delegate.get_market_snapshots(symbols)
-
-    def _load_etoro_search_market_snapshots(self, symbols: list[str]) -> dict[str, MarketSnapshot]:
-        normalized_symbols = [self._normalize_symbol(symbol) for symbol in symbols]
-        items_by_symbol = self._load_etoro_search_items_until_symbols_found(normalized_symbols)
-
-        missing_symbols = [symbol for symbol in normalized_symbols if symbol not in items_by_symbol]
-        if missing_symbols:
-            raise ValueError(f'Missing search market data for symbols={missing_symbols}')
-
-        snapshots: dict[str, MarketSnapshot] = {}
-        for symbol in symbols:
-            normalized_symbol = self._normalize_symbol(symbol)
-            snapshots[symbol] = self._to_market_snapshot_from_search_item(
-                symbol=symbol,
-                item=items_by_symbol[normalized_symbol],
-            )
-
-        logger.info('eToro batch market snapshots resolved from paginated search | symbols=%s', list(snapshots))
-        return snapshots
-
-    def _load_etoro_search_items_until_symbols_found(self, normalized_symbols: list[str]) -> dict[str, dict]:
-        target_symbols = set(normalized_symbols)
-        found_items: dict[str, dict] = {}
-        page_number = 1
-        page_size = 500
-
-        while target_symbols - set(found_items):
-            payload = self.delegate._get(
-                '/api/v1/market-data/search',
-                params={
-                    'fields': 'instrumentId,internalSymbolFull,cvtBid,cvtAsk,currentRate',
-                    'pageSize': page_size,
-                    'pageNumber': page_number,
-                },
-            )
-            items = self.delegate._extract_items(payload)
-            if not items:
-                break
-
-            for item in items:
-                symbol = item.get('internalSymbolFull')
-                if symbol is None:
-                    continue
-
-                normalized_symbol = self._normalize_symbol(str(symbol))
-                if normalized_symbol in target_symbols:
-                    found_items[normalized_symbol] = item
-
-            if len(items) < page_size:
-                break
-
-            page_number += 1
-
-        return found_items
-
-    def _looks_like_etoro_delegate(self) -> bool:
-        return all(hasattr(self.delegate, name) for name in ('_get', '_extract_items'))
-
-    def _to_market_snapshot_from_search_item(self, symbol: str, item: dict) -> MarketSnapshot:
-        bid = self._extract_required_float(item, ('cvtBid', 'CvtBid', 'bid', 'Bid', 'bidPrice'))
-        ask = self._extract_required_float(item, ('cvtAsk', 'CvtAsk', 'ask', 'Ask', 'askPrice'))
-        last = self._extract_optional_float(
-            item,
-            ('currentRate', 'CurrentRate', 'last', 'Last', 'lastPrice', 'price', 'Price'),
-        )
-        if last is None:
-            last = (bid + ask) / 2
-        return MarketSnapshot.now(symbol=symbol, bid=bid, ask=ask, last=last)
-
-    def _extract_required_float(self, payload: dict, keys: tuple[str, ...]) -> float:
-        value = self._extract_optional_float(payload, keys)
-        if value is None:
-            raise ValueError(f'Unable to extract required float keys={keys}')
-        return value
-
-    def _extract_optional_float(self, payload: dict, keys: tuple[str, ...]) -> float | None:
-        for key in keys:
-            value = payload.get(key)
-            if value is not None:
-                return float(value)
-        return None
-
-    def _should_use_batch_market_rates(self) -> bool:
-        return self.batch_market_rates_enabled and self.batch_market_rates_disabled_until <= self._now()
-
-    def _disable_batch_market_rates_temporarily(self, exc: Exception) -> None:
-        self.batch_market_rates_disabled_until = self._now() + self.batch_retry_after_seconds
-        logger.warning(
-            'Batch market snapshot loading failed; falling back to per-symbol loading | retry_after_seconds=%s | error=%s',
-            self.batch_retry_after_seconds,
-            exc,
-        )
 
     def _is_broker_auth_error(self, exc: Exception) -> bool:
         response = getattr(exc, 'response', None)
         status_code = getattr(response, 'status_code', None)
         return status_code in (401, 403)
 
-    def _get_cache_entry(self, cache: dict[str, CacheEntry], key: str, cache_name: str):
+    def _get_cache_entry(self, cache: dict[str, CacheEntry], key: str, cache_name: str) -> object | None:
         entry = cache.get(key)
         now = self._now()
         if entry is None:
@@ -249,11 +160,11 @@ class CachedBrokerClient(BrokerClient):
         self._log_cache_hit(cache_name, key)
         return entry.value
 
-    def _put_cache_entry(self, cache: dict[str, CacheEntry], key: str, value, ttl_seconds: float) -> None:
+    def _put_cache_entry(self, cache: dict[str, CacheEntry], key: str, value: object, ttl_seconds: float) -> None:
         if ttl_seconds > 0:
             cache[key] = self._build_entry(value, ttl_seconds)
 
-    def _build_entry(self, value, ttl_seconds: float) -> CacheEntry | None:
+    def _build_entry(self, value: object, ttl_seconds: float) -> CacheEntry | None:
         if ttl_seconds <= 0:
             return None
         return CacheEntry(expires_at=self._now() + ttl_seconds, value=value)
