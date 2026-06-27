@@ -26,6 +26,12 @@ from app.utils.logging import configure_logging
 logger = logging.getLogger(__name__)
 
 
+def is_broker_authorization_error(exc: Exception) -> bool:
+    response = getattr(exc, 'response', None)
+    status_code = getattr(response, 'status_code', None)
+    return status_code in (401, 403)
+
+
 def with_api_cache(settings: Settings, broker: BrokerClient) -> BrokerClient:
     if not settings.api_cache_enabled:
         return broker
@@ -122,6 +128,23 @@ def restore_persisted_positions(
                 continue
 
         except Exception as exc:
+            if is_broker_authorization_error(exc):
+                logger.critical(
+                    'Broker authorization failed during position reconciliation. Stopping before restoring unverified positions | position_id=%s | symbol=%s | error=%s',
+                    position.position_id,
+                    position.symbol,
+                    exc,
+                )
+                trade_journal.write(
+                    'broker_authorization_error',
+                    {
+                        'stage': 'position_reconciliation',
+                        'position': position,
+                        'message': str(exc),
+                    },
+                )
+                raise
+
             logger.exception(
                 'Position reconciliation check failed | position_id=%s | symbol=%s | error=%s',
                 position.position_id,
@@ -143,6 +166,23 @@ def restore_persisted_positions(
                     symbol=position.symbol,
                 )
             except Exception as exc:
+                if is_broker_authorization_error(exc):
+                    logger.critical(
+                        'Broker authorization failed during position restore. Stopping before continuing | position_id=%s | symbol=%s | error=%s',
+                        position.position_id,
+                        position.symbol,
+                        exc,
+                    )
+                    trade_journal.write(
+                        'broker_authorization_error',
+                        {
+                            'stage': 'position_restore',
+                            'position': position,
+                            'message': str(exc),
+                        },
+                    )
+                    raise
+
                 logger.exception(
                     'Failed to restore broker instrument mapping | position_id=%s | symbol=%s | error=%s',
                     position.position_id,
@@ -216,6 +256,9 @@ def process_symbol(
             )
 
         except Exception as exc:
+            if is_broker_authorization_error(exc):
+                raise
+
             logger.exception(
                 'Position close error | symbol=%s | position_id=%s | reason=%s | error=%s',
                 symbol,
@@ -444,6 +487,9 @@ def execute_ranked_candidates(
             )
 
         except Exception as exc:
+            if is_broker_authorization_error(exc):
+                raise
+
             logger.exception(
                 'Candidate execution error | symbol=%s | action=%s | score=%s | error=%s',
                 candidate.symbol,
@@ -500,13 +546,22 @@ def main() -> None:
     market_journal = JsonlJournal(settings.market_log_path)
     candle_journal = JsonlJournal(settings.candle_journal_path)
 
-    restore_persisted_positions(
-        position_store=position_store,
-        position_tracker=position_tracker,
-        risk_manager=risk_manager,
-        execution_broker=execution_broker,
-        trade_journal=trade_journal,
-    )
+    try:
+        restore_persisted_positions(
+            position_store=position_store,
+            position_tracker=position_tracker,
+            risk_manager=risk_manager,
+            execution_broker=execution_broker,
+            trade_journal=trade_journal,
+        )
+    except Exception as exc:
+        if is_broker_authorization_error(exc):
+            logger.critical(
+                'Broker authorization failed during startup. Check ETORO_API_KEY / ETORO_USER_KEY and stop retrying until credentials are fixed.'
+            )
+            return
+
+        raise
 
     while True:
         try:
@@ -533,6 +588,9 @@ def main() -> None:
                         candidates.append(candidate)
 
                 except Exception as exc:
+                    if is_broker_authorization_error(exc):
+                        raise
+
                     logger.exception('Symbol processing error | symbol=%s | error=%s', symbol, exc)
                     trade_journal.write('error', {'symbol': symbol, 'message': str(exc)})
 
@@ -551,6 +609,16 @@ def main() -> None:
             logger.info('Stopping Eärendil')
             break
         except Exception as exc:
+            if is_broker_authorization_error(exc):
+                logger.critical(
+                    'Broker authorization failed. Stopping bot loop instead of retrying every poll interval. Check ETORO_API_KEY / ETORO_USER_KEY.'
+                )
+                trade_journal.write(
+                    'broker_authorization_error',
+                    {'stage': 'bot_loop', 'message': str(exc)},
+                )
+                break
+
             logger.exception('Bot loop error: %s', exc)
             trade_journal.write('error', {'message': str(exc)})
 
