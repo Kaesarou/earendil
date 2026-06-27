@@ -22,3 +22,9 @@ class TradePlan:
     dynamic_sl_tp_enabled: bool | None = None
     effective_stop_loss_percent: float | None = None
     effective_take_profit_percent: float | None = None
+    breakeven_stop_enabled: bool = False
+    breakeven_trigger_percent: float = 0.0
+    breakeven_buffer_percent: float = 0.0
+    trailing_stop_enabled: bool = False
+    trailing_stop_trigger_percent: float = 0.0
+    trailing_stop_distance_percent: float = 0.0
