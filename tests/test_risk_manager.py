@@ -14,6 +14,13 @@ def build_risk_manager(
     min_expected_net_profit: float = 0.0,
     max_spread_percent: float = 0.0,
     min_move_spread_ratio: float = 0.0,
+    dynamic_sl_tp_enabled: bool = False,
+    stop_loss_atr_multiplier: float = 1.5,
+    take_profit_atr_multiplier: float = 2.5,
+    min_stop_loss_percent: float = 0.0,
+    max_stop_loss_percent: float = 0.0,
+    min_take_profit_percent: float = 0.0,
+    max_take_profit_percent: float = 0.0,
     short_selling_enabled: bool = False,
     crypto_symbols: str = '',
     crypto_max_position_size_percent: float = 0.75,
@@ -36,6 +43,13 @@ def build_risk_manager(
         MIN_EXPECTED_NET_PROFIT=min_expected_net_profit,
         MAX_SPREAD_PERCENT=max_spread_percent,
         MIN_MOVE_SPREAD_RATIO=min_move_spread_ratio,
+        DYNAMIC_SL_TP_ENABLED=dynamic_sl_tp_enabled,
+        STOP_LOSS_ATR_MULTIPLIER=stop_loss_atr_multiplier,
+        TAKE_PROFIT_ATR_MULTIPLIER=take_profit_atr_multiplier,
+        MIN_STOP_LOSS_PERCENT=min_stop_loss_percent,
+        MAX_STOP_LOSS_PERCENT=max_stop_loss_percent,
+        MIN_TAKE_PROFIT_PERCENT=min_take_profit_percent,
+        MAX_TAKE_PROFIT_PERCENT=max_take_profit_percent,
         FORCE_CLOSE_HOUR=23,
         FORCE_CLOSE_MINUTE=59,
         SHORT_SELLING_ENABLED=short_selling_enabled,
@@ -71,11 +85,16 @@ def snapshot(
     )
 
 
-def buy_signal() -> Signal:
+def buy_signal(atr_percent: float | None = None) -> Signal:
+    metadata = None
+    if atr_percent is not None:
+        metadata = {'atr_percent': atr_percent}
+
     return Signal(
         action='BUY',
         confidence=0.65,
         reason='test_buy',
+        metadata=metadata,
     )
 
 
@@ -104,6 +123,7 @@ def test_risk_manager_approves_buy_when_no_position_is_open():
     assert plan.expected_gross_profit == 0.2
     assert plan.estimated_fees == 0.0
     assert plan.expected_net_profit == 0.2
+    assert plan.dynamic_sl_tp_enabled is False
 
 
 def test_risk_manager_uses_crypto_risk_profile_for_crypto_symbol():
@@ -130,6 +150,58 @@ def test_risk_manager_uses_crypto_risk_profile_for_crypto_symbol():
     assert plan.expected_gross_profit == 0.3
     assert plan.estimated_fees == 0.05
     assert plan.expected_net_profit == 0.25
+
+
+def test_risk_manager_uses_atr_dynamic_stop_loss_and_take_profit():
+    risk_manager = build_risk_manager(
+        dynamic_sl_tp_enabled=True,
+        stop_loss_atr_multiplier=1.5,
+        take_profit_atr_multiplier=2.5,
+        min_stop_loss_percent=0.5,
+        max_stop_loss_percent=2.0,
+        min_take_profit_percent=1.0,
+        max_take_profit_percent=4.0,
+    )
+
+    plan = risk_manager.evaluate(
+        signal=buy_signal(atr_percent=0.8),
+        snapshot=snapshot('AAPL'),
+        account_equity=100.0,
+    )
+
+    assert plan.approved
+    assert plan.stop_loss == 98.8
+    assert plan.take_profit == 102.0
+    assert plan.expected_gross_profit == 0.8
+    assert plan.expected_net_profit == 0.8
+    assert plan.atr_percent == 0.8
+    assert plan.dynamic_sl_tp_enabled is True
+    assert plan.effective_stop_loss_percent == 1.2
+    assert plan.effective_take_profit_percent == 2.0
+
+
+def test_risk_manager_clamps_atr_dynamic_stop_loss_and_take_profit():
+    risk_manager = build_risk_manager(
+        dynamic_sl_tp_enabled=True,
+        stop_loss_atr_multiplier=1.5,
+        take_profit_atr_multiplier=2.5,
+        min_stop_loss_percent=0.5,
+        max_stop_loss_percent=2.0,
+        min_take_profit_percent=1.0,
+        max_take_profit_percent=4.0,
+    )
+
+    plan = risk_manager.evaluate(
+        signal=buy_signal(atr_percent=3.0),
+        snapshot=snapshot('AAPL'),
+        account_equity=100.0,
+    )
+
+    assert plan.approved
+    assert plan.stop_loss == 98.0
+    assert plan.take_profit == 104.0
+    assert plan.effective_stop_loss_percent == 2.0
+    assert plan.effective_take_profit_percent == 4.0
 
 
 def test_risk_manager_rejects_when_spread_is_too_high():
