@@ -202,7 +202,7 @@ class CachedBrokerClient(BrokerClient):
     ) -> dict[str, MarketSnapshot]:
         symbol_by_instrument_id: dict[int, str] = {}
         for symbol in symbols:
-            instrument_id = int(self.delegate._find_instrument_id(symbol))
+            instrument_id = self._find_etoro_rates_instrument_id(symbol)
             symbol_by_instrument_id[instrument_id] = symbol
 
         rates_payload = self.delegate._get(
@@ -232,6 +232,66 @@ class CachedBrokerClient(BrokerClient):
             list(symbol_by_instrument_id),
         )
         return snapshots
+
+    def _find_etoro_rates_instrument_id(self, symbol: str) -> int:
+        normalized_symbol = self._normalize_symbol(symbol)
+        payload = self.delegate._get(
+            '/api/v1/market-data/search',
+            params={'internalSymbolFull': symbol},
+        )
+        items = self.delegate._extract_items(payload)
+
+        exact_matches = [
+            item for item in items
+            if str(item.get('internalSymbolFull', '')).upper() == normalized_symbol
+        ]
+        if not exact_matches:
+            raise ValueError(f'No exact eToro instrument match found for symbol={symbol}. Payload={payload}')
+
+        instrument = exact_matches[0]
+        instrument_id = self._extract_search_instrument_id(instrument)
+        if instrument_id is None:
+            raise ValueError(f'Unable to find eToro instrumentId for symbol={symbol}. Instrument={instrument}')
+
+        internal_instrument_id = self._extract_search_internal_instrument_id(instrument)
+        resolved_instrument_id = int(instrument_id)
+
+        logger.info(
+            'Selected eToro rates instrument | symbol=%s | display_name=%s | instrument_id=%s | internal_instrument_id=%s | current_rate=%s',
+            instrument.get('internalSymbolFull'),
+            instrument.get('internalInstrumentDisplayName'),
+            resolved_instrument_id,
+            internal_instrument_id,
+            instrument.get('currentRate'),
+        )
+        return resolved_instrument_id
+
+    def _extract_search_instrument_id(self, instrument: dict) -> int | None:
+        for key in (
+            'instrumentId',
+            'InstrumentId',
+            'instrumentID',
+            'InstrumentID',
+            'id',
+        ):
+            value = instrument.get(key)
+            if value is not None:
+                return int(value)
+
+        return None
+
+    def _extract_search_internal_instrument_id(self, instrument: dict) -> int | None:
+        for key in (
+            'internalInstrumentId',
+            'internalInstrumentID',
+            'InternalInstrumentId',
+            'InternalInstrumentID',
+        ):
+            value = instrument.get(key)
+            if value is not None:
+                return int(value)
+
+        return None
 
     def _index_rates_by_instrument_id(self, rates: list[dict]) -> dict[int, dict]:
         indexed_rates: dict[int, dict] = {}
