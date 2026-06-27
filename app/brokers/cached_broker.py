@@ -226,7 +226,7 @@ class CachedBrokerClient(BrokerClient):
     def _disable_batch_market_rates_temporarily(self, exc: Exception) -> None:
         self.batch_market_rates_disabled_until = self._now() + self.batch_retry_after_seconds
         logger.warning(
-            'Batch market snapshot loading failed, falling back to per-symbol loading and disabling batch temporarily | retry_after_seconds=%s | error=%s',
+            'Batch market snapshot loading failed; falling back to per-symbol loading | retry_after_seconds=%s | error=%s',
             self.batch_retry_after_seconds,
             exc,
         )
