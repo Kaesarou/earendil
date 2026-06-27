@@ -51,6 +51,13 @@ class InstrumentRegistry:
                 force_close_minute=self.settings.crypto_force_close_minute,
                 max_spread_percent=self.settings.crypto_max_spread_percent,
                 min_move_spread_ratio=self.settings.crypto_min_move_spread_ratio,
+                dynamic_sl_tp_enabled=self.settings.crypto_dynamic_sl_tp_enabled,
+                stop_loss_atr_multiplier=self.settings.crypto_stop_loss_atr_multiplier,
+                take_profit_atr_multiplier=self.settings.crypto_take_profit_atr_multiplier,
+                min_stop_loss_percent=self.settings.crypto_min_stop_loss_percent,
+                max_stop_loss_percent=self.settings.crypto_max_stop_loss_percent,
+                min_take_profit_percent=self.settings.crypto_min_take_profit_percent,
+                max_take_profit_percent=self.settings.crypto_max_take_profit_percent,
             )
 
         if instrument_profile.asset_class == AssetClass.EQUITY_US:
@@ -66,6 +73,13 @@ class InstrumentRegistry:
                 force_close_minute=self.settings.equity_us_force_close_minute,
                 max_spread_percent=self.settings.equity_us_max_spread_percent,
                 min_move_spread_ratio=self.settings.equity_us_min_move_spread_ratio,
+                dynamic_sl_tp_enabled=self.settings.equity_us_dynamic_sl_tp_enabled,
+                stop_loss_atr_multiplier=self.settings.equity_us_stop_loss_atr_multiplier,
+                take_profit_atr_multiplier=self.settings.equity_us_take_profit_atr_multiplier,
+                min_stop_loss_percent=self.settings.equity_us_min_stop_loss_percent,
+                max_stop_loss_percent=self.settings.equity_us_max_stop_loss_percent,
+                min_take_profit_percent=self.settings.equity_us_min_take_profit_percent,
+                max_take_profit_percent=self.settings.equity_us_max_take_profit_percent,
             )
 
         if instrument_profile.asset_class == AssetClass.EQUITY_EU:
@@ -81,6 +95,13 @@ class InstrumentRegistry:
                 force_close_minute=self.settings.equity_eu_force_close_minute,
                 max_spread_percent=self.settings.equity_eu_max_spread_percent,
                 min_move_spread_ratio=self.settings.equity_eu_min_move_spread_ratio,
+                dynamic_sl_tp_enabled=self.settings.equity_eu_dynamic_sl_tp_enabled,
+                stop_loss_atr_multiplier=self.settings.equity_eu_stop_loss_atr_multiplier,
+                take_profit_atr_multiplier=self.settings.equity_eu_take_profit_atr_multiplier,
+                min_stop_loss_percent=self.settings.equity_eu_min_stop_loss_percent,
+                max_stop_loss_percent=self.settings.equity_eu_max_stop_loss_percent,
+                min_take_profit_percent=self.settings.equity_eu_min_take_profit_percent,
+                max_take_profit_percent=self.settings.equity_eu_max_take_profit_percent,
             )
 
         return RiskProfile(
@@ -95,6 +116,13 @@ class InstrumentRegistry:
             force_close_minute=self.settings.force_close_minute,
             max_spread_percent=self.settings.max_spread_percent,
             min_move_spread_ratio=self.settings.min_move_spread_ratio,
+            dynamic_sl_tp_enabled=self.settings.dynamic_sl_tp_enabled,
+            stop_loss_atr_multiplier=self.settings.stop_loss_atr_multiplier,
+            take_profit_atr_multiplier=self.settings.take_profit_atr_multiplier,
+            min_stop_loss_percent=self.settings.min_stop_loss_percent,
+            max_stop_loss_percent=self.settings.max_stop_loss_percent,
+            min_take_profit_percent=self.settings.min_take_profit_percent,
+            max_take_profit_percent=self.settings.max_take_profit_percent,
         )
 
     def _parse_symbols(self, raw_symbols: str) -> set[str]:
