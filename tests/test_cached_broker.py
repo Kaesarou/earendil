@@ -65,6 +65,69 @@ class CountingBroker(BrokerClient):
         return self.positions.get(position_id, False)
 
 
+@dataclass
+class EtoroLikeBroker(CountingBroker):
+    captured_rates_params: dict | None = None
+
+    def _find_instrument_id(self, symbol: str) -> int:
+        return {
+            'BTC': 100000,
+            'ETH': 100001,
+        }[symbol]
+
+    def _get(self, path: str, params: dict | None = None) -> dict:
+        if path == '/api/v1/market-data/search':
+            symbol = params['internalSymbolFull']
+            return {
+                'items': [
+                    {
+                        'internalSymbolFull': symbol,
+                        'internalInstrumentDisplayName': symbol,
+                        'internalInstrumentId': self._find_instrument_id(symbol),
+                        'instrumentId': self._find_instrument_id(symbol) + 10_000,
+                        'currentRate': 100.0,
+                    }
+                ]
+            }
+
+        if path == '/api/v1/market-data/instruments/rates':
+            self.captured_rates_params = params
+            return {
+                'data': [
+                    {
+                        'instrumentId': 110000,
+                        'Bid': 99.0,
+                        'Ask': 101.0,
+                        'Price': 100.0,
+                    },
+                    {
+                        'instrumentId': 110001,
+                        'Bid': 199.0,
+                        'Ask': 201.0,
+                        'Price': 200.0,
+                    },
+                ]
+            }
+
+        raise AssertionError(f'Unexpected path={path}')
+
+    def _extract_items(self, payload: dict) -> list[dict]:
+        for key in ('items', 'data'):
+            value = payload.get(key)
+            if isinstance(value, list):
+                return value
+        return []
+
+    def _to_market_snapshot(self, symbol: str, rates_payload: dict) -> MarketSnapshot:
+        return MarketSnapshot(
+            symbol=symbol,
+            bid=float(rates_payload['Bid']),
+            ask=float(rates_payload['Ask']),
+            last=float(rates_payload['Price']),
+            timestamp=datetime(2026, 6, 27, 12, 0, tzinfo=timezone.utc),
+        )
+
+
 def test_cached_broker_caches_market_snapshots_by_symbol():
     delegate = CountingBroker()
     broker = CachedBrokerClient(
@@ -106,6 +169,21 @@ def test_cached_broker_batches_only_uncached_market_snapshots():
     assert delegate.batch_snapshot_calls == 2
     assert delegate.snapshot_calls == 0
     assert 'DOGE' in broker.market_snapshot_cache
+
+
+def test_etoro_batch_market_snapshots_use_public_instrument_id():
+    delegate = EtoroLikeBroker()
+    broker = CachedBrokerClient(
+        delegate=delegate,
+        market_snapshot_ttl_seconds=60.0,
+    )
+
+    snapshots = broker.get_market_snapshots(['BTC', 'ETH'])
+
+    assert list(snapshots) == ['BTC', 'ETH']
+    assert delegate.captured_rates_params == {'instrumentIds': '110000,110001'}
+    assert snapshots['BTC'].last == 100.0
+    assert snapshots['ETH'].last == 200.0
 
 
 def test_cached_broker_caches_account_equity():
