@@ -99,8 +99,8 @@ def test_risk_manager_uses_crypto_risk_profile_for_crypto_symbol():
         crypto_max_position_size_percent=1.0,
         crypto_stop_loss_percent=1.5,
         crypto_take_profit_percent=3.0,
-        crypto_estimated_round_trip_fees=0.5,
-        crypto_min_expected_net_profit=2.0,
+        crypto_estimated_round_trip_fees=0.05,
+        crypto_min_expected_net_profit=0.0,
     )
 
     plan = risk_manager.evaluate(
@@ -115,8 +115,8 @@ def test_risk_manager_uses_crypto_risk_profile_for_crypto_symbol():
     assert plan.stop_loss == 98.5
     assert plan.take_profit == 103.0
     assert plan.expected_gross_profit == 0.3
-    assert plan.estimated_fees == 0.5
-    assert plan.expected_net_profit == -0.2
+    assert plan.estimated_fees == 0.05
+    assert plan.expected_net_profit == 0.25
 
 
 def test_risk_manager_rejects_when_total_open_positions_limit_is_reached():
