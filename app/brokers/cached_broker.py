@@ -161,11 +161,89 @@ class CachedBrokerClient(BrokerClient):
         }
 
     def _load_batch_market_snapshots(self, symbols: list[str]) -> dict[str, MarketSnapshot]:
+        if self._looks_like_etoro_delegate():
+            return self._load_etoro_batch_market_snapshots(symbols)
+
         delegate_batch_loader = getattr(self.delegate, 'get_market_snapshots', None)
         if delegate_batch_loader is None:
             raise RuntimeError('Delegate does not expose batch market snapshots')
 
         return delegate_batch_loader(symbols)
+
+    def _looks_like_etoro_delegate(self) -> bool:
+        return all(
+            hasattr(self.delegate, name)
+            for name in (
+                '_find_instrument_id',
+                '_get',
+                '_extract_items',
+                '_to_market_snapshot',
+            )
+        )
+
+    def _load_etoro_batch_market_snapshots(
+        self,
+        symbols: list[str],
+    ) -> dict[str, MarketSnapshot]:
+        symbol_by_instrument_id: dict[int, str] = {}
+        for symbol in symbols:
+            instrument_id = int(self.delegate._find_instrument_id(symbol))
+            symbol_by_instrument_id[instrument_id] = symbol
+
+        rates_payload = self.delegate._get(
+            '/api/v1/market-data/instruments/rates',
+            params={'instrumentIds': ','.join(str(item) for item in symbol_by_instrument_id)},
+        )
+        rates_by_instrument_id = self._index_rates_by_instrument_id(
+            self.delegate._extract_items(rates_payload),
+        )
+
+        snapshots: dict[str, MarketSnapshot] = {}
+        for instrument_id, symbol in symbol_by_instrument_id.items():
+            rate = rates_by_instrument_id.get(instrument_id)
+            if rate is None:
+                raise ValueError(
+                    f'Missing eToro batch rate for symbol={symbol} instrument_id={instrument_id}. Payload={rates_payload}'
+                )
+
+            snapshots[symbol] = self.delegate._to_market_snapshot(
+                symbol=symbol,
+                rates_payload=rate,
+            )
+
+        logger.info(
+            'eToro batch market snapshots resolved | symbols=%s | instrument_ids=%s',
+            list(snapshots),
+            list(symbol_by_instrument_id),
+        )
+        return snapshots
+
+    def _index_rates_by_instrument_id(self, rates: list[dict]) -> dict[int, dict]:
+        indexed_rates: dict[int, dict] = {}
+        for rate in rates:
+            instrument_id = self._extract_rate_instrument_id(rate)
+            if instrument_id is None:
+                continue
+
+            indexed_rates[instrument_id] = rate
+
+        return indexed_rates
+
+    def _extract_rate_instrument_id(self, rate: dict) -> int | None:
+        for key in (
+            'instrumentId',
+            'instrumentID',
+            'InstrumentId',
+            'InstrumentID',
+            'internalInstrumentId',
+            'internalInstrumentID',
+            'id',
+        ):
+            value = rate.get(key)
+            if value is not None:
+                return int(value)
+
+        return None
 
     def _get_cache_entry(
         self,
