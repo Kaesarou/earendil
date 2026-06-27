@@ -2,6 +2,7 @@ import logging
 import time
 
 from app.brokers.base import BrokerClient
+from app.brokers.cached_broker import CachedBrokerClient
 from app.brokers.etoro_client import EtoroClient
 from app.brokers.fake_broker import FakeBrokerClient
 from app.config.settings import Settings, get_settings
@@ -24,22 +25,35 @@ from app.utils.logging import configure_logging
 logger = logging.getLogger(__name__)
 
 
+def with_api_cache(settings: Settings, broker: BrokerClient) -> BrokerClient:
+    if not settings.api_cache_enabled:
+        return broker
+
+    return CachedBrokerClient(
+        delegate=broker,
+        market_snapshot_ttl_seconds=settings.market_snapshot_cache_ttl_seconds,
+        account_equity_ttl_seconds=settings.account_equity_cache_ttl_seconds,
+        position_status_ttl_seconds=settings.position_status_cache_ttl_seconds,
+        logging_enabled=settings.api_cache_logging_enabled,
+    )
+
+
 def build_market_data_broker(settings: Settings) -> BrokerClient:
     if settings.broker == 'etoro':
-        return EtoroClient(settings=settings)
+        return with_api_cache(settings, EtoroClient(settings=settings))
 
     if settings.broker == 'fake':
-        return FakeBrokerClient(equity=50.0)
+        return with_api_cache(settings, FakeBrokerClient(equity=50.0))
 
     raise ValueError(f'Unsupported market data broker: {settings.broker}')
 
 
 def build_execution_broker(settings: Settings) -> BrokerClient:
     if settings.ear_mode == 'paper':
-        return FakeBrokerClient(equity=50.0)
+        return with_api_cache(settings, FakeBrokerClient(equity=50.0))
 
     if settings.ear_mode == 'real':
-        return EtoroClient(settings=settings)
+        return with_api_cache(settings, EtoroClient(settings=settings))
 
     raise ValueError(f'Unsupported execution mode: {settings.ear_mode}')
 
@@ -120,7 +134,7 @@ def restore_persisted_positions(
         position_tracker.restore_open_position(position)
         risk_manager.restore_open_position(position.symbol)
 
-        if isinstance(execution_broker, EtoroClient):
+        if hasattr(execution_broker, 'remember_position_instrument'):
             try:
                 execution_broker.remember_position_instrument(
                     position_id=position.position_id,
@@ -128,7 +142,7 @@ def restore_persisted_positions(
                 )
             except Exception as exc:
                 logger.exception(
-                    'Failed to restore eToro instrument mapping | position_id=%s | symbol=%s | error=%s',
+                    'Failed to restore broker instrument mapping | position_id=%s | symbol=%s | error=%s',
                     position.position_id,
                     position.symbol,
                     exc,
@@ -453,7 +467,7 @@ def main() -> None:
     instrument_registry = InstrumentRegistry(settings)
 
     logger.info(
-        'Starting Eärendil | mode=%s | broker=%s | etoro_env=%s | real_trading_enabled=%s | strategy=%s | risk_strategy=%s | watchlist=%s',
+        'Starting Eärendil | mode=%s | broker=%s | etoro_env=%s | real_trading_enabled=%s | strategy=%s | risk_strategy=%s | watchlist=%s | api_cache_enabled=%s',
         settings.ear_mode,
         settings.broker,
         settings.etoro_env,
@@ -461,6 +475,7 @@ def main() -> None:
         settings.investment_strategy,
         settings.risk_strategy,
         symbols,
+        settings.api_cache_enabled,
     )
 
     if settings.ear_mode == 'real' and not settings.real_trading_enabled:
