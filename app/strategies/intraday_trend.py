@@ -17,6 +17,11 @@ class IntradayTrendStrategyConfig:
     min_close_position_percent: float = 70.0
     allow_short: bool = False
     atr_lookback: int = 14
+    market_regime_filter_enabled: bool = False
+    market_regime_min_trend_strength_percent: float = 0.02
+    market_regime_min_atr_percent: float = 0.0
+    market_regime_max_atr_percent: float = 0.0
+    market_regime_max_noise_ratio: float = 0.0
 
 
 class IntradayTrendStrategy:
@@ -26,7 +31,7 @@ class IntradayTrendStrategy:
     - First determine the session direction.
     - If the symbol is strong, look only for long breakouts.
     - If the symbol is weak, look only for short breakdowns.
-    - Stay flat when the context is neutral or contradictory.
+    - Stay flat when the context is neutral, noisy, dead, or contradictory.
     """
 
     def __init__(self, config: IntradayTrendStrategyConfig | None = None):
@@ -34,33 +39,32 @@ class IntradayTrendStrategy:
 
         if self.config.lookback <= 0:
             raise ValueError('lookback must be greater than 0')
-
         if self.config.fast_lookback <= 0:
             raise ValueError('fast_lookback must be greater than 0')
-
         if self.config.slow_lookback <= 0:
             raise ValueError('slow_lookback must be greater than 0')
-
         if self.config.fast_lookback >= self.config.slow_lookback:
             raise ValueError('fast_lookback must be lower than slow_lookback')
-
         if self.config.session_lookback <= 0:
             raise ValueError('session_lookback must be greater than 0')
-
         if self.config.atr_lookback <= 0:
             raise ValueError('atr_lookback must be greater than 0')
-
         if self.config.min_session_move_percent < 0:
             raise ValueError('min_session_move_percent must be greater than or equal to 0')
-
         if self.config.min_breakout_percent < 0:
             raise ValueError('min_breakout_percent must be greater than or equal to 0')
-
         if self.config.min_candle_range_percent < 0:
             raise ValueError('min_candle_range_percent must be greater than or equal to 0')
-
         if not 0 <= self.config.min_close_position_percent <= 100:
             raise ValueError('min_close_position_percent must be between 0 and 100')
+        if self.config.market_regime_min_trend_strength_percent < 0:
+            raise ValueError('market_regime_min_trend_strength_percent must be greater than or equal to 0')
+        if self.config.market_regime_min_atr_percent < 0:
+            raise ValueError('market_regime_min_atr_percent must be greater than or equal to 0')
+        if self.config.market_regime_max_atr_percent < 0:
+            raise ValueError('market_regime_max_atr_percent must be greater than or equal to 0')
+        if self.config.market_regime_max_noise_ratio < 0:
+            raise ValueError('market_regime_max_noise_ratio must be greater than or equal to 0')
 
         max_candles = max(
             self.config.lookback + 1,
@@ -77,20 +81,32 @@ class IntradayTrendStrategy:
             return Signal.hold('warming_up_candles')
 
         session_move_percent = self._session_move_percent()
+        regime_metadata = self._market_regime_metadata(session_move_percent)
+
+        if (
+            self.config.market_regime_filter_enabled
+            and regime_metadata['market_regime'] != 'TRENDING'
+        ):
+            reason = f"market_regime_{str(regime_metadata['market_regime']).lower()}"
+            return Signal.hold(reason, metadata=regime_metadata)
 
         if session_move_percent >= self.config.min_session_move_percent:
-            return self._evaluate_long_setup(session_move_percent)
+            return self._evaluate_long_setup(session_move_percent, regime_metadata)
 
         if session_move_percent <= -self.config.min_session_move_percent:
-            return self._evaluate_short_setup(session_move_percent)
+            return self._evaluate_short_setup(session_move_percent, regime_metadata)
 
-        return Signal.hold('session_trend_neutral')
+        return Signal.hold('session_trend_neutral', metadata=regime_metadata)
 
-    def _evaluate_long_setup(self, session_move_percent: float) -> Signal:
+    def _evaluate_long_setup(
+        self,
+        session_move_percent: float,
+        regime_metadata: dict[str, float | str],
+    ) -> Signal:
         fast_ma, slow_ma = self._moving_averages()
 
         if fast_ma <= slow_ma:
-            return Signal.hold('bullish_trend_not_confirmed')
+            return Signal.hold('bullish_trend_not_confirmed', metadata=regime_metadata)
 
         current_candle = self.candles[-1]
         previous_candles = self._previous_range_candles()
@@ -101,11 +117,11 @@ class IntradayTrendStrategy:
         )
 
         if current_candle.close <= breakout_threshold:
-            return Signal.hold('bullish_breakout_not_confirmed')
+            return Signal.hold('bullish_breakout_not_confirmed', metadata=regime_metadata)
 
         rejection_reason = self._long_candle_rejection_reason(current_candle)
         if rejection_reason is not None:
-            return Signal.hold(rejection_reason)
+            return Signal.hold(rejection_reason, metadata=regime_metadata)
 
         trend_strength_percent = self._trend_strength_percent(fast_ma, slow_ma)
         breakout_percent = ((current_candle.close - range_high) / range_high) * 100
@@ -118,6 +134,7 @@ class IntradayTrendStrategy:
             confidence=0.8,
             reason='intraday_bullish_breakout',
             metadata={
+                **regime_metadata,
                 'session_move_percent': round(session_move_percent, 4),
                 'trend_strength_percent': round(trend_strength_percent, 4),
                 'breakout_percent': round(breakout_percent, 4),
@@ -130,14 +147,18 @@ class IntradayTrendStrategy:
             },
         )
 
-    def _evaluate_short_setup(self, session_move_percent: float) -> Signal:
+    def _evaluate_short_setup(
+        self,
+        session_move_percent: float,
+        regime_metadata: dict[str, float | str],
+    ) -> Signal:
         if not self.config.allow_short:
-            return Signal.hold('short_signals_disabled_by_strategy')
+            return Signal.hold('short_signals_disabled_by_strategy', metadata=regime_metadata)
 
         fast_ma, slow_ma = self._moving_averages()
 
         if fast_ma >= slow_ma:
-            return Signal.hold('bearish_trend_not_confirmed')
+            return Signal.hold('bearish_trend_not_confirmed', metadata=regime_metadata)
 
         current_candle = self.candles[-1]
         previous_candles = self._previous_range_candles()
@@ -148,11 +169,11 @@ class IntradayTrendStrategy:
         )
 
         if current_candle.close >= breakdown_threshold:
-            return Signal.hold('bearish_breakdown_not_confirmed')
+            return Signal.hold('bearish_breakdown_not_confirmed', metadata=regime_metadata)
 
         rejection_reason = self._short_candle_rejection_reason(current_candle)
         if rejection_reason is not None:
-            return Signal.hold(rejection_reason)
+            return Signal.hold(rejection_reason, metadata=regime_metadata)
 
         trend_strength_percent = self._trend_strength_percent(fast_ma, slow_ma)
         breakdown_percent = ((range_low - current_candle.close) / range_low) * 100
@@ -165,6 +186,7 @@ class IntradayTrendStrategy:
             confidence=0.8,
             reason='intraday_bearish_breakdown',
             metadata={
+                **regime_metadata,
                 'session_move_percent': round(session_move_percent, 4),
                 'trend_strength_percent': round(trend_strength_percent, 4),
                 'breakdown_percent': round(breakdown_percent, 4),
@@ -196,6 +218,76 @@ class IntradayTrendStrategy:
             )
 
         return ((current_close - reference_close) / reference_close) * 100
+
+    def _market_regime_metadata(self, session_move_percent: float) -> dict[str, float | str]:
+        fast_ma, slow_ma = self._moving_averages()
+        trend_strength_percent = self._trend_strength_percent(fast_ma, slow_ma)
+        atr_percent = self._atr_percent()
+        abs_session_move_percent = abs(session_move_percent)
+        abs_trend_strength_percent = abs(trend_strength_percent)
+        noise_ratio = self._noise_ratio(
+            atr_percent=atr_percent,
+            session_move_percent=session_move_percent,
+        )
+
+        market_regime = self._market_regime(
+            abs_session_move_percent=abs_session_move_percent,
+            abs_trend_strength_percent=abs_trend_strength_percent,
+            atr_percent=atr_percent,
+            noise_ratio=noise_ratio,
+        )
+
+        return {
+            'market_regime': market_regime,
+            'regime_session_move_percent': round(session_move_percent, 4),
+            'regime_trend_strength_percent': round(trend_strength_percent, 4),
+            'regime_atr_percent': round(atr_percent, 4),
+            'regime_noise_ratio': round(noise_ratio, 4),
+        }
+
+    def _market_regime(
+        self,
+        abs_session_move_percent: float,
+        abs_trend_strength_percent: float,
+        atr_percent: float,
+        noise_ratio: float,
+    ) -> str:
+        if abs_session_move_percent < self.config.min_session_move_percent:
+            return 'DEAD_MARKET'
+
+        if (
+            self.config.market_regime_min_atr_percent > 0
+            and atr_percent < self.config.market_regime_min_atr_percent
+        ):
+            return 'DEAD_MARKET'
+
+        if (
+            self.config.market_regime_max_atr_percent > 0
+            and atr_percent > self.config.market_regime_max_atr_percent
+        ):
+            return 'VOLATILE_NOISY'
+
+        if (
+            self.config.market_regime_min_trend_strength_percent > 0
+            and abs_trend_strength_percent < self.config.market_regime_min_trend_strength_percent
+        ):
+            return 'RANGING'
+
+        if (
+            self.config.market_regime_max_noise_ratio > 0
+            and noise_ratio > self.config.market_regime_max_noise_ratio
+        ):
+            return 'VOLATILE_NOISY'
+
+        return 'TRENDING'
+
+    def _noise_ratio(self, atr_percent: float, session_move_percent: float) -> float:
+        abs_session_move_percent = abs(session_move_percent)
+
+        if abs_session_move_percent <= 0:
+            return 999999.0
+
+        return atr_percent / abs_session_move_percent
 
     def _moving_averages(self) -> tuple[float, float]:
         closes = [candle.close for candle in self.candles]
