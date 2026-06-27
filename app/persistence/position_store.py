@@ -1,6 +1,7 @@
 import sqlite3
 from datetime import datetime
 from pathlib import Path
+from typing import Any
 
 from app.execution.position_tracker import TrackedPosition
 
@@ -23,9 +24,18 @@ class PositionStore:
                     entry_price,
                     stop_loss,
                     take_profit,
-                    opened_at
+                    opened_at,
+                    initial_stop_loss,
+                    highest_price,
+                    lowest_price,
+                    breakeven_stop_enabled,
+                    breakeven_trigger_percent,
+                    breakeven_buffer_percent,
+                    trailing_stop_enabled,
+                    trailing_stop_trigger_percent,
+                    trailing_stop_distance_percent
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     position.position_id,
@@ -36,6 +46,15 @@ class PositionStore:
                     position.stop_loss,
                     position.take_profit,
                     position.opened_at.isoformat(),
+                    position.initial_stop_loss,
+                    position.highest_price,
+                    position.lowest_price,
+                    int(position.breakeven_stop_enabled),
+                    position.breakeven_trigger_percent,
+                    position.breakeven_buffer_percent,
+                    int(position.trailing_stop_enabled),
+                    position.trailing_stop_trigger_percent,
+                    position.trailing_stop_distance_percent,
                 ),
             )
 
@@ -58,7 +77,16 @@ class PositionStore:
                     entry_price,
                     stop_loss,
                     take_profit,
-                    opened_at
+                    opened_at,
+                    initial_stop_loss,
+                    highest_price,
+                    lowest_price,
+                    breakeven_stop_enabled,
+                    breakeven_trigger_percent,
+                    breakeven_buffer_percent,
+                    trailing_stop_enabled,
+                    trailing_stop_trigger_percent,
+                    trailing_stop_distance_percent
                 FROM open_positions
                 ORDER BY opened_at ASC
                 """
@@ -76,6 +104,15 @@ class PositionStore:
                 stop_loss,
                 take_profit,
                 opened_at,
+                initial_stop_loss,
+                highest_price,
+                lowest_price,
+                breakeven_stop_enabled,
+                breakeven_trigger_percent,
+                breakeven_buffer_percent,
+                trailing_stop_enabled,
+                trailing_stop_trigger_percent,
+                trailing_stop_distance_percent,
             ) = row
 
             positions.append(
@@ -88,6 +125,15 @@ class PositionStore:
                     stop_loss=float(stop_loss),
                     take_profit=float(take_profit),
                     opened_at=datetime.fromisoformat(str(opened_at)),
+                    initial_stop_loss=self._optional_float(initial_stop_loss),
+                    highest_price=self._optional_float(highest_price),
+                    lowest_price=self._optional_float(lowest_price),
+                    breakeven_stop_enabled=bool(breakeven_stop_enabled),
+                    breakeven_trigger_percent=float(breakeven_trigger_percent),
+                    breakeven_buffer_percent=float(breakeven_buffer_percent),
+                    trailing_stop_enabled=bool(trailing_stop_enabled),
+                    trailing_stop_trigger_percent=float(trailing_stop_trigger_percent),
+                    trailing_stop_distance_percent=float(trailing_stop_distance_percent),
                 )
             )
 
@@ -108,7 +154,49 @@ class PositionStore:
                     entry_price REAL NOT NULL,
                     stop_loss REAL NOT NULL,
                     take_profit REAL NOT NULL,
-                    opened_at TEXT NOT NULL
+                    opened_at TEXT NOT NULL,
+                    initial_stop_loss REAL,
+                    highest_price REAL,
+                    lowest_price REAL,
+                    breakeven_stop_enabled INTEGER NOT NULL DEFAULT 0,
+                    breakeven_trigger_percent REAL NOT NULL DEFAULT 0,
+                    breakeven_buffer_percent REAL NOT NULL DEFAULT 0,
+                    trailing_stop_enabled INTEGER NOT NULL DEFAULT 0,
+                    trailing_stop_trigger_percent REAL NOT NULL DEFAULT 0,
+                    trailing_stop_distance_percent REAL NOT NULL DEFAULT 0
                 )
                 """
             )
+            self._ensure_columns(connection)
+
+    def _ensure_columns(self, connection: sqlite3.Connection) -> None:
+        existing_columns = {
+            row[1]
+            for row in connection.execute('PRAGMA table_info(open_positions)').fetchall()
+        }
+
+        columns: dict[str, str] = {
+            'initial_stop_loss': 'REAL',
+            'highest_price': 'REAL',
+            'lowest_price': 'REAL',
+            'breakeven_stop_enabled': 'INTEGER NOT NULL DEFAULT 0',
+            'breakeven_trigger_percent': 'REAL NOT NULL DEFAULT 0',
+            'breakeven_buffer_percent': 'REAL NOT NULL DEFAULT 0',
+            'trailing_stop_enabled': 'INTEGER NOT NULL DEFAULT 0',
+            'trailing_stop_trigger_percent': 'REAL NOT NULL DEFAULT 0',
+            'trailing_stop_distance_percent': 'REAL NOT NULL DEFAULT 0',
+        }
+
+        for column_name, column_definition in columns.items():
+            if column_name in existing_columns:
+                continue
+
+            connection.execute(
+                f'ALTER TABLE open_positions ADD COLUMN {column_name} {column_definition}'
+            )
+
+    def _optional_float(self, value: Any) -> float | None:
+        if value is None:
+            return None
+
+        return float(value)
