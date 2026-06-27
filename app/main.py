@@ -14,6 +14,7 @@ from app.execution.trade_executor import TradeExecutor
 from app.instruments.instrument_registry import InstrumentRegistry
 from app.journal.jsonl_journal import JsonlJournal
 from app.market.candle_builder import CandleBuilder
+from app.market.models import MarketSnapshot
 from app.persistence.position_store import PositionStore
 from app.risk.models import TradePlan
 from app.risk.position_sizing import build_position_sizing_strategy
@@ -34,6 +35,7 @@ def with_api_cache(settings: Settings, broker: BrokerClient) -> BrokerClient:
         market_snapshot_ttl_seconds=settings.market_snapshot_cache_ttl_seconds,
         account_equity_ttl_seconds=settings.account_equity_cache_ttl_seconds,
         position_status_ttl_seconds=settings.position_status_cache_ttl_seconds,
+        batch_market_rates_enabled=settings.market_rates_batch_enabled,
         logging_enabled=settings.api_cache_logging_enabled,
     )
 
@@ -174,8 +176,9 @@ def process_symbol(
     market_journal: JsonlJournal,
     candle_journal: JsonlJournal,
     position_store: PositionStore | None = None,
+    snapshot: MarketSnapshot | None = None,
 ) -> TradeCandidate | None:
-    snapshot = market_data_broker.get_market_snapshot(symbol)
+    snapshot = snapshot or market_data_broker.get_market_snapshot(symbol)
     market_journal.write('market_snapshot', {'symbol': symbol, 'snapshot': snapshot})
 
     close_signals = position_tracker.evaluate_snapshot(snapshot)
@@ -467,7 +470,7 @@ def main() -> None:
     instrument_registry = InstrumentRegistry(settings)
 
     logger.info(
-        'Starting Eärendil | mode=%s | broker=%s | etoro_env=%s | real_trading_enabled=%s | strategy=%s | risk_strategy=%s | watchlist=%s | api_cache_enabled=%s',
+        'Starting Eärendil | mode=%s | broker=%s | etoro_env=%s | real_trading_enabled=%s | strategy=%s | risk_strategy=%s | watchlist=%s | api_cache_enabled=%s | market_rates_batch_enabled=%s',
         settings.ear_mode,
         settings.broker,
         settings.etoro_env,
@@ -476,6 +479,7 @@ def main() -> None:
         settings.risk_strategy,
         symbols,
         settings.api_cache_enabled,
+        settings.market_rates_batch_enabled,
     )
 
     if settings.ear_mode == 'real' and not settings.real_trading_enabled:
@@ -507,6 +511,7 @@ def main() -> None:
     while True:
         try:
             candidates: list[TradeCandidate] = []
+            snapshots = market_data_broker.get_market_snapshots(symbols)
             for symbol in symbols:
                 try:
                     candidate = process_symbol(
@@ -521,6 +526,7 @@ def main() -> None:
                         market_journal=market_journal,
                         candle_journal=candle_journal,
                         position_store=position_store,
+                        snapshot=snapshots[symbol],
                     )
 
                     if candidate is not None:
