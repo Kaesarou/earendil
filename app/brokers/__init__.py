@@ -4,6 +4,8 @@ from app.brokers.etoro_search_client import EtoroSearchClient
 
 
 EtoroClient.get_market_snapshot = EtoroSearchClient.get_market_snapshot
+EtoroClient._find_exact_market_data_item = EtoroSearchClient._find_exact_market_data_item
+EtoroClient._to_market_snapshot_from_search_item = EtoroSearchClient._to_market_snapshot_from_search_item
 
 _original_load_market_snapshots = CachedBrokerClient._load_market_snapshots
 
