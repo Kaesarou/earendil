@@ -58,18 +58,13 @@ class CountingBroker(BrokerClient):
         return self.positions.get(position_id, False)
 
 
-@dataclass
-class EtoroLikeBroker(CountingBroker):
-    def _get(self, path: str, params: dict | None = None) -> dict:
-        raise AssertionError('eToro-like cached fallback should use per-symbol snapshot loading')
-
-    def _extract_items(self, payload: dict) -> list[dict]:
-        return []
-
-
 def test_cached_broker_caches_market_snapshots_by_symbol():
     delegate = CountingBroker()
-    broker = CachedBrokerClient(delegate=delegate, market_snapshot_ttl_seconds=60.0)
+    broker = CachedBrokerClient(
+        delegate=delegate,
+        market_snapshot_ttl_seconds=60.0,
+        batch_market_rates_enabled=True,
+    )
 
     first_snapshot = broker.get_market_snapshot('btc')
     second_snapshot = broker.get_market_snapshot(' BTC ')
@@ -80,7 +75,11 @@ def test_cached_broker_caches_market_snapshots_by_symbol():
 
 def test_cached_broker_batches_missing_market_snapshots():
     delegate = CountingBroker()
-    broker = CachedBrokerClient(delegate=delegate, market_snapshot_ttl_seconds=60.0)
+    broker = CachedBrokerClient(
+        delegate=delegate,
+        market_snapshot_ttl_seconds=60.0,
+        batch_market_rates_enabled=True,
+    )
 
     snapshots = broker.get_market_snapshots(['BTC', 'ETH', 'DOGE'])
 
@@ -91,7 +90,11 @@ def test_cached_broker_batches_missing_market_snapshots():
 
 def test_cached_broker_batches_only_uncached_market_snapshots():
     delegate = CountingBroker()
-    broker = CachedBrokerClient(delegate=delegate, market_snapshot_ttl_seconds=60.0)
+    broker = CachedBrokerClient(
+        delegate=delegate,
+        market_snapshot_ttl_seconds=60.0,
+        batch_market_rates_enabled=True,
+    )
 
     broker.get_market_snapshots(['BTC', 'ETH'])
     broker.get_market_snapshots(['BTC', 'ETH', 'DOGE'])
@@ -101,9 +104,13 @@ def test_cached_broker_batches_only_uncached_market_snapshots():
     assert 'DOGE' in broker.market_snapshot_cache
 
 
-def test_cached_broker_uses_per_symbol_loading_for_etoro_like_delegate():
-    delegate = EtoroLikeBroker()
-    broker = CachedBrokerClient(delegate=delegate, market_snapshot_ttl_seconds=60.0)
+def test_cached_broker_can_disable_batch_market_snapshots():
+    delegate = CountingBroker()
+    broker = CachedBrokerClient(
+        delegate=delegate,
+        market_snapshot_ttl_seconds=60.0,
+        batch_market_rates_enabled=False,
+    )
 
     snapshots = broker.get_market_snapshots(['BTC', 'ETH'])
 
