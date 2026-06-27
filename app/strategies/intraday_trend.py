@@ -16,6 +16,7 @@ class IntradayTrendStrategyConfig:
     min_candle_range_percent: float = 0.04
     min_close_position_percent: float = 70.0
     allow_short: bool = False
+    atr_lookback: int = 14
 
 
 class IntradayTrendStrategy:
@@ -46,6 +47,9 @@ class IntradayTrendStrategy:
         if self.config.session_lookback <= 0:
             raise ValueError('session_lookback must be greater than 0')
 
+        if self.config.atr_lookback <= 0:
+            raise ValueError('atr_lookback must be greater than 0')
+
         if self.config.min_session_move_percent < 0:
             raise ValueError('min_session_move_percent must be greater than or equal to 0')
 
@@ -62,6 +66,7 @@ class IntradayTrendStrategy:
             self.config.lookback + 1,
             self.config.slow_lookback,
             self.config.session_lookback + 1,
+            self.config.atr_lookback + 1,
         )
         self.candles: deque[Candle] = deque(maxlen=max_candles)
 
@@ -106,6 +111,7 @@ class IntradayTrendStrategy:
         breakout_percent = ((current_candle.close - range_high) / range_high) * 100
         candle_range_percent = self._candle_range_percent(current_candle)
         close_position_percent = self._close_position_percent(current_candle)
+        atr_percent = self._atr_percent()
 
         return Signal(
             action='BUY',
@@ -117,6 +123,7 @@ class IntradayTrendStrategy:
                 'breakout_percent': round(breakout_percent, 4),
                 'candle_range_percent': round(candle_range_percent, 4),
                 'close_position_percent': round(close_position_percent, 4),
+                'atr_percent': round(atr_percent, 4),
                 'fast_ma': round(fast_ma, 5),
                 'slow_ma': round(slow_ma, 5),
                 'range_high': round(range_high, 5),
@@ -151,6 +158,7 @@ class IntradayTrendStrategy:
         breakdown_percent = ((range_low - current_candle.close) / range_low) * 100
         candle_range_percent = self._candle_range_percent(current_candle)
         close_position_percent = self._close_position_percent(current_candle)
+        atr_percent = self._atr_percent()
 
         return Signal(
             action='SELL',
@@ -162,6 +170,7 @@ class IntradayTrendStrategy:
                 'breakdown_percent': round(breakdown_percent, 4),
                 'candle_range_percent': round(candle_range_percent, 4),
                 'close_position_percent': round(close_position_percent, 4),
+                'atr_percent': round(atr_percent, 4),
                 'fast_ma': round(fast_ma, 5),
                 'slow_ma': round(slow_ma, 5),
                 'range_low': round(range_low, 5),
@@ -173,6 +182,7 @@ class IntradayTrendStrategy:
             self.config.lookback + 1,
             self.config.slow_lookback,
             self.config.session_lookback + 1,
+            self.config.atr_lookback + 1,
         )
 
     def _session_move_percent(self) -> float:
@@ -262,6 +272,32 @@ class IntradayTrendStrategy:
             raise ValueError(f'Cannot calculate trend strength with invalid slow_ma={slow_ma}')
 
         return ((fast_ma - slow_ma) / slow_ma) * 100
+
+    def _atr_percent(self) -> float:
+        candles = list(self.candles)
+        current_close = candles[-1].close
+
+        if current_close <= 0:
+            raise ValueError(f'Cannot calculate ATR percent with invalid close={current_close}')
+
+        true_ranges: list[float] = []
+        atr_candles = candles[-(self.config.atr_lookback + 1):]
+
+        for index in range(1, len(atr_candles)):
+            candle = atr_candles[index]
+            previous_close = atr_candles[index - 1].close
+            true_range = max(
+                candle.high - candle.low,
+                abs(candle.high - previous_close),
+                abs(candle.low - previous_close),
+            )
+            true_ranges.append(true_range)
+
+        if not true_ranges:
+            raise ValueError('Cannot calculate ATR without true ranges')
+
+        atr = self._average(true_ranges)
+        return (atr / current_close) * 100
 
     def _average(self, values: list[float]) -> float:
         if not values:
