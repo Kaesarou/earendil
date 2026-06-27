@@ -18,3 +18,7 @@ class TradePlan:
     expected_move_percent: float | None = None
     min_required_move_percent: float | None = None
     min_move_spread_ratio: float | None = None
+    atr_percent: float | None = None
+    dynamic_sl_tp_enabled: bool | None = None
+    effective_stop_loss_percent: float | None = None
+    effective_take_profit_percent: float | None = None
