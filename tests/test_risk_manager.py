@@ -12,6 +12,8 @@ def build_risk_manager(
     max_trades_per_day: int = 10,
     estimated_round_trip_fees: float = 0.0,
     min_expected_net_profit: float = 0.0,
+    max_spread_percent: float = 0.0,
+    min_move_spread_ratio: float = 0.0,
     short_selling_enabled: bool = False,
     crypto_symbols: str = '',
     crypto_max_position_size_percent: float = 0.75,
@@ -20,6 +22,8 @@ def build_risk_manager(
     crypto_estimated_round_trip_fees: float = 3.0,
     crypto_min_expected_net_profit: float = 8.0,
     crypto_force_close_enabled: bool = False,
+    crypto_max_spread_percent: float = 0.0,
+    crypto_min_move_spread_ratio: float = 0.0,
 ) -> RiskManager:
     settings = Settings(
         MAX_OPEN_POSITIONS=max_open_positions,
@@ -30,6 +34,8 @@ def build_risk_manager(
         TAKE_PROFIT_PERCENT=0.5,
         ESTIMATED_ROUND_TRIP_FEES=estimated_round_trip_fees,
         MIN_EXPECTED_NET_PROFIT=min_expected_net_profit,
+        MAX_SPREAD_PERCENT=max_spread_percent,
+        MIN_MOVE_SPREAD_RATIO=min_move_spread_ratio,
         FORCE_CLOSE_HOUR=23,
         FORCE_CLOSE_MINUTE=59,
         SHORT_SELLING_ENABLED=short_selling_enabled,
@@ -40,6 +46,8 @@ def build_risk_manager(
         CRYPTO_ESTIMATED_ROUND_TRIP_FEES=crypto_estimated_round_trip_fees,
         CRYPTO_MIN_EXPECTED_NET_PROFIT=crypto_min_expected_net_profit,
         CRYPTO_FORCE_CLOSE_ENABLED=crypto_force_close_enabled,
+        CRYPTO_MAX_SPREAD_PERCENT=crypto_max_spread_percent,
+        CRYPTO_MIN_MOVE_SPREAD_RATIO=crypto_min_move_spread_ratio,
     )
 
     return RiskManager(
@@ -49,12 +57,17 @@ def build_risk_manager(
     )
 
 
-def snapshot(symbol: str = 'AAPL') -> MarketSnapshot:
+def snapshot(
+    symbol: str = 'AAPL',
+    bid: float = 99.0,
+    ask: float = 101.0,
+    last: float = 100.0,
+) -> MarketSnapshot:
     return MarketSnapshot.now(
         symbol=symbol,
-        bid=99.0,
-        ask=101.0,
-        last=100.0,
+        bid=bid,
+        ask=ask,
+        last=last,
     )
 
 
@@ -117,6 +130,43 @@ def test_risk_manager_uses_crypto_risk_profile_for_crypto_symbol():
     assert plan.expected_gross_profit == 0.3
     assert plan.estimated_fees == 0.05
     assert plan.expected_net_profit == 0.25
+
+
+def test_risk_manager_rejects_when_spread_is_too_high():
+    risk_manager = build_risk_manager(
+        max_spread_percent=0.5,
+    )
+
+    plan = risk_manager.evaluate(
+        signal=buy_signal(),
+        snapshot=snapshot('AAPL', bid=99.0, ask=101.0, last=100.0),
+        account_equity=100.0,
+    )
+
+    assert not plan.approved
+    assert plan.reason == 'spread_too_high'
+    assert plan.spread_percent == 2.0
+    assert plan.max_spread_percent == 0.5
+
+
+def test_risk_manager_rejects_when_expected_move_is_too_low_vs_spread():
+    risk_manager = build_risk_manager(
+        max_spread_percent=5.0,
+        min_move_spread_ratio=4.0,
+    )
+
+    plan = risk_manager.evaluate(
+        signal=buy_signal(),
+        snapshot=snapshot('AAPL', bid=99.9, ask=100.1, last=100.0),
+        account_equity=100.0,
+    )
+
+    assert not plan.approved
+    assert plan.reason == 'expected_move_too_low_vs_spread'
+    assert plan.spread_percent == 0.2
+    assert plan.expected_move_percent == 0.5
+    assert plan.min_required_move_percent == 0.8
+    assert plan.min_move_spread_ratio == 4.0
 
 
 def test_risk_manager_rejects_when_total_open_positions_limit_is_reached():
