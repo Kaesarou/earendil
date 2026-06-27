@@ -46,6 +46,7 @@ def config(allow_short: bool = True) -> IntradayTrendStrategyConfig:
         min_candle_range_percent=0.01,
         min_close_position_percent=70.0,
         allow_short=allow_short,
+        atr_lookback=5,
     )
 
 
@@ -70,6 +71,8 @@ def test_intraday_trend_emits_buy_when_session_and_breakout_are_bullish():
     assert signal.action == 'BUY'
     assert signal.reason == 'intraday_bullish_breakout'
     assert signal.confidence == 0.8
+    assert signal.metadata is not None
+    assert signal.metadata['atr_percent'] > 0
 
 
 def test_intraday_trend_emits_sell_when_session_and_breakdown_are_bearish():
@@ -93,6 +96,8 @@ def test_intraday_trend_emits_sell_when_session_and_breakdown_are_bearish():
     assert signal.action == 'SELL'
     assert signal.reason == 'intraday_bearish_breakdown'
     assert signal.confidence == 0.8
+    assert signal.metadata is not None
+    assert signal.metadata['atr_percent'] > 0
 
 
 def test_intraday_trend_returns_hold_when_session_move_is_neutral():
