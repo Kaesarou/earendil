@@ -141,11 +141,7 @@ class CachedBrokerClient(BrokerClient):
 
     def _load_etoro_search_market_snapshots(self, symbols: list[str]) -> dict[str, MarketSnapshot]:
         normalized_symbols = [self._normalize_symbol(symbol) for symbol in symbols]
-        payload = self.delegate._get(
-            '/api/v1/market-data/search',
-            params={'internalSymbolFull': ','.join(normalized_symbols)},
-        )
-        items_by_symbol = self._index_search_items_by_symbol(self.delegate._extract_items(payload))
+        items_by_symbol = self._load_etoro_search_items_until_symbols_found(normalized_symbols)
 
         missing_symbols = [symbol for symbol in normalized_symbols if symbol not in items_by_symbol]
         if missing_symbols:
@@ -159,19 +155,46 @@ class CachedBrokerClient(BrokerClient):
                 item=items_by_symbol[normalized_symbol],
             )
 
-        logger.info('eToro batch market snapshots resolved from search | symbols=%s', list(snapshots))
+        logger.info('eToro batch market snapshots resolved from paginated search | symbols=%s', list(snapshots))
         return snapshots
+
+    def _load_etoro_search_items_until_symbols_found(self, normalized_symbols: list[str]) -> dict[str, dict]:
+        target_symbols = set(normalized_symbols)
+        found_items: dict[str, dict] = {}
+        page_number = 1
+        page_size = 500
+
+        while target_symbols - set(found_items):
+            payload = self.delegate._get(
+                '/api/v1/market-data/search',
+                params={
+                    'fields': 'instrumentId,internalSymbolFull,cvtBid,cvtAsk,currentRate',
+                    'pageSize': page_size,
+                    'pageNumber': page_number,
+                },
+            )
+            items = self.delegate._extract_items(payload)
+            if not items:
+                break
+
+            for item in items:
+                symbol = item.get('internalSymbolFull')
+                if symbol is None:
+                    continue
+
+                normalized_symbol = self._normalize_symbol(str(symbol))
+                if normalized_symbol in target_symbols:
+                    found_items[normalized_symbol] = item
+
+            if len(items) < page_size:
+                break
+
+            page_number += 1
+
+        return found_items
 
     def _looks_like_etoro_delegate(self) -> bool:
         return all(hasattr(self.delegate, name) for name in ('_get', '_extract_items'))
-
-    def _index_search_items_by_symbol(self, items: list[dict]) -> dict[str, dict]:
-        indexed_items: dict[str, dict] = {}
-        for item in items:
-            symbol = item.get('internalSymbolFull')
-            if symbol is not None:
-                indexed_items[self._normalize_symbol(str(symbol))] = item
-        return indexed_items
 
     def _to_market_snapshot_from_search_item(self, symbol: str, item: dict) -> MarketSnapshot:
         bid = self._extract_required_float(item, ('cvtBid', 'CvtBid', 'bid', 'Bid', 'bidPrice'))
