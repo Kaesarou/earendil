@@ -149,6 +149,9 @@ class CachedBrokerClient(BrokerClient):
             try:
                 return self._load_batch_market_snapshots(symbols)
             except Exception as exc:
+                if self._is_broker_auth_error(exc):
+                    raise
+
                 logger.warning(
                     'Batch market snapshot loading failed, falling back to per-symbol loading | symbols=%s | error=%s',
                     symbols,
@@ -244,6 +247,11 @@ class CachedBrokerClient(BrokerClient):
                 return int(value)
 
         return None
+
+    def _is_broker_auth_error(self, exc: Exception) -> bool:
+        response = getattr(exc, 'response', None)
+        status_code = getattr(response, 'status_code', None)
+        return status_code in (401, 403)
 
     def _get_cache_entry(
         self,
