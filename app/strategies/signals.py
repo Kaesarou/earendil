@@ -10,5 +10,10 @@ class Signal:
     metadata: dict[str, Any] | None = None
 
     @staticmethod
-    def hold(reason: str = 'no_signal') -> 'Signal':
-        return Signal(action='HOLD', confidence=0.0, reason=reason)
+    def hold(reason: str = 'no_signal', metadata: dict[str, Any] | None = None) -> 'Signal':
+        return Signal(
+            action='HOLD',
+            confidence=0.0,
+            reason=reason,
+            metadata=metadata,
+        )
