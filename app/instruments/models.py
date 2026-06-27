@@ -28,3 +28,10 @@ class RiskProfile:
     force_close_minute: int
     max_spread_percent: float
     min_move_spread_ratio: float
+    dynamic_sl_tp_enabled: bool
+    stop_loss_atr_multiplier: float
+    take_profit_atr_multiplier: float
+    min_stop_loss_percent: float
+    max_stop_loss_percent: float
+    min_take_profit_percent: float
+    max_take_profit_percent: float
