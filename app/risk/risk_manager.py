@@ -31,11 +31,20 @@ class RiskManager:
         account_equity: float,
     ) -> TradePlan:
         risk_profile = self.risk_profile_for(snapshot.symbol)
+        spread_percent = self._calculate_spread_percent(snapshot)
+        expected_move_percent = risk_profile.take_profit_percent
+        min_required_move_percent = self._calculate_min_required_move_percent(
+            spread_percent=spread_percent,
+            risk_profile=risk_profile,
+        )
 
         rejection_reason = self._rejection_reason(
             signal=signal,
             symbol=snapshot.symbol,
             risk_profile=risk_profile,
+            spread_percent=spread_percent,
+            expected_move_percent=expected_move_percent,
+            min_required_move_percent=min_required_move_percent,
         )
         if rejection_reason is not None:
             return TradePlan(
@@ -43,6 +52,11 @@ class RiskManager:
                 reason=rejection_reason,
                 symbol=snapshot.symbol,
                 side=signal.action,
+                spread_percent=self._round_optional(spread_percent),
+                max_spread_percent=risk_profile.max_spread_percent,
+                expected_move_percent=round(expected_move_percent, 4),
+                min_required_move_percent=self._round_optional(min_required_move_percent),
+                min_move_spread_ratio=risk_profile.min_move_spread_ratio,
             )
 
         amount = self.position_sizing_strategy.calculate_amount(
@@ -56,6 +70,11 @@ class RiskManager:
                 reason='invalid_position_amount',
                 symbol=snapshot.symbol,
                 side=signal.action,
+                spread_percent=self._round_optional(spread_percent),
+                max_spread_percent=risk_profile.max_spread_percent,
+                expected_move_percent=round(expected_move_percent, 4),
+                min_required_move_percent=self._round_optional(min_required_move_percent),
+                min_move_spread_ratio=risk_profile.min_move_spread_ratio,
             )
 
         expected_gross_profit = self._calculate_expected_gross_profit(
@@ -75,6 +94,11 @@ class RiskManager:
                 expected_gross_profit=round(expected_gross_profit, 4),
                 estimated_fees=round(estimated_fees, 4),
                 expected_net_profit=round(expected_net_profit, 4),
+                spread_percent=self._round_optional(spread_percent),
+                max_spread_percent=risk_profile.max_spread_percent,
+                expected_move_percent=round(expected_move_percent, 4),
+                min_required_move_percent=self._round_optional(min_required_move_percent),
+                min_move_spread_ratio=risk_profile.min_move_spread_ratio,
             )
 
         return self._build_trade_plan(
@@ -85,6 +109,9 @@ class RiskManager:
             estimated_fees=estimated_fees,
             expected_net_profit=expected_net_profit,
             risk_profile=risk_profile,
+            spread_percent=spread_percent,
+            expected_move_percent=expected_move_percent,
+            min_required_move_percent=min_required_move_percent,
         )
 
     def instrument_profile_for(self, symbol: str) -> InstrumentProfile:
@@ -126,6 +153,9 @@ class RiskManager:
         signal: Signal,
         symbol: str,
         risk_profile: RiskProfile,
+        spread_percent: float | None,
+        expected_move_percent: float,
+        min_required_move_percent: float | None,
     ) -> str | None:
         if signal.action == 'HOLD':
             return signal.reason
@@ -157,6 +187,20 @@ class RiskManager:
             ):
                 return 'too_close_to_daily_shutdown'
 
+        if (
+            spread_percent is not None
+            and risk_profile.max_spread_percent > 0
+            and spread_percent > risk_profile.max_spread_percent
+        ):
+            return 'spread_too_high'
+
+        if (
+            min_required_move_percent is not None
+            and risk_profile.min_move_spread_ratio > 0
+            and expected_move_percent < min_required_move_percent
+        ):
+            return 'expected_move_too_low_vs_spread'
+
         return None
 
     def _build_trade_plan(
@@ -168,6 +212,9 @@ class RiskManager:
         estimated_fees: float,
         expected_net_profit: float,
         risk_profile: RiskProfile,
+        spread_percent: float | None,
+        expected_move_percent: float,
+        min_required_move_percent: float | None,
     ) -> TradePlan:
         if signal.action == 'BUY':
             stop_loss = snapshot.last * (1 - risk_profile.stop_loss_percent / 100)
@@ -189,6 +236,11 @@ class RiskManager:
             expected_gross_profit=round(expected_gross_profit, 4),
             estimated_fees=round(estimated_fees, 4),
             expected_net_profit=round(expected_net_profit, 4),
+            spread_percent=self._round_optional(spread_percent),
+            max_spread_percent=risk_profile.max_spread_percent,
+            expected_move_percent=round(expected_move_percent, 4),
+            min_required_move_percent=self._round_optional(min_required_move_percent),
+            min_move_spread_ratio=risk_profile.min_move_spread_ratio,
         )
 
     def _calculate_expected_gross_profit(
@@ -197,6 +249,32 @@ class RiskManager:
         risk_profile: RiskProfile,
     ) -> float:
         return amount * (risk_profile.take_profit_percent / 100)
+
+    def _calculate_spread_percent(self, snapshot: MarketSnapshot) -> float | None:
+        if snapshot.bid <= 0 or snapshot.ask <= 0 or snapshot.last <= 0:
+            return None
+
+        spread = snapshot.ask - snapshot.bid
+        if spread < 0:
+            return None
+
+        return (spread / snapshot.last) * 100
+
+    def _calculate_min_required_move_percent(
+        self,
+        spread_percent: float | None,
+        risk_profile: RiskProfile,
+    ) -> float | None:
+        if spread_percent is None:
+            return None
+
+        return spread_percent * risk_profile.min_move_spread_ratio
+
+    def _round_optional(self, value: float | None) -> float | None:
+        if value is None:
+            return None
+
+        return round(value, 4)
 
     def _normalize_symbol(self, symbol: str) -> str:
         return symbol.strip().upper()
