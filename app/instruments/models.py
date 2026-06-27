@@ -26,3 +26,5 @@ class RiskProfile:
     force_close_enabled: bool
     force_close_hour: int
     force_close_minute: int
+    max_spread_percent: float
+    min_move_spread_ratio: float
