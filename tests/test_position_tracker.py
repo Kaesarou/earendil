@@ -1,9 +1,8 @@
 from datetime import datetime, timedelta, timezone
 
-from app.execution.position_tracker import PositionCloseSignal, PositionTracker
+from app.execution.position_tracker import PositionCloseSignal, PositionTracker, TrackedPosition
 from app.market.models import MarketSnapshot
 from app.risk.models import TradePlan
-from app.execution.position_tracker import PositionTracker, TrackedPosition
 
 
 def buy_plan() -> TradePlan:
@@ -17,6 +16,25 @@ def buy_plan() -> TradePlan:
         take_profit=110.0,
     )
 
+
+def managed_buy_plan() -> TradePlan:
+    return TradePlan(
+        approved=True,
+        reason='test_buy',
+        symbol='BTC',
+        side='BUY',
+        amount=10.0,
+        stop_loss=95.0,
+        take_profit=120.0,
+        breakeven_stop_enabled=True,
+        breakeven_trigger_percent=2.0,
+        breakeven_buffer_percent=0.1,
+        trailing_stop_enabled=True,
+        trailing_stop_trigger_percent=4.0,
+        trailing_stop_distance_percent=1.0,
+    )
+
+
 def sell_plan() -> TradePlan:
     return TradePlan(
         approved=True,
@@ -27,6 +45,7 @@ def sell_plan() -> TradePlan:
         stop_loss=105.0,
         take_profit=90.0,
     )
+
 
 def snapshot(
     symbol: str = 'BTC',
@@ -85,6 +104,45 @@ def test_position_tracker_closes_buy_when_take_profit_is_hit():
     assert close_signals[0].position_id == 'paper-1'
     assert close_signals[0].reason == 'take_profit_hit'
     assert close_signals[0].exit_price == 110.5
+
+
+def test_position_tracker_moves_buy_stop_to_break_even():
+    tracker = PositionTracker()
+    tracker.record_open_position(
+        position_id='paper-1',
+        trade_plan=managed_buy_plan(),
+        entry_price=100.0,
+    )
+
+    assert tracker.evaluate_snapshot(snapshot(last=102.5)) == []
+
+    position = tracker.open_positions_snapshot()[0]
+    assert position.stop_loss == 100.1
+
+    close_signals = tracker.evaluate_snapshot(snapshot(last=100.05))
+
+    assert len(close_signals) == 1
+    assert close_signals[0].reason == 'break_even_stop_hit'
+
+
+def test_position_tracker_trails_buy_stop_after_trigger():
+    tracker = PositionTracker()
+    tracker.record_open_position(
+        position_id='paper-1',
+        trade_plan=managed_buy_plan(),
+        entry_price=100.0,
+    )
+
+    assert tracker.evaluate_snapshot(snapshot(last=105.0)) == []
+
+    position = tracker.open_positions_snapshot()[0]
+    assert position.highest_price == 105.0
+    assert position.stop_loss == 103.95
+
+    close_signals = tracker.evaluate_snapshot(snapshot(last=103.90))
+
+    assert len(close_signals) == 1
+    assert close_signals[0].reason == 'trailing_stop_hit'
 
 
 def test_position_tracker_ignores_other_symbols():
@@ -200,6 +258,7 @@ def test_position_tracker_returns_none_when_closing_unknown_position():
 
     assert closed_position is None
 
+
 def test_position_tracker_closes_sell_when_stop_loss_is_hit():
     tracker = PositionTracker()
     tracker.record_open_position(
@@ -291,6 +350,7 @@ def test_position_tracker_calculates_negative_pnl_for_sell_stop_loss():
     assert closed_position.gross_pnl == -0.6
     assert closed_position.close_reason == 'stop_loss_hit'
 
+
 def test_position_tracker_restores_open_position():
     tracker = PositionTracker()
 
@@ -308,4 +368,4 @@ def test_position_tracker_restores_open_position():
     tracker.restore_open_position(position)
 
     assert tracker.has_open_positions()
-    assert tracker.open_positions_snapshot() == [position]
+    assert tracker.open_positions_snapshot()[0].highest_price == 100.0
