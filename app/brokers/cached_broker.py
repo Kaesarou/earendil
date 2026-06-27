@@ -20,29 +20,54 @@ class CachedBrokerClient(BrokerClient):
     market_snapshot_ttl_seconds: float = 0.0
     account_equity_ttl_seconds: float = 0.0
     position_status_ttl_seconds: float = 0.0
+    batch_market_rates_enabled: bool = True
     logging_enabled: bool = False
     market_snapshot_cache: dict[str, CacheEntry] = field(default_factory=dict)
     account_equity_cache: CacheEntry | None = None
     position_status_cache: dict[str, CacheEntry] = field(default_factory=dict)
 
     def get_market_snapshot(self, symbol: str) -> MarketSnapshot:
-        normalized_symbol = self._normalize_symbol(symbol)
-        cached_snapshot = self._get_cache_entry(
-            cache=self.market_snapshot_cache,
-            key=normalized_symbol,
-            cache_name='market_snapshot',
-        )
-        if cached_snapshot is not None:
-            return cached_snapshot
+        snapshots = self.get_market_snapshots([symbol])
+        return snapshots[symbol]
 
-        snapshot = self.delegate.get_market_snapshot(symbol)
-        self._put_cache_entry(
-            cache=self.market_snapshot_cache,
-            key=normalized_symbol,
-            value=snapshot,
-            ttl_seconds=self.market_snapshot_ttl_seconds,
-        )
-        return snapshot
+    def get_market_snapshots(self, symbols: list[str]) -> dict[str, MarketSnapshot]:
+        snapshots: dict[str, MarketSnapshot] = {}
+        symbols_to_load: list[str] = []
+        seen_symbols: set[str] = set()
+
+        for symbol in symbols:
+            normalized_symbol = self._normalize_symbol(symbol)
+            if normalized_symbol in seen_symbols:
+                continue
+            seen_symbols.add(normalized_symbol)
+
+            cached_snapshot = self._get_cache_entry(
+                cache=self.market_snapshot_cache,
+                key=normalized_symbol,
+                cache_name='market_snapshot',
+            )
+            if cached_snapshot is not None:
+                snapshots[symbol] = cached_snapshot
+                continue
+
+            symbols_to_load.append(symbol)
+
+        if symbols_to_load:
+            loaded_snapshots = self._load_market_snapshots(symbols_to_load)
+            for symbol, snapshot in loaded_snapshots.items():
+                snapshots[symbol] = snapshot
+                self._put_cache_entry(
+                    cache=self.market_snapshot_cache,
+                    key=self._normalize_symbol(symbol),
+                    value=snapshot,
+                    ttl_seconds=self.market_snapshot_ttl_seconds,
+                )
+
+        return {
+            symbol: snapshots[symbol]
+            for symbol in symbols
+            if symbol in snapshots
+        }
 
     def get_account_equity(self) -> float:
         now = self._now()
@@ -118,6 +143,29 @@ class CachedBrokerClient(BrokerClient):
     def invalidate_account_and_positions(self) -> None:
         self.account_equity_cache = None
         self.position_status_cache.clear()
+
+    def _load_market_snapshots(self, symbols: list[str]) -> dict[str, MarketSnapshot]:
+        if self.batch_market_rates_enabled:
+            try:
+                return self._load_batch_market_snapshots(symbols)
+            except Exception as exc:
+                logger.warning(
+                    'Batch market snapshot loading failed, falling back to per-symbol loading | symbols=%s | error=%s',
+                    symbols,
+                    exc,
+                )
+
+        return {
+            symbol: self.delegate.get_market_snapshot(symbol)
+            for symbol in symbols
+        }
+
+    def _load_batch_market_snapshots(self, symbols: list[str]) -> dict[str, MarketSnapshot]:
+        delegate_batch_loader = getattr(self.delegate, 'get_market_snapshots', None)
+        if delegate_batch_loader is None:
+            raise RuntimeError('Delegate does not expose batch market snapshots')
+
+        return delegate_batch_loader(symbols)
 
     def _get_cache_entry(
         self,
