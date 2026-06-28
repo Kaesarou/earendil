@@ -10,7 +10,7 @@ class Settings(BaseSettings):
     )
     app_log_path: str = Field(default='data/logs/earendil.log', alias='APP_LOG_PATH')
     position_store_path: str = Field(default='data/earendil.sqlite', alias='POSITION_STORE_PATH')
-    ear_mode: str = Field(default='paper', alias='EAR_MODE')
+    broker: str = Field(default='paper', alias='BROKER')
     log_level: str = Field(default='INFO', alias='LOG_LEVEL')
     poll_interval_seconds: int = Field(default=60, alias='POLL_INTERVAL_SECONDS')
 
@@ -21,8 +21,6 @@ class Settings(BaseSettings):
     position_status_cache_ttl_seconds: float = Field(default=5.0, alias='POSITION_STATUS_CACHE_TTL_SECONDS')
     api_cache_logging_enabled: bool = Field(default=False, alias='API_CACHE_LOGGING_ENABLED')
 
-    broker: str = Field(default='etoro', alias='BROKER')
-    etoro_env: str = Field(default='demo', alias='ETORO_ENV')
     etoro_api_base_url: str = Field(default='https://public-api.etoro.com', alias='ETORO_API_BASE_URL')
     etoro_api_key: str = Field(default='', alias='ETORO_API_KEY')
     etoro_user_key: str = Field(default='', alias='ETORO_USER_KEY')

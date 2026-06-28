@@ -3,8 +3,10 @@ import pytest
 from app.brokers.etoro_client import EtoroClient
 from app.config.settings import Settings
 
+
 def test_find_instrument_id_uses_exact_symbol_match(monkeypatch):
     settings = Settings(
+        BROKER='etoro_demo',
         ETORO_API_KEY='api-key',
         ETORO_USER_KEY='user-key',
     )
@@ -79,8 +81,7 @@ def test_to_market_snapshot_uses_mid_price_when_last_is_missing():
 
 def test_etoro_open_order_path_uses_demo_endpoint_when_env_is_demo():
     settings = Settings(
-        EAR_MODE='real',
-        ETORO_ENV='demo',
+        BROKER='etoro_demo',
         ETORO_API_KEY='api-key',
         ETORO_USER_KEY='user-key',
     )
@@ -92,8 +93,7 @@ def test_etoro_open_order_path_uses_demo_endpoint_when_env_is_demo():
 
 def test_etoro_open_order_path_uses_real_endpoint_when_env_is_real():
     settings = Settings(
-        EAR_MODE='real',
-        ETORO_ENV='real',
+        BROKER='etoro_live',
         ETORO_API_KEY='api-key',
         ETORO_USER_KEY='user-key',
     )
@@ -105,8 +105,7 @@ def test_etoro_open_order_path_uses_real_endpoint_when_env_is_real():
 
 def test_etoro_close_position_path_uses_demo_endpoint_when_env_is_demo():
     settings = Settings(
-        EAR_MODE='real',
-        ETORO_ENV='demo',
+        BROKER='etoro_demo',
         ETORO_API_KEY='api-key',
         ETORO_USER_KEY='user-key',
     )
@@ -120,8 +119,7 @@ def test_etoro_close_position_path_uses_demo_endpoint_when_env_is_demo():
 
 def test_etoro_close_position_path_uses_real_endpoint_when_env_is_real():
     settings = Settings(
-        EAR_MODE='real',
-        ETORO_ENV='real',
+        BROKER='etoro_live',
         ETORO_API_KEY='api-key',
         ETORO_USER_KEY='user-key',
     )
@@ -135,7 +133,7 @@ def test_etoro_close_position_path_uses_real_endpoint_when_env_is_real():
 
 def test_etoro_demo_order_details_path():
     settings = Settings(
-        ETORO_ENV='demo',
+        BROKER='etoro_demo',
         ETORO_API_KEY='api-key',
         ETORO_USER_KEY='user-key',
     )
@@ -149,7 +147,7 @@ def test_etoro_demo_order_details_path():
 
 def test_etoro_real_order_lookup_path():
     settings = Settings(
-        ETORO_ENV='real',
+        BROKER='etoro_live',
         ETORO_API_KEY='api-key',
         ETORO_USER_KEY='user-key',
     )
@@ -161,7 +159,7 @@ def test_etoro_real_order_lookup_path():
 
 def test_etoro_demo_portfolio_path():
     settings = Settings(
-        ETORO_ENV='demo',
+        BROKER='etoro_demo',
         ETORO_API_KEY='api-key',
         ETORO_USER_KEY='user-key',
     )
@@ -173,7 +171,7 @@ def test_etoro_demo_portfolio_path():
 
 def test_etoro_real_portfolio_path():
     settings = Settings(
-        ETORO_ENV='real',
+        BROKER='etoro_live',
         ETORO_API_KEY='api-key',
         ETORO_USER_KEY='user-key',
     )
@@ -185,7 +183,7 @@ def test_etoro_real_portfolio_path():
 
 def test_get_order_details_uses_demo_order_details_endpoint(monkeypatch):
     settings = Settings(
-        ETORO_ENV='demo',
+        BROKER='etoro_demo',
         ETORO_API_KEY='api-key',
         ETORO_USER_KEY='user-key',
     )
@@ -209,7 +207,7 @@ def test_get_order_details_uses_demo_order_details_endpoint(monkeypatch):
 
 def test_get_order_details_uses_real_order_lookup_endpoint(monkeypatch):
     settings = Settings(
-        ETORO_ENV='real',
+        BROKER='etoro_live',
         ETORO_API_KEY='api-key',
         ETORO_USER_KEY='user-key',
     )
@@ -233,7 +231,7 @@ def test_get_order_details_uses_real_order_lookup_endpoint(monkeypatch):
 
 def test_get_portfolio_uses_demo_portfolio_endpoint(monkeypatch):
     settings = Settings(
-        ETORO_ENV='demo',
+        BROKER='etoro_demo',
         ETORO_API_KEY='api-key',
         ETORO_USER_KEY='user-key',
     )
@@ -257,7 +255,7 @@ def test_get_portfolio_uses_demo_portfolio_endpoint(monkeypatch):
 
 def test_get_portfolio_uses_real_portfolio_endpoint(monkeypatch):
     settings = Settings(
-        ETORO_ENV='real',
+        BROKER='etoro_live',
         ETORO_API_KEY='api-key',
         ETORO_USER_KEY='user-key',
     )
@@ -281,8 +279,7 @@ def test_get_portfolio_uses_real_portfolio_endpoint(monkeypatch):
 
 def test_etoro_open_position_sends_expected_demo_order_payload(monkeypatch):
     settings = Settings(
-        EAR_MODE='real',
-        ETORO_ENV='demo',
+        BROKER='etoro_demo',
         BASE_CURRENCY='USD',
         ETORO_API_KEY='api-key',
         ETORO_USER_KEY='user-key',
@@ -347,8 +344,7 @@ def test_etoro_open_position_sends_expected_demo_order_payload(monkeypatch):
 
 def test_etoro_close_position_sends_expected_payload_and_confirms_portfolio_closed(monkeypatch):
     settings = Settings(
-        EAR_MODE='real',
-        ETORO_ENV='demo',
+        BROKER='etoro_demo',
         ETORO_API_KEY='api-key',
         ETORO_USER_KEY='user-key',
     )
@@ -396,8 +392,7 @@ def test_etoro_close_position_sends_expected_payload_and_confirms_portfolio_clos
 
 def test_etoro_close_position_falls_back_to_lookup_when_close_response_is_not_accepted(monkeypatch):
     settings = Settings(
-        EAR_MODE='real',
-        ETORO_ENV='real',
+        BROKER='etoro_live',
         ETORO_API_KEY='api-key',
         ETORO_USER_KEY='user-key',
     )
@@ -923,8 +918,7 @@ def test_wait_until_position_closed_raises_when_position_stays_open(monkeypatch)
 
 def test_etoro_open_short_position_sends_stop_loss_rate(monkeypatch):
     settings = Settings(
-        EAR_MODE='real',
-        ETORO_ENV='demo',
+        BROKER='etoro_demo',
         BASE_CURRENCY='USD',
         SHORT_SELLING_ENABLED=True,
         SHORT_LEVERAGE=1,
@@ -992,8 +986,7 @@ def test_etoro_open_short_position_sends_stop_loss_rate(monkeypatch):
 
 def test_etoro_buy_payload_does_not_include_short_only_fields():
     settings = Settings(
-        EAR_MODE='real',
-        ETORO_ENV='demo',
+        BROKER='etoro_demo',
         BASE_CURRENCY='USD',
         SHORT_SELLING_ENABLED=True,
         SHORT_LEVERAGE=1,

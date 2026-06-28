@@ -15,8 +15,15 @@ logger = logging.getLogger(__name__)
 @dataclass
 class EtoroClient(BrokerClient):
     settings: Settings
-    position_instruments: dict[str, int] = field(default_factory=dict)
-    instrument_ids_by_symbol: dict[str, int] = field(default_factory=dict)
+    env:str 
+    position_instruments: dict[str, int]
+    instrument_ids_by_symbol: dict[str, int]
+
+    def __init__(self, settings: Settings):
+        self.settings = settings
+        self.env = settings.broker.split('_')[-1]
+        self.position_instruments: dict[str, int] = field(default_factory=dict)
+        self.instrument_ids_by_symbol: dict[str, int] = field(default_factory=dict)
 
     # -------------------------------------------------------------------------
     # Public broker API
@@ -36,8 +43,8 @@ class EtoroClient(BrokerClient):
         equity = self._extract_account_equity(portfolio)
 
         logger.info(
-            'eToro account equity resolved | env=%s | equity=%s',
-            self.settings.etoro_env,
+            'Account equity resolved | env=%s | equity=%s',
+            self.env,
             equity,
         )
 
@@ -66,7 +73,7 @@ class EtoroClient(BrokerClient):
 
         logger.warning(
             'Sending eToro order | env=%s | symbol=%s | side=%s | transaction=%s | instrument_id=%s | amount=%s | stop_loss=%s | take_profit=%s | leverage=%s',
-            self.settings.etoro_env,
+            self.env,
             symbol,
             normalized_side,
             payload.get('transaction'),
@@ -158,7 +165,7 @@ class EtoroClient(BrokerClient):
         self.position_instruments.pop(position_id, None)
 
     def get_order_details(self, order_id: str) -> dict:
-        if self.settings.etoro_env == 'demo':
+        if self.env == 'demo':
             return self._get(self._demo_order_details_path(order_id))
 
         return self._get(
@@ -167,7 +174,7 @@ class EtoroClient(BrokerClient):
         )
 
     def get_portfolio(self) -> dict:
-        if self.settings.etoro_env == 'demo':
+        if self.env == 'demo':
             return self._get(self._demo_portfolio_path())
 
         return self._get(self._real_portfolio_path())
@@ -385,13 +392,13 @@ class EtoroClient(BrokerClient):
     # -------------------------------------------------------------------------
 
     def _open_order_path(self) -> str:
-        if self.settings.etoro_env == 'demo':
+        if self.env == 'demo':
             return '/api/v2/trading/execution/demo/orders'
 
         return '/api/v2/trading/execution/orders'
 
     def _close_position_path(self, position_id: str) -> str:
-        if self.settings.etoro_env == 'demo':
+        if self.env == 'demo':
             return f'/api/v1/trading/execution/demo/market-close-orders/positions/{position_id}'
 
         return f'/api/v1/trading/execution/market-close-orders/positions/{position_id}'

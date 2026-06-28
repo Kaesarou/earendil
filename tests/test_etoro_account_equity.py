@@ -9,7 +9,6 @@ def build_client() -> EtoroClient:
         settings=Settings(
             ETORO_API_KEY='test-api-key',
             ETORO_USER_KEY='test-user-key',
-            ETORO_ENV='demo',
         )
     )
 

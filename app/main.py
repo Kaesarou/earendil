@@ -3,8 +3,6 @@ import time
 
 from app.brokers.base import BrokerClient
 from app.brokers.cached_broker import CachedBrokerClient
-from app.brokers.etoro_client import EtoroClient
-from app.brokers.fake_broker import FakeBrokerClient
 from app.config.settings import Settings, get_settings
 from app.execution.candidate_ranking import build_trade_candidate
 from app.execution.position_tracker import PositionTracker
@@ -22,6 +20,7 @@ from app.risk.risk_manager import RiskManager
 from app.strategies.base import InvestmentStrategy
 from app.strategies.factory import build_investment_strategy
 from app.utils.logging import configure_logging
+from app.runtime.factories import build_broker
 
 logger = logging.getLogger(__name__)
 
@@ -44,27 +43,6 @@ def with_api_cache(settings: Settings, broker: BrokerClient) -> BrokerClient:
         batch_market_rates_enabled=settings.market_rates_batch_enabled,
         logging_enabled=settings.api_cache_logging_enabled,
     )
-
-
-def build_market_data_broker(settings: Settings) -> BrokerClient:
-    if settings.broker == 'etoro':
-        return with_api_cache(settings, EtoroClient(settings=settings))
-
-    if settings.broker == 'fake':
-        return with_api_cache(settings, FakeBrokerClient(equity=50.0))
-
-    raise ValueError(f'Unsupported market data broker: {settings.broker}')
-
-
-def build_execution_broker(settings: Settings) -> BrokerClient:
-    if settings.ear_mode == 'paper':
-        return with_api_cache(settings, FakeBrokerClient(equity=50.0))
-
-    if settings.ear_mode == 'real':
-        return with_api_cache(settings, EtoroClient(settings=settings))
-
-    raise ValueError(f'Unsupported execution mode: {settings.ear_mode}')
-
 
 def build_risk_manager(
     settings: Settings,
@@ -98,7 +76,7 @@ def restore_persisted_positions(
     position_store: PositionStore,
     position_tracker: PositionTracker,
     risk_manager: RiskManager,
-    execution_broker: BrokerClient,
+    broker: BrokerClient,
     trade_journal: JsonlJournal,
 ) -> None:
     restored_positions = position_store.load_open_positions()
@@ -114,7 +92,7 @@ def restore_persisted_positions(
 
     for position in restored_positions:
         try:
-            if not execution_broker.is_position_open(position.position_id):
+            if not broker.is_position_open(position.position_id):
                 logger.warning(
                     'Persisted position no longer open at broker | position_id=%s | symbol=%s',
                     position.position_id,
@@ -159,9 +137,9 @@ def restore_persisted_positions(
         position_tracker.restore_open_position(position)
         risk_manager.restore_open_position(position.symbol)
 
-        if hasattr(execution_broker, 'remember_position_instrument'):
+        if hasattr(broker, 'remember_position_instrument'):
             try:
-                execution_broker.remember_position_instrument(
+                broker.remember_position_instrument(
                     position_id=position.position_id,
                     symbol=position.symbol,
                 )
@@ -206,7 +184,7 @@ def restore_persisted_positions(
 
 def process_symbol(
     symbol: str,
-    market_data_broker: BrokerClient,
+    broker: BrokerClient,
     strategy: InvestmentStrategy,
     risk_manager: RiskManager,
     executor: TradeExecutor,
@@ -218,7 +196,7 @@ def process_symbol(
     position_store: PositionStore | None = None,
     snapshot: MarketSnapshot | None = None,
 ) -> TradeCandidate | None:
-    snapshot = snapshot or market_data_broker.get_market_snapshot(symbol)
+    snapshot = snapshot or broker.get_market_snapshot(symbol)
     market_journal.write('market_snapshot', {'symbol': symbol, 'snapshot': snapshot})
 
     close_signals = position_tracker.evaluate_snapshot(snapshot)
@@ -516,10 +494,8 @@ def main() -> None:
     instrument_registry = InstrumentRegistry(settings)
 
     logger.info(
-        'Starting Eärendil | mode=%s | broker=%s | etoro_env=%s | strategy=%s | risk_strategy=%s | watchlist=%s | api_cache_enabled=%s | market_rates_batch_enabled=%s',
-        settings.ear_mode,
+        'Starting Eärendil | broker=%s | strategy=%s | risk_strategy=%s | watchlist=%s | api_cache_enabled=%s | market_rates_batch_enabled=%s',
         settings.broker,
-        settings.etoro_env,
         settings.investment_strategy,
         settings.risk_strategy,
         symbols,
@@ -527,12 +503,11 @@ def main() -> None:
         settings.market_rates_batch_enabled,
     )
 
-    market_data_broker = build_market_data_broker(settings)
-    execution_broker = build_execution_broker(settings)
+    broker = build_broker(settings)
     strategies = build_strategies(settings, symbols)
     candle_builders = build_candle_builders(settings, symbols)
     risk_manager = build_risk_manager(settings=settings, instrument_registry=instrument_registry)
-    executor = TradeExecutor(execution_broker)
+    executor = TradeExecutor(broker)
     position_tracker = PositionTracker()
     position_store = PositionStore(settings.position_store_path)
 
@@ -545,7 +520,7 @@ def main() -> None:
             position_store=position_store,
             position_tracker=position_tracker,
             risk_manager=risk_manager,
-            execution_broker=execution_broker,
+            broker=broker,
             trade_journal=trade_journal,
         )
     except Exception as exc:
@@ -560,12 +535,12 @@ def main() -> None:
     while True:
         try:
             candidates: list[TradeCandidate] = []
-            snapshots = market_data_broker.get_market_snapshots(symbols)
+            snapshots = broker.get_market_snapshots(symbols)
             for symbol in symbols:
                 try:
                     candidate = process_symbol(
                         symbol=symbol,
-                        market_data_broker=market_data_broker,
+                        broker=broker,
                         strategy=strategies[symbol],
                         risk_manager=risk_manager,
                         executor=executor,
@@ -590,7 +565,7 @@ def main() -> None:
 
             execute_ranked_candidates(
                 candidates=candidates,
-                execution_broker=execution_broker,
+                execution_broker=broker,
                 risk_manager=risk_manager,
                 executor=executor,
                 position_tracker=position_tracker,

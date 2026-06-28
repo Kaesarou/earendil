@@ -17,18 +17,11 @@ def with_api_cache(settings: Settings, broker: BrokerClient) -> BrokerClient:
         logging_enabled=settings.api_cache_logging_enabled,
     )
 
-
-def build_market_data_broker(settings: Settings) -> BrokerClient:
-    if settings.broker == 'etoro':
-        return with_api_cache(settings, EtoroClient(settings=settings))
-    if settings.broker == 'fake':
+def build_broker(settings: Settings) -> BrokerClient:
+    if settings.broker == 'paper':
         return with_api_cache(settings, FakeBrokerClient(equity=50.0))
-    raise ValueError(f'Unsupported market data broker: {settings.broker}')
 
-
-def build_execution_broker(settings: Settings) -> BrokerClient:
-    if settings.ear_mode == 'paper':
-        return with_api_cache(settings, FakeBrokerClient(equity=50.0))
-    if settings.ear_mode == 'real':
+    if settings.broker == 'etoro_demo' or settings.broker == 'etoro_live':
         return with_api_cache(settings, EtoroClient(settings=settings))
-    raise ValueError(f'Unsupported execution mode: {settings.ear_mode}')
+
+    raise ValueError(f'Unsupported broker: {settings.broker}')
