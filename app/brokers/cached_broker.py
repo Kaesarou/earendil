@@ -73,6 +73,7 @@ class CachedBrokerClient(BrokerClient):
 
     def get_account_equity(self) -> float:
         now = self._now()
+    
         if (
             self.account_equity_ttl_seconds > 0
             and self.account_equity_cache is not None
@@ -80,10 +81,18 @@ class CachedBrokerClient(BrokerClient):
         ):
             self._log_cache_hit('account_equity', 'account')
             return cast(float, self.account_equity_cache.value)
-
+    
         self._log_cache_miss('account_equity', 'account')
         equity = self.delegate.get_account_equity()
-        self.account_equity_cache = self._build_entry(equity, self.account_equity_ttl_seconds)
+    
+        if self.account_equity_ttl_seconds > 0:
+            self.account_equity_cache = self._build_entry(
+                equity,
+                self.account_equity_ttl_seconds,
+            )
+        else:
+            self.account_equity_cache = None
+    
         return equity
 
     def open_position(self, symbol: str, side: str, amount: float, stop_loss: float, take_profit: float) -> str:
