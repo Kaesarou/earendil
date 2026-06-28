@@ -14,7 +14,6 @@ class Settings(BaseSettings):
     log_level: str = Field(default='INFO', alias='LOG_LEVEL')
     poll_interval_seconds: int = Field(default=60, alias='POLL_INTERVAL_SECONDS')
 
-    etoro_api_base_url: str = Field(default='https://public-api.etoro.com', alias='ETORO_API_BASE_URL')
     etoro_api_key: str = Field(default='', alias='ETORO_API_KEY')
     etoro_user_key: str = Field(default='', alias='ETORO_USER_KEY')
 

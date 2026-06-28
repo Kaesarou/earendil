@@ -16,6 +16,7 @@ class EtoroClient(BrokerClient):
     env:str 
     position_instruments: dict[str, int]
     instrument_ids_by_symbol: dict[str, int]
+    etoro_api_base_url = 'https://public-api.etoro.com'
 
     def __init__(self, settings: Settings):
         self.settings = settings
@@ -207,7 +208,7 @@ class EtoroClient(BrokerClient):
         }
 
     def _get(self, path: str, params: dict | None = None) -> dict:
-        url = f'{self.settings.etoro_api_base_url.rstrip("/")}/{path.lstrip("/")}'
+        url = f'{self.etoro_api_base_url.rstrip("/")}/{path.lstrip("/")}'
         max_attempts = 3
         retry_status_codes = {429, 500, 502, 503, 504}
 
@@ -283,7 +284,7 @@ class EtoroClient(BrokerClient):
         raise RuntimeError(f'eToro GET failed after retries | url={url} | params={params}')
 
     def _post(self, path: str, payload: dict) -> dict:
-        url = f'{self.settings.etoro_api_base_url.rstrip("/")}/{path.lstrip("/")}'
+        url = f'{self.etoro_api_base_url.rstrip("/")}/{path.lstrip("/")}'
 
         try:
             response = requests.post(
