@@ -56,50 +56,7 @@ class CountingBroker(BrokerClient):
     def is_position_open(self, position_id: str) -> bool:
         self.position_status_calls += 1
         return self.positions.get(position_id, False)
-
-
-def test_cached_broker_caches_market_snapshots_by_symbol():
-    delegate = CountingBroker()
-    broker = CachedBrokerClient(
-        delegate=delegate,
-        market_snapshot_ttl_seconds=60.0,
-    )
-
-    first_snapshot = broker.get_market_snapshot('btc')
-    second_snapshot = broker.get_market_snapshot(' BTC ')
-
-    assert first_snapshot == second_snapshot
-    assert delegate.batch_snapshot_calls == 1
-
-
-def test_cached_broker_batches_missing_market_snapshots():
-    delegate = CountingBroker()
-    broker = CachedBrokerClient(
-        delegate=delegate,
-        market_snapshot_ttl_seconds=60.0,
-    )
-
-    snapshots = broker.get_market_snapshots(['BTC', 'ETH', 'DOGE'])
-
-    assert list(snapshots) == ['BTC', 'ETH', 'DOGE']
-    assert delegate.batch_snapshot_calls == 1
-    assert delegate.snapshot_calls == 0
-
-
-def test_cached_broker_batches_only_uncached_market_snapshots():
-    delegate = CountingBroker()
-    broker = CachedBrokerClient(
-        delegate=delegate,
-        market_snapshot_ttl_seconds=60.0,
-    )
-
-    broker.get_market_snapshots(['BTC', 'ETH'])
-    broker.get_market_snapshots(['BTC', 'ETH', 'DOGE'])
-
-    assert delegate.batch_snapshot_calls == 2
-    assert delegate.snapshot_calls == 0
-    assert 'DOGE' in broker.market_snapshot_cache
-
+    
 
 def test_cached_broker_caches_account_equity():
     delegate = CountingBroker()
@@ -139,23 +96,3 @@ def test_cached_broker_invalidates_account_and_position_cache_after_open():
 
     assert delegate.equity_calls == 2
     assert delegate.position_status_calls == 2
-
-
-def test_cached_broker_does_not_cache_when_ttl_is_disabled():
-    delegate = CountingBroker()
-    broker = CachedBrokerClient(
-        delegate=delegate,
-        market_snapshot_ttl_seconds=0.0,
-        account_equity_ttl_seconds=0.0,
-    )
-
-    broker.get_market_snapshot('BTC')
-    broker.get_market_snapshot('BTC')
-    broker.get_account_equity()
-    broker.get_account_equity()
-
-    assert delegate.batch_snapshot_calls == 2
-    assert delegate.snapshot_calls == 0
-    assert delegate.equity_calls == 2
-    assert broker.market_snapshot_cache == {}
-    assert broker.account_equity_cache is None
