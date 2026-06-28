@@ -7,8 +7,7 @@ from app.config.settings import Settings
 
 def with_api_cache(settings: Settings, broker: BrokerClient) -> BrokerClient:
     return CachedBrokerClient(
-        delegate=broker,
-        logging_enabled=settings.api_cache_logging_enabled,
+        delegate=broker
     )
 
 def build_broker(settings: Settings) -> BrokerClient:
