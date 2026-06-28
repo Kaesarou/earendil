@@ -1,6 +1,5 @@
 from dataclasses import dataclass
 
-from app.config.settings import Settings
 from app.execution.candidate_ranking import rank_trade_candidates
 from app.execution.trade_candidate import TradeCandidate
 from app.market.models import MarketSnapshot
@@ -18,23 +17,6 @@ class PreScanConfig:
     min_atr_percent: float = 0.0
     max_atr_percent: float = 0.0
     max_noise_ratio: float = 0.0
-
-    @staticmethod
-    def from_settings(settings: Settings) -> 'PreScanConfig':
-        return PreScanConfig(
-            enabled=settings.pre_scan_enabled,
-            top_n=settings.pre_scan_top_n,
-            min_score=settings.pre_scan_min_score,
-            allowed_market_regimes=_parse_allowed_regimes(
-                settings.pre_scan_allowed_market_regimes,
-            ),
-            max_spread_percent=settings.pre_scan_max_spread_percent,
-            min_session_move_percent=settings.pre_scan_min_session_move_percent,
-            min_trend_strength_percent=settings.pre_scan_min_trend_strength_percent,
-            min_atr_percent=settings.pre_scan_min_atr_percent,
-            max_atr_percent=settings.pre_scan_max_atr_percent,
-            max_noise_ratio=settings.pre_scan_max_noise_ratio,
-        )
 
 
 @dataclass(frozen=True)
@@ -154,14 +136,6 @@ def _pre_scan_rejection_reason(
         return 'pre_scan_score_too_low'
 
     return None
-
-
-def _parse_allowed_regimes(raw_regimes: str) -> tuple[str, ...]:
-    return tuple(
-        regime.strip().upper()
-        for regime in raw_regimes.split(',')
-        if regime.strip()
-    )
 
 
 def _first_float_metadata(metadata: dict, *keys: str) -> float:
