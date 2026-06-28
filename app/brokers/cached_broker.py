@@ -33,7 +33,10 @@ class CachedBrokerClient(BrokerClient):
     position_status_cache: dict[str, CacheEntry] = field(default_factory=dict)
 
     def get_market_snapshot(self, symbol: str) -> MarketSnapshot:
-        return self.get_market_snapshots([symbol])[symbol]
+        return self.delegate.get_market_snapshot(symbol)
+
+    def get_market_snapshots(self, symbols: list[str]) -> dict[str, MarketSnapshot]:
+        return self.delegate.get_market_snapshots(symbols)
     
 
     def get_account_equity(self) -> float:
@@ -95,23 +98,6 @@ class CachedBrokerClient(BrokerClient):
     def invalidate_account_and_positions(self) -> None:
         self.account_equity_cache = None
         self.position_status_cache.clear()
-
-    def _load_market_snapshots(self, symbols: list[str]) -> dict[str, MarketSnapshot]:
-        try:
-            return self.delegate.get_market_snapshots(symbols)
-        except Exception as exc:
-            if self._is_broker_auth_error(exc):
-                raise
-            logger.warning(
-                'Batch market snapshot loading failed; falling back to per-symbol loading | error=%s',
-                exc,
-            )
-        return {symbol: self.delegate.get_market_snapshot(symbol) for symbol in symbols}
-
-    def _is_broker_auth_error(self, exc: Exception) -> bool:
-        response = getattr(exc, 'response', None)
-        status_code = getattr(response, 'status_code', None)
-        return status_code in (401, 403)
 
     def _get_cache_entry(self, cache: dict[str, CacheEntry], key: str, cache_name: str) -> object | None:
         entry = cache.get(key)
