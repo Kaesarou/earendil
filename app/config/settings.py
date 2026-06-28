@@ -14,7 +14,6 @@ class Settings(BaseSettings):
     log_level: str = Field(default='INFO', alias='LOG_LEVEL')
     poll_interval_seconds: int = Field(default=60, alias='POLL_INTERVAL_SECONDS')
 
-    api_cache_enabled: bool = Field(default=True, alias='API_CACHE_ENABLED')
     market_snapshot_cache_ttl_seconds: float = Field(default=0.0, alias='MARKET_SNAPSHOT_CACHE_TTL_SECONDS')
     account_equity_cache_ttl_seconds: float = Field(default=30.0, alias='ACCOUNT_EQUITY_CACHE_TTL_SECONDS')
     position_status_cache_ttl_seconds: float = Field(default=5.0, alias='POSITION_STATUS_CACHE_TTL_SECONDS')

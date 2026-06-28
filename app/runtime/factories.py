@@ -6,8 +6,6 @@ from app.config.settings import Settings
 
 
 def with_api_cache(settings: Settings, broker: BrokerClient) -> BrokerClient:
-    if not settings.api_cache_enabled:
-        return broker
     return CachedBrokerClient(
         delegate=broker,
         market_snapshot_ttl_seconds=settings.market_snapshot_cache_ttl_seconds,

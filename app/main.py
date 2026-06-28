@@ -31,18 +31,6 @@ def is_broker_authorization_error(exc: Exception) -> bool:
     return status_code in (401, 403)
 
 
-def with_api_cache(settings: Settings, broker: BrokerClient) -> BrokerClient:
-    if not settings.api_cache_enabled:
-        return broker
-
-    return CachedBrokerClient(
-        delegate=broker,
-        market_snapshot_ttl_seconds=settings.market_snapshot_cache_ttl_seconds,
-        account_equity_ttl_seconds=settings.account_equity_cache_ttl_seconds,
-        position_status_ttl_seconds=settings.position_status_cache_ttl_seconds,
-        logging_enabled=settings.api_cache_logging_enabled,
-    )
-
 def build_risk_manager(
     settings: Settings,
     instrument_registry: InstrumentRegistry,
@@ -493,12 +481,11 @@ def main() -> None:
     instrument_registry = InstrumentRegistry(settings)
 
     logger.info(
-        'Starting Eärendil | broker=%s | strategy=%s | risk_strategy=%s | watchlist=%s | api_cache_enabled=%s',
+        'Starting Eärendil | broker=%s | strategy=%s | risk_strategy=%s | watchlist=%s',
         settings.broker,
         settings.investment_strategy,
         settings.risk_strategy,
         symbols,
-        settings.api_cache_enabled,
     )
 
     broker = build_broker(settings)
