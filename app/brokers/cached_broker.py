@@ -79,7 +79,7 @@ class CachedBrokerClient(BrokerClient):
             and self.account_equity_cache.expires_at > now
         ):
             self._log_cache_hit('account_equity', 'account')
-            return float(self.account_equity_cache.value)
+            return cast(float, self.account_equity_cache.value)
 
         self._log_cache_miss('account_equity', 'account')
         equity = self.delegate.get_account_equity()
@@ -161,9 +161,7 @@ class CachedBrokerClient(BrokerClient):
         if ttl_seconds > 0:
             cache[key] = self._build_entry(value, ttl_seconds)
 
-    def _build_entry(self, value: object, ttl_seconds: float) -> CacheEntry | None:
-        if ttl_seconds <= 0:
-            return None
+    def _build_entry(self, value: object, ttl_seconds: float) -> CacheEntry:
         return CacheEntry(expires_at=self._now() + ttl_seconds, value=value)
 
     def _log_cache_hit(self, cache_name: str, key: str) -> None:

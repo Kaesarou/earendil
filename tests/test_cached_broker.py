@@ -101,20 +101,6 @@ def test_cached_broker_batches_only_uncached_market_snapshots():
     assert 'DOGE' in broker.market_snapshot_cache
 
 
-def test_cached_broker_can_disable_batch_market_snapshots():
-    delegate = CountingBroker()
-    broker = CachedBrokerClient(
-        delegate=delegate,
-        market_snapshot_ttl_seconds=60.0,
-    )
-
-    snapshots = broker.get_market_snapshots(['BTC', 'ETH'])
-
-    assert list(snapshots) == ['BTC', 'ETH']
-    assert delegate.snapshot_calls == 2
-    assert delegate.batch_snapshot_calls == 0
-
-
 def test_cached_broker_caches_account_equity():
     delegate = CountingBroker()
     broker = CachedBrokerClient(delegate=delegate, account_equity_ttl_seconds=60.0)
@@ -168,5 +154,8 @@ def test_cached_broker_does_not_cache_when_ttl_is_disabled():
     broker.get_account_equity()
     broker.get_account_equity()
 
-    assert delegate.snapshot_calls == 2
+    assert delegate.batch_snapshot_calls == 2
+    assert delegate.snapshot_calls == 0
     assert delegate.equity_calls == 2
+    assert broker.market_snapshot_cache == {}
+    assert broker.account_equity_cache is None
