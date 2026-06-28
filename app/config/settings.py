@@ -17,20 +17,8 @@ class Settings(BaseSettings):
     etoro_api_key: str = Field(default='', alias='ETORO_API_KEY')
     etoro_user_key: str = Field(default='', alias='ETORO_USER_KEY')
 
-    default_symbol: str = Field(default='BTC', alias='DEFAULT_SYMBOL')
     watchlist: str = Field(default='', alias='WATCHLIST')
     base_currency: str = Field(default='USD', alias='BASE_CURRENCY')
-
-    investment_strategy: str = Field(default='breakout', alias='INVESTMENT_STRATEGY')
-
-    breakout_lookback: int = Field(default=3, alias='BREAKOUT_LOOKBACK')
-    breakout_min_breakout_percent: float = Field(default=0.05, alias='BREAKOUT_MIN_BREAKOUT_PERCENT')
-    breakout_require_green_candle: bool = Field(default=True, alias='BREAKOUT_REQUIRE_GREEN_CANDLE')
-    breakout_min_close_position_percent: float = Field(default=70.0, alias='BREAKOUT_MIN_CLOSE_POSITION_PERCENT')
-    breakout_min_candle_range_percent: float = Field(default=0.05, alias='BREAKOUT_MIN_CANDLE_RANGE_PERCENT')
-    breakout_require_uptrend: bool = Field(default=False, alias='BREAKOUT_REQUIRE_UPTREND')
-    breakout_trend_fast_lookback: int = Field(default=5, alias='BREAKOUT_TREND_FAST_LOOKBACK')
-    breakout_trend_slow_lookback: int = Field(default=15, alias='BREAKOUT_TREND_SLOW_LOOKBACK')
 
     intraday_trend_lookback: int = Field(default=3, alias='INTRADAY_TREND_LOOKBACK')
     intraday_trend_fast_lookback: int = Field(default=5, alias='INTRADAY_TREND_FAST_LOOKBACK')
@@ -40,7 +28,6 @@ class Settings(BaseSettings):
     intraday_trend_min_breakout_percent: float = Field(default=0.05, alias='INTRADAY_TREND_MIN_BREAKOUT_PERCENT')
     intraday_trend_min_candle_range_percent: float = Field(default=0.04, alias='INTRADAY_TREND_MIN_CANDLE_RANGE_PERCENT')
     intraday_trend_min_close_position_percent: float = Field(default=70.0, alias='INTRADAY_TREND_MIN_CLOSE_POSITION_PERCENT')
-    intraday_trend_allow_short: bool = Field(default=False, alias='INTRADAY_TREND_ALLOW_SHORT')
     intraday_trend_atr_lookback: int = Field(default=14, alias='INTRADAY_TREND_ATR_LOOKBACK')
     intraday_trend_market_regime_filter_enabled: bool = Field(default=False, alias='INTRADAY_TREND_MARKET_REGIME_FILTER_ENABLED')
     intraday_trend_market_regime_min_trend_strength_percent: float = Field(default=0.02, alias='INTRADAY_TREND_MARKET_REGIME_MIN_TREND_STRENGTH_PERCENT')
@@ -155,7 +142,7 @@ class Settings(BaseSettings):
     candle_journal_path: str = Field(default='data/logs/candles.jsonl', alias='CANDLE_JOURNAL_PATH')
 
     def watchlist_symbols(self) -> list[str]:
-        raw_symbols = self.watchlist if self.watchlist.strip() else self.default_symbol
+        raw_symbols = self.watchlist.strip()
         symbols: list[str] = []
         seen_symbols: set[str] = set()
 

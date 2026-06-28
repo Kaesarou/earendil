@@ -27,8 +27,8 @@ class CachedBrokerClient(BrokerClient):
 
     delegate: BrokerClient
     account_equity_ttl_seconds: float = 30.0
-    position_status_ttl_seconds: float = 30.0
-    logging_enabled: bool = True
+    position_status_ttl_seconds: float = 5.0
+    logging_enabled: bool = False
     account_equity_cache: CacheEntry | None = None
     position_status_cache: dict[str, CacheEntry] = field(default_factory=dict)
 

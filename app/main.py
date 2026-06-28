@@ -481,9 +481,8 @@ def main() -> None:
     instrument_registry = InstrumentRegistry(settings)
 
     logger.info(
-        'Starting Eärendil | broker=%s | strategy=%s | risk_strategy=%s | watchlist=%s',
+        'Starting Eärendil | broker=%s | risk_strategy=%s | watchlist=%s',
         settings.broker,
-        settings.investment_strategy,
         settings.risk_strategy,
         symbols,
     )

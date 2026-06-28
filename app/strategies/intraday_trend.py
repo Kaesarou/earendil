@@ -15,7 +15,6 @@ class IntradayTrendStrategyConfig:
     min_breakout_percent: float = 0.05
     min_candle_range_percent: float = 0.04
     min_close_position_percent: float = 70.0
-    allow_short: bool = False
     atr_lookback: int = 14
     market_regime_filter_enabled: bool = False
     market_regime_min_trend_strength_percent: float = 0.02
@@ -152,8 +151,6 @@ class IntradayTrendStrategy:
         session_move_percent: float,
         regime_metadata: dict[str, float | str],
     ) -> Signal:
-        if not self.config.allow_short:
-            return Signal.hold('short_signals_disabled_by_strategy', metadata=regime_metadata)
 
         fast_ma, slow_ma = self._moving_averages()
 

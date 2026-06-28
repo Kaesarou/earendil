@@ -3,18 +3,11 @@ import pytest
 from app.config.settings import Settings
 
 
-def test_watchlist_symbols_uses_default_symbol_when_watchlist_is_empty():
-    settings = Settings(
-        DEFAULT_SYMBOL='AAPL',
-        WATCHLIST='',
-    )
 
-    assert settings.watchlist_symbols() == ['AAPL']
 
 
 def test_watchlist_symbols_parses_comma_separated_symbols():
     settings = Settings(
-        DEFAULT_SYMBOL='BTC',
         WATCHLIST='AAPL,MSFT,AMZN',
     )
 
@@ -23,7 +16,6 @@ def test_watchlist_symbols_parses_comma_separated_symbols():
 
 def test_watchlist_symbols_strips_spaces_and_uppercases_symbols():
     settings = Settings(
-        DEFAULT_SYMBOL='BTC',
         WATCHLIST=' aapl, msft , amzn ',
     )
 
@@ -32,7 +24,6 @@ def test_watchlist_symbols_strips_spaces_and_uppercases_symbols():
 
 def test_watchlist_symbols_removes_duplicates_while_preserving_order():
     settings = Settings(
-        DEFAULT_SYMBOL='BTC',
         WATCHLIST='AAPL,MSFT,AAPL,AMZN,MSFT',
     )
 
@@ -41,7 +32,6 @@ def test_watchlist_symbols_removes_duplicates_while_preserving_order():
 
 def test_watchlist_symbols_raises_when_no_symbol_can_be_resolved():
     settings = Settings(
-        DEFAULT_SYMBOL='',
         WATCHLIST=' , , ',
     )
 

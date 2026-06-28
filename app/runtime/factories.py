@@ -5,16 +5,15 @@ from app.brokers.fake_broker import FakeBrokerClient
 from app.config.settings import Settings
 
 
-def with_api_cache(settings: Settings, broker: BrokerClient) -> BrokerClient:
-    return CachedBrokerClient(
-        delegate=broker
-    )
-
 def build_broker(settings: Settings) -> BrokerClient:
     if settings.broker == 'paper':
-        return with_api_cache(settings, FakeBrokerClient(equity=50.0))
+        return CachedBrokerClient(
+            FakeBrokerClient(equity=50.0)
+        )
 
     if settings.broker == 'etoro_demo' or settings.broker == 'etoro_live':
-        return with_api_cache(settings, EtoroClient(settings=settings))
+        return CachedBrokerClient(
+            EtoroClient(settings=settings)
+        )
 
     raise ValueError(f'Unsupported broker: {settings.broker}')
