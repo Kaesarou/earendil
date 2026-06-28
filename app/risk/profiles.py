@@ -1,0 +1,93 @@
+from app.instruments.models import AssetClass, RiskProfile
+
+
+UNKNOWN_RISK_PROFILE = RiskProfile(
+    asset_class=AssetClass.UNKNOWN,
+    max_position_size_percent=20.0,
+    stop_loss_percent=0.8,
+    take_profit_percent=1.2,
+    estimated_round_trip_fees=0.0,
+    min_expected_net_profit=0.0,
+    force_close_enabled=True,
+    force_close_hour=21,
+    force_close_minute=55,
+    max_spread_percent=0.0,
+    min_move_spread_ratio=0.0,
+    dynamic_sl_tp_enabled=False,
+    stop_loss_atr_multiplier=1.5,
+    take_profit_atr_multiplier=2.5,
+    min_stop_loss_percent=0.0,
+    max_stop_loss_percent=0.0,
+    min_take_profit_percent=0.0,
+    max_take_profit_percent=0.0,
+)
+
+CRYPTO_RISK_PROFILE = RiskProfile(
+    asset_class=AssetClass.CRYPTO,
+    max_position_size_percent=0.75,
+    stop_loss_percent=1.50,
+    take_profit_percent=3.00,
+    estimated_round_trip_fees=3.00,
+    min_expected_net_profit=8.00,
+    force_close_enabled=False,
+    force_close_hour=23,
+    force_close_minute=59,
+    max_spread_percent=0.35,
+    min_move_spread_ratio=4.0,
+    dynamic_sl_tp_enabled=False,
+    stop_loss_atr_multiplier=1.5,
+    take_profit_atr_multiplier=2.5,
+    min_stop_loss_percent=0.8,
+    max_stop_loss_percent=2.5,
+    min_take_profit_percent=1.5,
+    max_take_profit_percent=5.0,
+)
+
+EQUITY_US_RISK_PROFILE = RiskProfile(
+    asset_class=AssetClass.EQUITY_US,
+    max_position_size_percent=0.75,
+    stop_loss_percent=0.90,
+    take_profit_percent=1.60,
+    estimated_round_trip_fees=2.50,
+    min_expected_net_profit=5.00,
+    force_close_enabled=True,
+    force_close_hour=21,
+    force_close_minute=55,
+    max_spread_percent=0.10,
+    min_move_spread_ratio=3.0,
+    dynamic_sl_tp_enabled=False,
+    stop_loss_atr_multiplier=1.2,
+    take_profit_atr_multiplier=2.0,
+    min_stop_loss_percent=0.4,
+    max_stop_loss_percent=1.5,
+    min_take_profit_percent=0.8,
+    max_take_profit_percent=3.0,
+)
+
+EQUITY_EU_RISK_PROFILE = RiskProfile(
+    asset_class=AssetClass.EQUITY_EU,
+    max_position_size_percent=0.75,
+    stop_loss_percent=0.80,
+    take_profit_percent=1.40,
+    estimated_round_trip_fees=2.50,
+    min_expected_net_profit=5.00,
+    force_close_enabled=True,
+    force_close_hour=17,
+    force_close_minute=25,
+    max_spread_percent=0.15,
+    min_move_spread_ratio=3.0,
+    dynamic_sl_tp_enabled=False,
+    stop_loss_atr_multiplier=1.2,
+    take_profit_atr_multiplier=2.0,
+    min_stop_loss_percent=0.4,
+    max_stop_loss_percent=1.5,
+    min_take_profit_percent=0.8,
+    max_take_profit_percent=3.0,
+)
+
+DEFAULT_RISK_PROFILES: dict[AssetClass, RiskProfile] = {
+    AssetClass.UNKNOWN: UNKNOWN_RISK_PROFILE,
+    AssetClass.CRYPTO: CRYPTO_RISK_PROFILE,
+    AssetClass.EQUITY_US: EQUITY_US_RISK_PROFILE,
+    AssetClass.EQUITY_EU: EQUITY_EU_RISK_PROFILE,
+}
