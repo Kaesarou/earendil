@@ -516,22 +516,16 @@ def main() -> None:
     instrument_registry = InstrumentRegistry(settings)
 
     logger.info(
-        'Starting Eärendil | mode=%s | broker=%s | etoro_env=%s | real_trading_enabled=%s | strategy=%s | risk_strategy=%s | watchlist=%s | api_cache_enabled=%s | market_rates_batch_enabled=%s',
+        'Starting Eärendil | mode=%s | broker=%s | etoro_env=%s | strategy=%s | risk_strategy=%s | watchlist=%s | api_cache_enabled=%s | market_rates_batch_enabled=%s',
         settings.ear_mode,
         settings.broker,
         settings.etoro_env,
-        settings.real_trading_enabled,
         settings.investment_strategy,
         settings.risk_strategy,
         symbols,
         settings.api_cache_enabled,
         settings.market_rates_batch_enabled,
     )
-
-    if settings.ear_mode == 'real' and not settings.real_trading_enabled:
-        logger.warning(
-            'Real execution mode is selected but REAL_TRADING_ENABLED=false. Orders will be blocked.'
-        )
 
     market_data_broker = build_market_data_broker(settings)
     execution_broker = build_execution_broker(settings)

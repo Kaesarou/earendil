@@ -51,7 +51,6 @@ class EtoroClient(BrokerClient):
         stop_loss: float,
         take_profit: float,
     ) -> str:
-        self._ensure_real_trading_enabled()
 
         normalized_side = self._normalize_side(side)
         self._ensure_side_is_allowed(normalized_side)
@@ -112,7 +111,6 @@ class EtoroClient(BrokerClient):
         return position_id
 
     def close_position(self, position_id: str) -> None:
-        self._ensure_real_trading_enabled()
 
         instrument_id = self.position_instruments.get(position_id)
         if instrument_id is None:
@@ -325,15 +323,6 @@ class EtoroClient(BrokerClient):
     # -------------------------------------------------------------------------
     # Safety guards
     # -------------------------------------------------------------------------
-
-    def _ensure_real_trading_enabled(self) -> None:
-        if self.settings.ear_mode != 'real':
-            raise RuntimeError('Real broker execution is disabled unless EAR_MODE=real.')
-
-        if not self.settings.real_trading_enabled:
-            raise RuntimeError(
-                'Real broker execution is disabled unless REAL_TRADING_ENABLED=true.'
-            )
 
     def _normalize_side(self, side: str) -> str:
         return side.strip().upper()

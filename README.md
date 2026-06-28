@@ -61,7 +61,6 @@ earendil/
 
 ## Safety principles
 
-- Real trading is disabled by default.
 - The bot should start with demo or paper trading only.
 - Risk rules are centralized in `app/risk/risk_manager.py`.
 - Broker-specific code stays isolated in `app/brokers/`.
