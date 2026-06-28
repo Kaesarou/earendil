@@ -52,7 +52,6 @@ def config(
         min_breakout_percent=0.01,
         min_candle_range_percent=0.01,
         min_close_position_percent=70.0,
-        allow_short=allow_short,
         atr_lookback=5,
         market_regime_filter_enabled=market_regime_filter_enabled,
         market_regime_min_trend_strength_percent=market_regime_min_trend_strength_percent,
@@ -164,28 +163,6 @@ def test_intraday_trend_rejects_volatile_noisy_market_when_regime_filter_is_enab
     assert signal.reason == 'market_regime_volatile_noisy'
     assert signal.metadata is not None
     assert signal.metadata['market_regime'] == 'VOLATILE_NOISY'
-
-
-def test_intraday_trend_does_not_emit_short_when_short_is_disabled():
-    strategy = IntradayTrendStrategy(config(allow_short=False))
-
-    strategy.on_candle(candle(open=105.0, close=105.0, high=105.2, low=104.9))
-    strategy.on_candle(candle(open=104.0, close=104.0, high=104.2, low=103.9))
-    strategy.on_candle(candle(open=103.0, close=103.0, high=103.2, low=102.9))
-    strategy.on_candle(candle(open=102.0, close=102.0, high=102.2, low=101.9))
-    strategy.on_candle(candle(open=101.0, close=101.0, high=101.2, low=100.9))
-
-    signal = strategy.on_candle(
-        candle(
-            open=101.0,
-            close=99.8,
-            high=101.0,
-            low=99.7,
-        )
-    )
-
-    assert signal.action == 'HOLD'
-    assert signal.reason == 'short_signals_disabled_by_strategy'
 
 
 def test_intraday_trend_rejects_invalid_fast_and_slow_lookbacks():
