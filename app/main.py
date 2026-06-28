@@ -40,7 +40,6 @@ def with_api_cache(settings: Settings, broker: BrokerClient) -> BrokerClient:
         market_snapshot_ttl_seconds=settings.market_snapshot_cache_ttl_seconds,
         account_equity_ttl_seconds=settings.account_equity_cache_ttl_seconds,
         position_status_ttl_seconds=settings.position_status_cache_ttl_seconds,
-        batch_market_rates_enabled=settings.market_rates_batch_enabled,
         logging_enabled=settings.api_cache_logging_enabled,
     )
 
@@ -494,13 +493,12 @@ def main() -> None:
     instrument_registry = InstrumentRegistry(settings)
 
     logger.info(
-        'Starting Eärendil | broker=%s | strategy=%s | risk_strategy=%s | watchlist=%s | api_cache_enabled=%s | market_rates_batch_enabled=%s',
+        'Starting Eärendil | broker=%s | strategy=%s | risk_strategy=%s | watchlist=%s | api_cache_enabled=%s',
         settings.broker,
         settings.investment_strategy,
         settings.risk_strategy,
         symbols,
         settings.api_cache_enabled,
-        settings.market_rates_batch_enabled,
     )
 
     broker = build_broker(settings)

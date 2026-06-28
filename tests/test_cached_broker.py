@@ -63,7 +63,6 @@ def test_cached_broker_caches_market_snapshots_by_symbol():
     broker = CachedBrokerClient(
         delegate=delegate,
         market_snapshot_ttl_seconds=60.0,
-        batch_market_rates_enabled=True,
     )
 
     first_snapshot = broker.get_market_snapshot('btc')
@@ -78,7 +77,6 @@ def test_cached_broker_batches_missing_market_snapshots():
     broker = CachedBrokerClient(
         delegate=delegate,
         market_snapshot_ttl_seconds=60.0,
-        batch_market_rates_enabled=True,
     )
 
     snapshots = broker.get_market_snapshots(['BTC', 'ETH', 'DOGE'])
@@ -93,7 +91,6 @@ def test_cached_broker_batches_only_uncached_market_snapshots():
     broker = CachedBrokerClient(
         delegate=delegate,
         market_snapshot_ttl_seconds=60.0,
-        batch_market_rates_enabled=True,
     )
 
     broker.get_market_snapshots(['BTC', 'ETH'])
@@ -109,7 +106,6 @@ def test_cached_broker_can_disable_batch_market_snapshots():
     broker = CachedBrokerClient(
         delegate=delegate,
         market_snapshot_ttl_seconds=60.0,
-        batch_market_rates_enabled=False,
     )
 
     snapshots = broker.get_market_snapshots(['BTC', 'ETH'])
@@ -165,7 +161,6 @@ def test_cached_broker_does_not_cache_when_ttl_is_disabled():
         delegate=delegate,
         market_snapshot_ttl_seconds=0.0,
         account_equity_ttl_seconds=0.0,
-        batch_market_rates_enabled=False,
     )
 
     broker.get_market_snapshot('BTC')

@@ -1,6 +1,5 @@
 import logging
 import time
-from dataclasses import dataclass, field
 from uuid import uuid4
 
 import requests
@@ -12,7 +11,6 @@ from app.market.models import MarketSnapshot
 logger = logging.getLogger(__name__)
 
 
-@dataclass
 class EtoroClient(BrokerClient):
     settings: Settings
     env:str 
@@ -22,8 +20,8 @@ class EtoroClient(BrokerClient):
     def __init__(self, settings: Settings):
         self.settings = settings
         self.env = settings.broker.split('_')[-1]
-        self.position_instruments: dict[str, int] = field(default_factory=dict)
-        self.instrument_ids_by_symbol: dict[str, int] = field(default_factory=dict)
+        self.position_instruments: dict[str, int] = {}
+        self.instrument_ids_by_symbol: dict[str, int] = {}
 
     # -------------------------------------------------------------------------
     # Public broker API

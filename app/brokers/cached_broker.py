@@ -29,7 +29,6 @@ class CachedBrokerClient(BrokerClient):
     market_snapshot_ttl_seconds: float = 0.0
     account_equity_ttl_seconds: float = 0.0
     position_status_ttl_seconds: float = 0.0
-    batch_market_rates_enabled: bool = False
     logging_enabled: bool = False
     market_snapshot_cache: dict[str, CacheEntry] = field(default_factory=dict)
     account_equity_cache: CacheEntry | None = None
@@ -129,17 +128,15 @@ class CachedBrokerClient(BrokerClient):
         self.position_status_cache.clear()
 
     def _load_market_snapshots(self, symbols: list[str]) -> dict[str, MarketSnapshot]:
-        if self.batch_market_rates_enabled:
-            try:
-                return self.delegate.get_market_snapshots(symbols)
-            except Exception as exc:
-                if self._is_broker_auth_error(exc):
-                    raise
-                logger.warning(
-                    'Batch market snapshot loading failed; falling back to per-symbol loading | error=%s',
-                    exc,
-                )
-
+        try:
+            return self.delegate.get_market_snapshots(symbols)
+        except Exception as exc:
+            if self._is_broker_auth_error(exc):
+                raise
+            logger.warning(
+                'Batch market snapshot loading failed; falling back to per-symbol loading | error=%s',
+                exc,
+            )
         return {symbol: self.delegate.get_market_snapshot(symbol) for symbol in symbols}
 
     def _is_broker_auth_error(self, exc: Exception) -> bool:
