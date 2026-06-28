@@ -1,6 +1,6 @@
 from app.config.settings import Settings
 from app.instruments.instrument_registry import InstrumentRegistry
-from app.instruments.models import AssetClass
+from app.instruments.models import AssetClass, RiskProfile
 
 
 def test_instrument_registry_resolves_asset_classes_from_settings():
@@ -17,15 +17,8 @@ def test_instrument_registry_resolves_asset_classes_from_settings():
     assert registry.resolve('UNKNOWN').asset_class == AssetClass.UNKNOWN
 
 
-def test_instrument_registry_returns_crypto_risk_profile():
-    settings = Settings(
-        CRYPTO_SYMBOLS='DOGE',
-        CRYPTO_STOP_LOSS_PERCENT=1.5,
-        CRYPTO_TAKE_PROFIT_PERCENT=3.0,
-        CRYPTO_MIN_EXPECTED_NET_PROFIT=8.0,
-        CRYPTO_ESTIMATED_ROUND_TRIP_FEES=3.0,
-        CRYPTO_FORCE_CLOSE_ENABLED=False,
-    )
+def test_instrument_registry_returns_default_crypto_risk_profile():
+    settings = Settings(CRYPTO_SYMBOLS='DOGE')
     registry = InstrumentRegistry(settings)
 
     risk_profile = registry.risk_profile_for('DOGE')
@@ -38,26 +31,56 @@ def test_instrument_registry_returns_crypto_risk_profile():
     assert risk_profile.force_close_enabled is False
 
 
-def test_instrument_registry_falls_back_to_global_settings_for_unknown_asset_class():
-    settings = Settings(
-        MAX_POSITION_SIZE_PERCENT=40.0,
-        STOP_LOSS_PERCENT=0.3,
-        TAKE_PROFIT_PERCENT=0.5,
-        ESTIMATED_ROUND_TRIP_FEES=0.25,
-        MIN_EXPECTED_NET_PROFIT=0.15,
-        FORCE_CLOSE_HOUR=23,
-        FORCE_CLOSE_MINUTE=59,
-    )
-    registry = InstrumentRegistry(settings)
+def test_instrument_registry_falls_back_to_default_unknown_risk_profile():
+    registry = InstrumentRegistry(Settings())
 
     risk_profile = registry.risk_profile_for('AAPL')
 
     assert risk_profile.asset_class == AssetClass.UNKNOWN
-    assert risk_profile.max_position_size_percent == 40.0
-    assert risk_profile.stop_loss_percent == 0.3
-    assert risk_profile.take_profit_percent == 0.5
-    assert risk_profile.estimated_round_trip_fees == 0.25
-    assert risk_profile.min_expected_net_profit == 0.15
+    assert risk_profile.max_position_size_percent == 20.0
+    assert risk_profile.stop_loss_percent == 0.8
+    assert risk_profile.take_profit_percent == 1.2
+    assert risk_profile.estimated_round_trip_fees == 0.0
+    assert risk_profile.min_expected_net_profit == 0.0
     assert risk_profile.force_close_enabled is True
-    assert risk_profile.force_close_hour == 23
-    assert risk_profile.force_close_minute == 59
+    assert risk_profile.force_close_hour == 21
+    assert risk_profile.force_close_minute == 55
+
+
+def test_instrument_registry_can_receive_custom_risk_profiles_for_tests_or_future_profiles():
+    settings = Settings(CRYPTO_SYMBOLS='DOGE')
+    custom_crypto_profile = RiskProfile(
+        asset_class=AssetClass.CRYPTO,
+        max_position_size_percent=1.0,
+        stop_loss_percent=2.0,
+        take_profit_percent=4.0,
+        estimated_round_trip_fees=0.25,
+        min_expected_net_profit=0.5,
+        force_close_enabled=False,
+        force_close_hour=23,
+        force_close_minute=59,
+        max_spread_percent=0.20,
+        min_move_spread_ratio=4.0,
+        dynamic_sl_tp_enabled=False,
+        stop_loss_atr_multiplier=1.5,
+        take_profit_atr_multiplier=2.5,
+        min_stop_loss_percent=0.8,
+        max_stop_loss_percent=2.5,
+        min_take_profit_percent=1.5,
+        max_take_profit_percent=5.0,
+    )
+
+    registry = InstrumentRegistry(
+        settings,
+        risk_profiles={
+            AssetClass.UNKNOWN: custom_crypto_profile,
+            AssetClass.CRYPTO: custom_crypto_profile,
+        },
+    )
+
+    risk_profile = registry.risk_profile_for('DOGE')
+
+    assert risk_profile.asset_class == AssetClass.CRYPTO
+    assert risk_profile.max_position_size_percent == 1.0
+    assert risk_profile.stop_loss_percent == 2.0
+    assert risk_profile.take_profit_percent == 4.0
