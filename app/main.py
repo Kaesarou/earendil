@@ -2,11 +2,14 @@ import logging
 import time
 
 from app.brokers.base import BrokerClient
-from app.brokers.cached_broker import CachedBrokerClient
 from app.config.settings import Settings, get_settings
-from app.execution.candidate_ranking import build_trade_candidate
+from app.execution.candidate_ranking import build_trade_candidate, rank_trade_candidates
 from app.execution.position_tracker import PositionTracker
-from app.execution.pre_scan import PreScanConfig, pre_scan_candidates
+from app.execution.pre_scan import (
+    PreScanResult,
+    RejectedPreScanCandidate,
+    pre_scan_candidates,
+)
 from app.execution.trade_candidate import TradeCandidate
 from app.execution.trade_executor import TradeExecutor
 from app.instruments.instrument_registry import InstrumentRegistry
@@ -17,10 +20,14 @@ from app.persistence.position_store import PositionStore
 from app.risk.models import TradePlan
 from app.risk.position_sizing import build_position_sizing_strategy
 from app.risk.risk_manager import RiskManager
-from app.strategies.base import InvestmentStrategy
-from app.strategies.factory import build_investment_strategy
-from app.utils.logging import configure_logging
 from app.runtime.factories import build_broker
+from app.strategies.base import InvestmentStrategy
+from app.strategies.strategy import (
+    StrategyProfileConfig,
+    TrendStrategy,
+    strategy_profile_from_name,
+)
+from app.utils.logging import configure_logging
 
 logger = logging.getLogger(__name__)
 
@@ -52,11 +59,23 @@ def build_candle_builders(
     }
 
 
+def build_strategy_profile(settings: Settings) -> StrategyProfileConfig:
+    return strategy_profile_from_name(settings.strategy_aggressiveness)
+
+
 def build_strategies(
-    settings: Settings,
     symbols: list[str],
+    instrument_registry: InstrumentRegistry,
+    strategy_profile: StrategyProfileConfig,
 ) -> dict[str, InvestmentStrategy]:
-    return {symbol: build_investment_strategy(settings) for symbol in symbols}
+    return {
+        symbol: TrendStrategy(
+            strategy_profile.trend_config_for_asset_class(
+                instrument_registry.resolve(symbol).asset_class,
+            )
+        )
+        for symbol in symbols
+    }
 
 
 def restore_persisted_positions(
@@ -321,6 +340,47 @@ def process_symbol(
     return candidate
 
 
+def pre_scan_candidates_with_strategy_profile(
+    candidates: list[TradeCandidate],
+    risk_manager: RiskManager,
+    strategy_profile: StrategyProfileConfig,
+) -> PreScanResult:
+    selected_candidates: list[TradeCandidate] = []
+    rejected_candidates: list[RejectedPreScanCandidate] = []
+    top_n_limits: list[int] = []
+
+    for candidate in rank_trade_candidates(candidates):
+        asset_class = risk_manager.instrument_profile_for(candidate.symbol).asset_class
+        pre_scan_config = strategy_profile.pre_scan_config_for_asset_class(asset_class)
+        top_n_limits.append(pre_scan_config.top_n)
+
+        pre_scan_result = pre_scan_candidates([candidate], pre_scan_config)
+        if pre_scan_result.selected_candidates:
+            selected_candidates.append(candidate)
+        else:
+            rejected_candidates.extend(pre_scan_result.rejected_candidates)
+
+    positive_top_n_limits = [limit for limit in top_n_limits if limit > 0]
+    top_n = min(positive_top_n_limits) if positive_top_n_limits else 0
+
+    if top_n > 0 and len(selected_candidates) > top_n:
+        kept_candidates = selected_candidates[:top_n]
+        overflow_candidates = selected_candidates[top_n:]
+        rejected_candidates.extend(
+            RejectedPreScanCandidate(
+                candidate=candidate,
+                reason='pre_scan_outside_top_n',
+            )
+            for candidate in overflow_candidates
+        )
+        selected_candidates = kept_candidates
+
+    return PreScanResult(
+        selected_candidates=selected_candidates,
+        rejected_candidates=rejected_candidates,
+    )
+
+
 def execute_ranked_candidates(
     candidates: list[TradeCandidate],
     execution_broker: BrokerClient,
@@ -329,39 +389,45 @@ def execute_ranked_candidates(
     position_tracker: PositionTracker,
     trade_journal: JsonlJournal,
     position_store: PositionStore | None = None,
-    settings: Settings | None = None,
+    strategy_profile: StrategyProfileConfig | None = None,
 ) -> None:
     if not candidates:
         return
 
-    pre_scan_config = (
-        PreScanConfig.from_settings(settings)
-        if settings is not None
-        else PreScanConfig(enabled=False)
-    )
-    pre_scan_result = pre_scan_candidates(candidates, pre_scan_config)
-    ranked_candidates = pre_scan_result.selected_candidates
+    if strategy_profile is None:
+        ranked_candidates = rank_trade_candidates(candidates)
+        pre_scan_result = PreScanResult(
+            selected_candidates=ranked_candidates,
+            rejected_candidates=[],
+        )
+    else:
+        pre_scan_result = pre_scan_candidates_with_strategy_profile(
+            candidates=candidates,
+            risk_manager=risk_manager,
+            strategy_profile=strategy_profile,
+        )
+        ranked_candidates = pre_scan_result.selected_candidates
 
-    if pre_scan_config.enabled:
-        trade_journal.write(
-            'pre_scan',
+    trade_journal.write(
+        'pre_scan',
+        {
+            'strategy_profile': strategy_profile.name if strategy_profile else None,
+            'selected_candidates': pre_scan_result.selected_candidates,
+            'rejected_candidates': pre_scan_result.rejected_candidates,
+        },
+    )
+    logger.info(
+        'Pre-scan | profile=%s | selected=%s | rejected=%s',
+        strategy_profile.name if strategy_profile else None,
+        [candidate.symbol for candidate in pre_scan_result.selected_candidates],
+        [
             {
-                'config': pre_scan_config,
-                'selected_candidates': pre_scan_result.selected_candidates,
-                'rejected_candidates': pre_scan_result.rejected_candidates,
-            },
-        )
-        logger.info(
-            'Pre-scan | selected=%s | rejected=%s',
-            [candidate.symbol for candidate in pre_scan_result.selected_candidates],
-            [
-                {
-                    'symbol': rejected.candidate.symbol,
-                    'reason': rejected.reason,
-                }
-                for rejected in pre_scan_result.rejected_candidates
-            ],
-        )
+                'symbol': rejected.candidate.symbol,
+                'reason': rejected.reason,
+            }
+            for rejected in pre_scan_result.rejected_candidates
+        ],
+    )
 
     if not ranked_candidates:
         return
@@ -479,16 +545,22 @@ def main() -> None:
 
     symbols = settings.watchlist_symbols()
     instrument_registry = InstrumentRegistry(settings)
+    strategy_profile = build_strategy_profile(settings)
 
     logger.info(
-        'Starting Eärendil | broker=%s | risk_strategy=%s | watchlist=%s',
+        'Starting Eärendil | broker=%s | strategy_profile=%s | risk_strategy=%s | watchlist=%s',
         settings.broker,
+        strategy_profile.name,
         settings.risk_strategy,
         symbols,
     )
 
     broker = build_broker(settings)
-    strategies = build_strategies(settings, symbols)
+    strategies = build_strategies(
+        symbols=symbols,
+        instrument_registry=instrument_registry,
+        strategy_profile=strategy_profile,
+    )
     candle_builders = build_candle_builders(settings, symbols)
     risk_manager = build_risk_manager(settings=settings, instrument_registry=instrument_registry)
     executor = TradeExecutor(broker)
@@ -555,7 +627,7 @@ def main() -> None:
                 position_tracker=position_tracker,
                 trade_journal=trade_journal,
                 position_store=position_store,
-                settings=settings,
+                strategy_profile=strategy_profile,
             )
 
         except KeyboardInterrupt:
