@@ -1,9 +1,49 @@
 from app.config.settings import Settings
 from app.instruments.instrument_registry import InstrumentRegistry
+from app.instruments.models import AssetClass, RiskProfile
 from app.market.models import MarketSnapshot
 from app.risk.position_sizing import FixedPercentPositionSizing
 from app.risk.risk_manager import RiskManager
 from app.strategies.signals import Signal
+
+
+def risk_profile(
+    asset_class: AssetClass,
+    max_position_size_percent: float = 40.0,
+    stop_loss_percent: float = 0.3,
+    take_profit_percent: float = 0.5,
+    estimated_round_trip_fees: float = 0.0,
+    min_expected_net_profit: float = 0.0,
+    max_spread_percent: float = 0.0,
+    min_move_spread_ratio: float = 0.0,
+    dynamic_sl_tp_enabled: bool = False,
+    stop_loss_atr_multiplier: float = 1.5,
+    take_profit_atr_multiplier: float = 2.5,
+    min_stop_loss_percent: float = 0.0,
+    max_stop_loss_percent: float = 0.0,
+    min_take_profit_percent: float = 0.0,
+    max_take_profit_percent: float = 0.0,
+) -> RiskProfile:
+    return RiskProfile(
+        asset_class=asset_class,
+        max_position_size_percent=max_position_size_percent,
+        stop_loss_percent=stop_loss_percent,
+        take_profit_percent=take_profit_percent,
+        estimated_round_trip_fees=estimated_round_trip_fees,
+        min_expected_net_profit=min_expected_net_profit,
+        force_close_enabled=False,
+        force_close_hour=23,
+        force_close_minute=59,
+        max_spread_percent=max_spread_percent,
+        min_move_spread_ratio=min_move_spread_ratio,
+        dynamic_sl_tp_enabled=dynamic_sl_tp_enabled,
+        stop_loss_atr_multiplier=stop_loss_atr_multiplier,
+        take_profit_atr_multiplier=take_profit_atr_multiplier,
+        min_stop_loss_percent=min_stop_loss_percent,
+        max_stop_loss_percent=max_stop_loss_percent,
+        min_take_profit_percent=min_take_profit_percent,
+        max_take_profit_percent=max_take_profit_percent,
+    )
 
 
 def build_risk_manager(
@@ -36,38 +76,41 @@ def build_risk_manager(
         MAX_OPEN_POSITIONS=max_open_positions,
         MAX_OPEN_POSITIONS_PER_SYMBOL=max_open_positions_per_symbol,
         MAX_TRADES_PER_DAY=max_trades_per_day,
-        MAX_POSITION_SIZE_PERCENT=40.0,
-        STOP_LOSS_PERCENT=0.3,
-        TAKE_PROFIT_PERCENT=0.5,
-        ESTIMATED_ROUND_TRIP_FEES=estimated_round_trip_fees,
-        MIN_EXPECTED_NET_PROFIT=min_expected_net_profit,
-        MAX_SPREAD_PERCENT=max_spread_percent,
-        MIN_MOVE_SPREAD_RATIO=min_move_spread_ratio,
-        DYNAMIC_SL_TP_ENABLED=dynamic_sl_tp_enabled,
-        STOP_LOSS_ATR_MULTIPLIER=stop_loss_atr_multiplier,
-        TAKE_PROFIT_ATR_MULTIPLIER=take_profit_atr_multiplier,
-        MIN_STOP_LOSS_PERCENT=min_stop_loss_percent,
-        MAX_STOP_LOSS_PERCENT=max_stop_loss_percent,
-        MIN_TAKE_PROFIT_PERCENT=min_take_profit_percent,
-        MAX_TAKE_PROFIT_PERCENT=max_take_profit_percent,
-        FORCE_CLOSE_HOUR=23,
-        FORCE_CLOSE_MINUTE=59,
         SHORT_SELLING_ENABLED=short_selling_enabled,
         CRYPTO_SYMBOLS=crypto_symbols,
-        CRYPTO_MAX_POSITION_SIZE_PERCENT=crypto_max_position_size_percent,
-        CRYPTO_STOP_LOSS_PERCENT=crypto_stop_loss_percent,
-        CRYPTO_TAKE_PROFIT_PERCENT=crypto_take_profit_percent,
-        CRYPTO_ESTIMATED_ROUND_TRIP_FEES=crypto_estimated_round_trip_fees,
-        CRYPTO_MIN_EXPECTED_NET_PROFIT=crypto_min_expected_net_profit,
-        CRYPTO_FORCE_CLOSE_ENABLED=crypto_force_close_enabled,
-        CRYPTO_MAX_SPREAD_PERCENT=crypto_max_spread_percent,
-        CRYPTO_MIN_MOVE_SPREAD_RATIO=crypto_min_move_spread_ratio,
     )
+
+    risk_profiles = {
+        AssetClass.UNKNOWN: risk_profile(
+            asset_class=AssetClass.UNKNOWN,
+            estimated_round_trip_fees=estimated_round_trip_fees,
+            min_expected_net_profit=min_expected_net_profit,
+            max_spread_percent=max_spread_percent,
+            min_move_spread_ratio=min_move_spread_ratio,
+            dynamic_sl_tp_enabled=dynamic_sl_tp_enabled,
+            stop_loss_atr_multiplier=stop_loss_atr_multiplier,
+            take_profit_atr_multiplier=take_profit_atr_multiplier,
+            min_stop_loss_percent=min_stop_loss_percent,
+            max_stop_loss_percent=max_stop_loss_percent,
+            min_take_profit_percent=min_take_profit_percent,
+            max_take_profit_percent=max_take_profit_percent,
+        ),
+        AssetClass.CRYPTO: risk_profile(
+            asset_class=AssetClass.CRYPTO,
+            max_position_size_percent=crypto_max_position_size_percent,
+            stop_loss_percent=crypto_stop_loss_percent,
+            take_profit_percent=crypto_take_profit_percent,
+            estimated_round_trip_fees=crypto_estimated_round_trip_fees,
+            min_expected_net_profit=crypto_min_expected_net_profit,
+            max_spread_percent=crypto_max_spread_percent,
+            min_move_spread_ratio=crypto_min_move_spread_ratio,
+        ),
+    }
 
     return RiskManager(
         settings=settings,
         position_sizing_strategy=FixedPercentPositionSizing(),
-        instrument_registry=InstrumentRegistry(settings),
+        instrument_registry=InstrumentRegistry(settings, risk_profiles=risk_profiles),
     )
 
 
