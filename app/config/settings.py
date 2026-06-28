@@ -8,6 +8,7 @@ class Settings(BaseSettings):
         env_file_encoding='utf-8',
         extra='ignore',
     )
+
     app_log_path: str = Field(default='data/logs/earendil.log', alias='APP_LOG_PATH')
     position_store_path: str = Field(default='data/earendil.sqlite', alias='POSITION_STORE_PATH')
     broker: str = Field(default='paper', alias='BROKER')
@@ -19,32 +20,7 @@ class Settings(BaseSettings):
 
     watchlist: str = Field(default='', alias='WATCHLIST')
     base_currency: str = Field(default='USD', alias='BASE_CURRENCY')
-
-    intraday_trend_lookback: int = Field(default=3, alias='INTRADAY_TREND_LOOKBACK')
-    intraday_trend_fast_lookback: int = Field(default=5, alias='INTRADAY_TREND_FAST_LOOKBACK')
-    intraday_trend_slow_lookback: int = Field(default=15, alias='INTRADAY_TREND_SLOW_LOOKBACK')
-    intraday_trend_session_lookback: int = Field(default=30, alias='INTRADAY_TREND_SESSION_LOOKBACK')
-    intraday_trend_min_session_move_percent: float = Field(default=0.15, alias='INTRADAY_TREND_MIN_SESSION_MOVE_PERCENT')
-    intraday_trend_min_breakout_percent: float = Field(default=0.05, alias='INTRADAY_TREND_MIN_BREAKOUT_PERCENT')
-    intraday_trend_min_candle_range_percent: float = Field(default=0.04, alias='INTRADAY_TREND_MIN_CANDLE_RANGE_PERCENT')
-    intraday_trend_min_close_position_percent: float = Field(default=70.0, alias='INTRADAY_TREND_MIN_CLOSE_POSITION_PERCENT')
-    intraday_trend_atr_lookback: int = Field(default=14, alias='INTRADAY_TREND_ATR_LOOKBACK')
-    intraday_trend_market_regime_filter_enabled: bool = Field(default=False, alias='INTRADAY_TREND_MARKET_REGIME_FILTER_ENABLED')
-    intraday_trend_market_regime_min_trend_strength_percent: float = Field(default=0.02, alias='INTRADAY_TREND_MARKET_REGIME_MIN_TREND_STRENGTH_PERCENT')
-    intraday_trend_market_regime_min_atr_percent: float = Field(default=0.0, alias='INTRADAY_TREND_MARKET_REGIME_MIN_ATR_PERCENT')
-    intraday_trend_market_regime_max_atr_percent: float = Field(default=0.0, alias='INTRADAY_TREND_MARKET_REGIME_MAX_ATR_PERCENT')
-    intraday_trend_market_regime_max_noise_ratio: float = Field(default=0.0, alias='INTRADAY_TREND_MARKET_REGIME_MAX_NOISE_RATIO')
-
-    pre_scan_enabled: bool = Field(default=False, alias='PRE_SCAN_ENABLED')
-    pre_scan_top_n: int = Field(default=0, alias='PRE_SCAN_TOP_N')
-    pre_scan_min_score: float = Field(default=0.0, alias='PRE_SCAN_MIN_SCORE')
-    pre_scan_allowed_market_regimes: str = Field(default='TRENDING', alias='PRE_SCAN_ALLOWED_MARKET_REGIMES')
-    pre_scan_max_spread_percent: float = Field(default=0.0, alias='PRE_SCAN_MAX_SPREAD_PERCENT')
-    pre_scan_min_session_move_percent: float = Field(default=0.0, alias='PRE_SCAN_MIN_SESSION_MOVE_PERCENT')
-    pre_scan_min_trend_strength_percent: float = Field(default=0.0, alias='PRE_SCAN_MIN_TREND_STRENGTH_PERCENT')
-    pre_scan_min_atr_percent: float = Field(default=0.0, alias='PRE_SCAN_MIN_ATR_PERCENT')
-    pre_scan_max_atr_percent: float = Field(default=0.0, alias='PRE_SCAN_MAX_ATR_PERCENT')
-    pre_scan_max_noise_ratio: float = Field(default=0.0, alias='PRE_SCAN_MAX_NOISE_RATIO')
+    strategy_aggressiveness: str = Field(default='balanced', alias='STRATEGY_AGGRESSIVENESS')
 
     risk_strategy: str = Field(default='fixed_percent', alias='RISK_STRATEGY')
     max_open_positions: int = Field(default=1, alias='MAX_OPEN_POSITIONS')
