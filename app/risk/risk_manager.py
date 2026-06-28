@@ -171,9 +171,6 @@ class RiskManager:
         if signal.action not in ('BUY', 'SELL'):
             return f'unsupported_signal_{signal.action}'
 
-        if signal.action == 'SELL' and not self.settings.short_selling_enabled:
-            return 'short_selling_disabled'
-
         if self.open_positions >= self.settings.max_open_positions:
             return 'max_open_positions_reached'
 

@@ -338,10 +338,6 @@ class EtoroClient(BrokerClient):
             return
 
         if side == 'SELL':
-            if not self.settings.short_selling_enabled:
-                raise RuntimeError(
-                    'Short selling is disabled unless SHORT_SELLING_ENABLED=true.'
-                )
             return
 
         raise ValueError(f'Unsupported side for eToro order: {side}')
@@ -382,9 +378,6 @@ class EtoroClient(BrokerClient):
         raise ValueError(f'Unsupported side for eToro transaction: {side}')
 
     def _leverage_for_side(self, side: str) -> int:
-        if side == 'SELL':
-            return self.settings.short_leverage
-
         return 1
     # -------------------------------------------------------------------------
     # Endpoint paths

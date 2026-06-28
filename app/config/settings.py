@@ -27,7 +27,6 @@ class Settings(BaseSettings):
     base_currency: str = Field(default='USD', alias='BASE_CURRENCY')
     strategy_aggressiveness: str = Field(default='balanced', alias='STRATEGY_AGGRESSIVENESS')
 
-    risk_strategy: str = Field(default='fixed_percent', alias='RISK_STRATEGY')
     max_open_positions: int = Field(default=1, alias='MAX_OPEN_POSITIONS')
     max_open_positions_per_symbol: int = Field(default=1, alias='MAX_OPEN_POSITIONS_PER_SYMBOL')
     max_trades_per_day: int = Field(default=3, alias='MAX_TRADES_PER_DAY')
@@ -42,9 +41,6 @@ class Settings(BaseSettings):
     crypto_symbols: str = Field(default='', alias='CRYPTO_SYMBOLS')
     equity_us_symbols: str = Field(default='', alias='EQUITY_US_SYMBOLS')
     equity_eu_symbols: str = Field(default='', alias='EQUITY_EU_SYMBOLS')
-
-    short_selling_enabled: bool = Field(default=False, alias='SHORT_SELLING_ENABLED')
-    short_leverage: int = Field(default=1, alias='SHORT_LEVERAGE')
 
     def watchlist_symbols(self) -> list[str]:
         raw_symbols = self.watchlist.strip()

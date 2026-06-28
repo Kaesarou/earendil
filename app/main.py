@@ -18,10 +18,9 @@ from app.market.candle_builder import CandleBuilder
 from app.market.models import MarketSnapshot
 from app.persistence.position_store import PositionStore
 from app.risk.models import TradePlan
-from app.risk.position_sizing import build_position_sizing_strategy
+from app.risk.position_sizing import FixedPercentPositionSizing
 from app.risk.risk_manager import RiskManager
 from app.runtime.factories import build_broker
-from app.strategies.base import InvestmentStrategy
 from app.strategies.strategy import (
     StrategyProfileConfig,
     TrendStrategy,
@@ -44,7 +43,7 @@ def build_risk_manager(
 ) -> RiskManager:
     return RiskManager(
         settings=settings,
-        position_sizing_strategy=build_position_sizing_strategy(settings.risk_strategy),
+        position_sizing_strategy=FixedPercentPositionSizing(),
         instrument_registry=instrument_registry,
     )
 
@@ -67,7 +66,7 @@ def build_strategies(
     symbols: list[str],
     instrument_registry: InstrumentRegistry,
     strategy_profile: StrategyProfileConfig,
-) -> dict[str, InvestmentStrategy]:
+) -> dict[str, TrendStrategy]:
     return {
         symbol: TrendStrategy(
             strategy_profile.trend_config_for_asset_class(
@@ -191,7 +190,7 @@ def restore_persisted_positions(
 def process_symbol(
     symbol: str,
     broker: BrokerClient,
-    strategy: InvestmentStrategy,
+    strategy: TrendStrategy,
     risk_manager: RiskManager,
     executor: TradeExecutor,
     position_tracker: PositionTracker,
@@ -548,10 +547,9 @@ def main() -> None:
     strategy_profile = build_strategy_profile(settings)
 
     logger.info(
-        'Starting Eärendil | broker=%s | strategy_profile=%s | risk_strategy=%s | watchlist=%s',
+        'Starting Eärendil | broker=%s | strategy_profile=%s | watchlist=%s',
         settings.broker,
         strategy_profile.name,
-        settings.risk_strategy,
         symbols,
     )
 

@@ -76,7 +76,6 @@ def build_risk_manager(
         MAX_OPEN_POSITIONS=max_open_positions,
         MAX_OPEN_POSITIONS_PER_SYMBOL=max_open_positions_per_symbol,
         MAX_TRADES_PER_DAY=max_trades_per_day,
-        SHORT_SELLING_ENABLED=short_selling_enabled,
         CRYPTO_SYMBOLS=crypto_symbols,
     )
 
@@ -445,19 +444,6 @@ def test_risk_manager_approves_when_expected_net_profit_matches_minimum():
     assert plan.expected_gross_profit == 0.2
     assert plan.estimated_fees == 0.05
     assert plan.expected_net_profit == 0.15
-
-
-def test_risk_manager_rejects_sell_when_short_selling_is_disabled():
-    risk_manager = build_risk_manager(short_selling_enabled=False)
-
-    plan = risk_manager.evaluate(
-        signal=sell_signal(),
-        snapshot=snapshot('AAPL'),
-        account_equity=100.0,
-    )
-
-    assert not plan.approved
-    assert plan.reason == 'short_selling_disabled'
 
 
 def test_risk_manager_approves_sell_when_short_selling_is_enabled():

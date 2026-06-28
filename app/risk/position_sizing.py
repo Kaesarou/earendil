@@ -23,10 +23,3 @@ class FixedPercentPositionSizing:
         )
 
         return max(0.0, round(max_position_amount, 2))
-
-
-def build_position_sizing_strategy(risk_strategy: str) -> PositionSizingStrategy:
-    if risk_strategy == 'fixed_percent':
-        return FixedPercentPositionSizing()
-
-    raise ValueError(f'Unsupported risk strategy: {risk_strategy}')

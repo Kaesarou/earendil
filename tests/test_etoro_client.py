@@ -920,8 +920,6 @@ def test_etoro_open_short_position_sends_stop_loss_rate(monkeypatch):
     settings = Settings(
         BROKER='etoro_demo',
         BASE_CURRENCY='USD',
-        SHORT_SELLING_ENABLED=True,
-        SHORT_LEVERAGE=1,
         ETORO_API_KEY='api-key',
         ETORO_USER_KEY='user-key',
     )
@@ -988,8 +986,6 @@ def test_etoro_buy_payload_does_not_include_short_only_fields():
     settings = Settings(
         BROKER='etoro_demo',
         BASE_CURRENCY='USD',
-        SHORT_SELLING_ENABLED=True,
-        SHORT_LEVERAGE=1,
         ETORO_API_KEY='api-key',
         ETORO_USER_KEY='user-key',
     )

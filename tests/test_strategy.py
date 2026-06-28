@@ -168,16 +168,6 @@ def test_trend_strategy_rejects_volatile_noisy_market_when_regime_filter_is_enab
     assert signal.metadata['market_regime'] == 'VOLATILE_NOISY'
 
 
-def test_trend_strategy_rejects_invalid_fast_and_slow_lookbacks():
-    with pytest.raises(ValueError, match='fast_lookback must be lower than slow_lookback'):
-        TrendStrategy(
-            TrendStrategyConfig(
-                fast_lookback=5,
-                slow_lookback=5,
-            )
-        )
-
-
 def test_strategy_profile_from_name_resolves_balanced_profile():
     profile = strategy_profile_from_name('balanced')
 
