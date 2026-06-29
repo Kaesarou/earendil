@@ -1,10 +1,11 @@
 import logging
 import time
+from datetime import datetime, timezone
 
 from app.brokers.base import BrokerClient
 from app.config.settings import Settings, get_settings
 from app.execution.candidate_ranking import build_trade_candidate, rank_trade_candidates
-from app.execution.position_tracker import PositionTracker
+from app.execution.position_tracker import ClosedPosition, PositionTracker, TrackedPosition
 from app.execution.pre_scan import (
     PreScanResult,
     RejectedPreScanCandidate,
@@ -17,9 +18,13 @@ from app.journal.jsonl_journal import JsonlJournal
 from app.market.candle_builder import CandleBuilder
 from app.market.models import MarketSnapshot
 from app.persistence.position_store import PositionStore
+from app.persistence.trade_cooldown_store import TradeCooldownStore
 from app.risk.models import TradePlan
 from app.risk.position_sizing import FixedPercentPositionSizing
+from app.risk.profiles import risk_profiles_for_aggressiveness
 from app.risk.risk_manager import RiskManager
+from app.risk.trade_cooldown import build_trade_cooldown_entry
+from app.risk.trade_cooldown_guard import TradeCooldownGuard
 from app.runtime.factories import build_broker
 from app.strategies.strategy import (
     StrategyProfileConfig,
@@ -75,6 +80,165 @@ def build_strategies(
         )
         for symbol in symbols
     }
+
+
+def register_trade_cooldown_for_closed_position(
+    *,
+    closed_position: ClosedPosition | None,
+    risk_manager: RiskManager,
+    cooldown_store: TradeCooldownStore,
+    trade_journal: JsonlJournal,
+) -> None:
+    if closed_position is None:
+        return
+
+    cooldown_config = risk_manager.risk_profile_for(closed_position.symbol).trade_cooldown
+    if not cooldown_config.enabled:
+        return
+
+    entry = build_trade_cooldown_entry(
+        symbol=closed_position.symbol,
+        side=closed_position.side,
+        config=cooldown_config,
+        raw_close_reason=closed_position.close_reason,
+        closed_at=closed_position.closed_at,
+        position_id=closed_position.position_id,
+        gross_pnl=closed_position.gross_pnl,
+        gross_pnl_percent=closed_position.gross_pnl_percent,
+    )
+    saved_entry = cooldown_store.save_or_extend(entry)
+
+    trade_journal.write(
+        'trade_cooldown_registered',
+        {
+            'source': 'bot_close',
+            'entry': saved_entry,
+            'closed_position': closed_position,
+        },
+    )
+    logger.info(
+        'Trade cooldown registered | source=bot_close | symbol=%s | side=%s | reason=%s | expires_at=%s',
+        saved_entry.symbol,
+        saved_entry.side,
+        saved_entry.close_reason.value,
+        saved_entry.expires_at.isoformat(),
+    )
+
+
+def register_trade_cooldown_for_missing_position(
+    *,
+    position: TrackedPosition,
+    closed_at: datetime,
+    risk_manager: RiskManager,
+    cooldown_store: TradeCooldownStore,
+    trade_journal: JsonlJournal,
+) -> None:
+    cooldown_config = risk_manager.risk_profile_for(position.symbol).trade_cooldown
+    if not cooldown_config.enabled:
+        return
+
+    entry = build_trade_cooldown_entry(
+        symbol=position.symbol,
+        side=position.side,
+        config=cooldown_config,
+        raw_close_reason='broker_position_missing',
+        closed_at=closed_at,
+        position_id=position.position_id,
+    )
+    saved_entry = cooldown_store.save_or_extend(entry)
+
+    trade_journal.write(
+        'trade_cooldown_registered',
+        {
+            'source': 'broker_reconciliation',
+            'entry': saved_entry,
+            'position': position,
+        },
+    )
+    logger.info(
+        'Trade cooldown registered | source=broker_reconciliation | symbol=%s | side=%s | reason=%s | expires_at=%s',
+        saved_entry.symbol,
+        saved_entry.side,
+        saved_entry.close_reason.value,
+        saved_entry.expires_at.isoformat(),
+    )
+
+
+def reconcile_externally_closed_positions(
+    *,
+    broker: BrokerClient,
+    position_tracker: PositionTracker,
+    risk_manager: RiskManager,
+    position_store: PositionStore,
+    cooldown_store: TradeCooldownStore,
+    trade_journal: JsonlJournal,
+) -> None:
+    for position in position_tracker.open_positions_snapshot():
+        try:
+            if broker.is_position_open(position.position_id):
+                continue
+        except Exception as exc:
+            if is_broker_authorization_error(exc):
+                raise
+
+            logger.exception(
+                'Position reconciliation check failed | position_id=%s | symbol=%s | error=%s',
+                position.position_id,
+                position.symbol,
+                exc,
+            )
+            trade_journal.write(
+                'position_reconciliation_warning',
+                {'position': position, 'message': str(exc)},
+            )
+            continue
+
+        removed_position = position_tracker.remove_position(position.position_id)
+        if removed_position is None:
+            continue
+
+        closed_at = datetime.now(timezone.utc)
+        risk_manager.record_close_position(removed_position.symbol)
+
+        try:
+            position_store.delete_open_position(removed_position.position_id)
+        except Exception as exc:
+            logger.exception(
+                'Position persistence delete error | position_id=%s | error=%s',
+                removed_position.position_id,
+                exc,
+            )
+            trade_journal.write(
+                'position_persistence_error',
+                {
+                    'symbol': removed_position.symbol,
+                    'position_id': removed_position.position_id,
+                    'message': str(exc),
+                },
+            )
+
+        register_trade_cooldown_for_missing_position(
+            position=removed_position,
+            closed_at=closed_at,
+            risk_manager=risk_manager,
+            cooldown_store=cooldown_store,
+            trade_journal=trade_journal,
+        )
+
+        logger.warning(
+            'Tracked position no longer open at broker | position_id=%s | symbol=%s | side=%s',
+            removed_position.position_id,
+            removed_position.symbol,
+            removed_position.side,
+        )
+        trade_journal.write(
+            'position_reconciled_closed',
+            {
+                'source': 'runtime_broker_reconciliation',
+                'position': removed_position,
+                'closed_at': closed_at,
+            },
+        )
 
 
 def restore_persisted_positions(
@@ -199,6 +363,7 @@ def process_symbol(
     market_journal: JsonlJournal,
     candle_journal: JsonlJournal,
     position_store: PositionStore | None = None,
+    cooldown_store: TradeCooldownStore | None = None,
     snapshot: MarketSnapshot | None = None,
 ) -> TradeCandidate | None:
     snapshot = snapshot or broker.get_market_snapshot(symbol)
@@ -229,6 +394,14 @@ def process_symbol(
                             'message': str(exc),
                         },
                     )
+
+            if cooldown_store is not None:
+                register_trade_cooldown_for_closed_position(
+                    closed_position=closed_position,
+                    risk_manager=risk_manager,
+                    cooldown_store=cooldown_store,
+                    trade_journal=trade_journal,
+                )
 
             trade_journal.write(
                 'position_closed',
@@ -381,6 +554,68 @@ def pre_scan_candidates_with_strategy_profile(
     )
 
 
+def apply_trade_cooldown_guard(
+    *,
+    candidates: list[TradeCandidate],
+    risk_manager: RiskManager,
+    cooldown_guard: TradeCooldownGuard,
+    trade_journal: JsonlJournal,
+) -> list[TradeCandidate]:
+    now = datetime.now(timezone.utc)
+    cooldown_guard.store.delete_expired(now)
+    filter_result = cooldown_guard.filter_candidates(
+        candidates=candidates,
+        risk_manager=risk_manager,
+        now=now,
+    )
+
+    if not filter_result.rejected_candidates:
+        return filter_result.selected_candidates
+
+    trade_journal.write(
+        'trade_cooldown_guard',
+        {
+            'selected_candidates': filter_result.selected_candidates,
+            'rejected_candidates': filter_result.rejected_candidates,
+        },
+    )
+
+    for rejected_candidate in filter_result.rejected_candidates:
+        candidate = rejected_candidate.candidate
+        decision = rejected_candidate.decision
+        plan = TradePlan(
+            approved=False,
+            reason=decision.reason or 'trade_cooldown_active',
+            symbol=candidate.symbol,
+            side=candidate.signal.action,
+        )
+        trade_journal.write(
+            'decision',
+            {
+                'symbol': candidate.symbol,
+                'snapshot': candidate.snapshot,
+                'candle': candidate.candle,
+                'signal': candidate.signal,
+                'candidate': candidate,
+                'equity': None,
+                'trade_plan': plan,
+                'cooldown': decision.active_cooldown,
+                'cooldown_remaining_seconds': decision.remaining_seconds,
+                'instrument_profile': risk_manager.instrument_profile_for(candidate.symbol),
+                'risk_profile': risk_manager.risk_profile_for(candidate.symbol),
+            },
+        )
+        logger.info(
+            'Trade rejected by cooldown | symbol=%s | action=%s | reason=%s | remaining_seconds=%s',
+            candidate.symbol,
+            candidate.signal.action,
+            plan.reason,
+            decision.remaining_seconds,
+        )
+
+    return filter_result.selected_candidates
+
+
 def execute_ranked_candidates(
     candidates: list[TradeCandidate],
     execution_broker: BrokerClient,
@@ -390,9 +625,20 @@ def execute_ranked_candidates(
     trade_journal: JsonlJournal,
     position_store: PositionStore | None = None,
     strategy_profile: StrategyProfileConfig | None = None,
+    cooldown_guard: TradeCooldownGuard | None = None,
 ) -> None:
     if not candidates:
         return
+
+    if cooldown_guard is not None:
+        candidates = apply_trade_cooldown_guard(
+            candidates=candidates,
+            risk_manager=risk_manager,
+            cooldown_guard=cooldown_guard,
+            trade_journal=trade_journal,
+        )
+        if not candidates:
+            return
 
     if strategy_profile is None:
         ranked_candidates = rank_trade_candidates(candidates)
@@ -544,8 +790,9 @@ def main() -> None:
     configure_logging(level=settings.log_level, log_file_path=settings.app_log_path)
 
     symbols = settings.watchlist_symbols()
-    instrument_registry = InstrumentRegistry(settings)
     strategy_profile = build_strategy_profile(settings)
+    risk_profiles = risk_profiles_for_aggressiveness(settings.strategy_aggressiveness)
+    instrument_registry = InstrumentRegistry(settings, risk_profiles=risk_profiles)
 
     logger.info(
         'Starting Eärendil | broker=%s | strategy_profile=%s | watchlist=%s',
@@ -565,6 +812,8 @@ def main() -> None:
     executor = TradeExecutor(broker)
     position_tracker = PositionTracker()
     position_store = PositionStore(settings.position_store_path)
+    cooldown_store = TradeCooldownStore(settings.position_store_path)
+    cooldown_guard = TradeCooldownGuard(cooldown_store)
 
     trade_journal = JsonlJournal(settings.journal_path)
     market_journal = JsonlJournal(settings.market_log_path)
@@ -580,15 +829,22 @@ def main() -> None:
         )
     except Exception as exc:
         if is_broker_authorization_error(exc):
-            logger.critical(
-                'Broker authorization failed during startup. Check ETORO_API_KEY / ETORO_USER_KEY and stop retrying until credentials are fixed.'
-            )
+            logger.critical('Broker authorization failed during startup. Check broker credentials.')
             return
 
         raise
-
     while True:
         try:
+            cooldown_store.delete_expired(datetime.now(timezone.utc))
+            reconcile_externally_closed_positions(
+                broker=broker,
+                position_tracker=position_tracker,
+                risk_manager=risk_manager,
+                position_store=position_store,
+                cooldown_store=cooldown_store,
+                trade_journal=trade_journal,
+            )
+
             candidates: list[TradeCandidate] = []
             snapshots = broker.get_market_snapshots(symbols)
             for symbol in symbols:
@@ -605,6 +861,7 @@ def main() -> None:
                         market_journal=market_journal,
                         candle_journal=candle_journal,
                         position_store=position_store,
+                        cooldown_store=cooldown_store,
                         snapshot=snapshots[symbol],
                     )
 
@@ -627,6 +884,7 @@ def main() -> None:
                 trade_journal=trade_journal,
                 position_store=position_store,
                 strategy_profile=strategy_profile,
+                cooldown_guard=cooldown_guard,
             )
 
         except KeyboardInterrupt:
@@ -634,9 +892,7 @@ def main() -> None:
             break
         except Exception as exc:
             if is_broker_authorization_error(exc):
-                logger.critical(
-                    'Broker authorization failed. Stopping bot loop instead of retrying every poll interval. Check ETORO_API_KEY / ETORO_USER_KEY.'
-                )
+                logger.critical('Broker authorization failed. Stopping bot loop.')
                 trade_journal.write(
                     'broker_authorization_error',
                     {'stage': 'bot_loop', 'message': str(exc)},
