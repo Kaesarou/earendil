@@ -247,6 +247,7 @@ def restore_persisted_positions(
     risk_manager: RiskManager,
     broker: BrokerClient,
     trade_journal: JsonlJournal,
+    cooldown_store: TradeCooldownStore | None = None,
 ) -> None:
     restored_positions = position_store.load_open_positions()
 
@@ -262,15 +263,30 @@ def restore_persisted_positions(
     for position in restored_positions:
         try:
             if not broker.is_position_open(position.position_id):
+                closed_at = datetime.now(timezone.utc)
                 logger.warning(
                     'Persisted position no longer open at broker | position_id=%s | symbol=%s',
                     position.position_id,
                     position.symbol,
                 )
                 position_store.delete_open_position(position.position_id)
+
+                if cooldown_store is not None:
+                    register_trade_cooldown_for_missing_position(
+                        position=position,
+                        closed_at=closed_at,
+                        risk_manager=risk_manager,
+                        cooldown_store=cooldown_store,
+                        trade_journal=trade_journal,
+                    )
+
                 trade_journal.write(
                     'position_reconciled_closed',
-                    {'position': position},
+                    {
+                        'source': 'startup_broker_reconciliation',
+                        'position': position,
+                        'closed_at': closed_at,
+                    },
                 )
                 continue
 
@@ -826,6 +842,7 @@ def main() -> None:
             risk_manager=risk_manager,
             broker=broker,
             trade_journal=trade_journal,
+            cooldown_store=cooldown_store,
         )
     except Exception as exc:
         if is_broker_authorization_error(exc):
