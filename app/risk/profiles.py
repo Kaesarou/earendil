@@ -20,6 +20,12 @@ UNKNOWN_RISK_PROFILE = RiskProfile(
     max_stop_loss_percent=0.0,
     min_take_profit_percent=0.0,
     max_take_profit_percent=0.0,
+    breakeven_stop_enabled=False,
+    breakeven_trigger_percent=1.0,
+    breakeven_buffer_percent=0.0,
+    trailing_stop_enabled=False,
+    trailing_stop_trigger_percent=1.5,
+    trailing_stop_distance_percent=0.8,
 )
 
 CRYPTO_RISK_PROFILE = RiskProfile(
@@ -41,6 +47,12 @@ CRYPTO_RISK_PROFILE = RiskProfile(
     max_stop_loss_percent=2.5,
     min_take_profit_percent=1.5,
     max_take_profit_percent=5.0,
+    breakeven_stop_enabled=False,
+    breakeven_trigger_percent=1.0,
+    breakeven_buffer_percent=0.0,
+    trailing_stop_enabled=False,
+    trailing_stop_trigger_percent=1.5,
+    trailing_stop_distance_percent=0.8,
 )
 
 EQUITY_US_RISK_PROFILE = RiskProfile(
@@ -62,6 +74,12 @@ EQUITY_US_RISK_PROFILE = RiskProfile(
     max_stop_loss_percent=1.5,
     min_take_profit_percent=0.8,
     max_take_profit_percent=3.0,
+    breakeven_stop_enabled=False,
+    breakeven_trigger_percent=1.0,
+    breakeven_buffer_percent=0.0,
+    trailing_stop_enabled=False,
+    trailing_stop_trigger_percent=1.5,
+    trailing_stop_distance_percent=0.8,
 )
 
 EQUITY_EU_RISK_PROFILE = RiskProfile(
@@ -83,6 +101,12 @@ EQUITY_EU_RISK_PROFILE = RiskProfile(
     max_stop_loss_percent=1.5,
     min_take_profit_percent=0.8,
     max_take_profit_percent=3.0,
+    breakeven_stop_enabled=False,
+    breakeven_trigger_percent=1.0,
+    breakeven_buffer_percent=0.0,
+    trailing_stop_enabled=False,
+    trailing_stop_trigger_percent=1.5,
+    trailing_stop_distance_percent=0.8,
 )
 
 DEFAULT_RISK_PROFILES: dict[AssetClass, RiskProfile] = {
