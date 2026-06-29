@@ -35,3 +35,9 @@ class RiskProfile:
     max_stop_loss_percent: float
     min_take_profit_percent: float
     max_take_profit_percent: float
+    breakeven_stop_enabled: bool
+    breakeven_trigger_percent: float
+    breakeven_buffer_percent: float
+    trailing_stop_enabled: bool
+    trailing_stop_trigger_percent: float
+    trailing_stop_distance_percent: float
