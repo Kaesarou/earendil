@@ -287,12 +287,12 @@ class RiskManager:
             dynamic_sl_tp_enabled=effective_risk.dynamic_sl_tp_enabled,
             effective_stop_loss_percent=round(effective_risk.stop_loss_percent, 4),
             effective_take_profit_percent=round(effective_risk.take_profit_percent, 4),
-            breakeven_stop_enabled=self.settings.breakeven_stop_enabled,
-            breakeven_trigger_percent=self.settings.breakeven_trigger_percent,
-            breakeven_buffer_percent=self.settings.breakeven_buffer_percent,
-            trailing_stop_enabled=self.settings.trailing_stop_enabled,
-            trailing_stop_trigger_percent=self.settings.trailing_stop_trigger_percent,
-            trailing_stop_distance_percent=self.settings.trailing_stop_distance_percent,
+            breakeven_stop_enabled=risk_profile.breakeven_stop_enabled,
+            breakeven_trigger_percent=risk_profile.breakeven_trigger_percent,
+            breakeven_buffer_percent=risk_profile.breakeven_buffer_percent,
+            trailing_stop_enabled=risk_profile.trailing_stop_enabled,
+            trailing_stop_trigger_percent=risk_profile.trailing_stop_trigger_percent,
+            trailing_stop_distance_percent=risk_profile.trailing_stop_distance_percent,
         )
 
     def _calculate_expected_gross_profit(
