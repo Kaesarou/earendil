@@ -1,5 +1,22 @@
-from app.instruments.models import AssetClass, RiskProfile
+from dataclasses import replace
 
+from app.instruments.models import AssetClass, RiskProfile
+from app.risk.trade_cooldown import TradeCooldownConfig
+
+
+BALANCED_TRADE_COOLDOWN = TradeCooldownConfig(
+    after_take_profit_minutes=30,
+    after_stop_loss_minutes=45,
+    after_manual_close_minutes=15,
+    after_unknown_close_minutes=15,
+)
+
+AGGRESSIVE_TRADE_COOLDOWN = TradeCooldownConfig(
+    after_take_profit_minutes=15,
+    after_stop_loss_minutes=30,
+    after_manual_close_minutes=10,
+    after_unknown_close_minutes=10,
+)
 
 UNKNOWN_RISK_PROFILE = RiskProfile(
     asset_class=AssetClass.UNKNOWN,
@@ -109,9 +126,45 @@ EQUITY_EU_RISK_PROFILE = RiskProfile(
     trailing_stop_distance_percent=0.8,
 )
 
-DEFAULT_RISK_PROFILES: dict[AssetClass, RiskProfile] = {
-    AssetClass.UNKNOWN: UNKNOWN_RISK_PROFILE,
-    AssetClass.CRYPTO: CRYPTO_RISK_PROFILE,
-    AssetClass.EQUITY_US: EQUITY_US_RISK_PROFILE,
-    AssetClass.EQUITY_EU: EQUITY_EU_RISK_PROFILE,
-}
+
+def _risk_profiles_with_cooldown(
+    trade_cooldown: TradeCooldownConfig,
+) -> dict[AssetClass, RiskProfile]:
+    return {
+        AssetClass.UNKNOWN: replace(
+            UNKNOWN_RISK_PROFILE,
+            trade_cooldown=trade_cooldown,
+        ),
+        AssetClass.CRYPTO: replace(
+            CRYPTO_RISK_PROFILE,
+            trade_cooldown=trade_cooldown,
+        ),
+        AssetClass.EQUITY_US: replace(
+            EQUITY_US_RISK_PROFILE,
+            trade_cooldown=trade_cooldown,
+        ),
+        AssetClass.EQUITY_EU: replace(
+            EQUITY_EU_RISK_PROFILE,
+            trade_cooldown=trade_cooldown,
+        ),
+    }
+
+
+BALANCED_RISK_PROFILES = _risk_profiles_with_cooldown(BALANCED_TRADE_COOLDOWN)
+AGGRESSIVE_RISK_PROFILES = _risk_profiles_with_cooldown(AGGRESSIVE_TRADE_COOLDOWN)
+DEFAULT_RISK_PROFILES: dict[AssetClass, RiskProfile] = BALANCED_RISK_PROFILES
+
+
+def risk_profiles_for_aggressiveness(name: str) -> dict[AssetClass, RiskProfile]:
+    normalized_name = name.strip().lower()
+
+    if normalized_name in ('balanced', 'balance'):
+        return BALANCED_RISK_PROFILES
+
+    if normalized_name in ('aggressive', 'aggressif', 'aggressiv'):
+        return AGGRESSIVE_RISK_PROFILES
+
+    raise ValueError(
+        f'Unsupported risk aggressiveness: {name}. '
+        'Expected one of: balanced, aggressive.'
+    )
