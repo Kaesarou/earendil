@@ -20,6 +20,9 @@ class TrendStrategyConfig:
     market_regime_min_atr_percent: float
     market_regime_max_atr_percent: float
     market_regime_max_noise_ratio: float
+    snapshot_momentum_fallback_enabled: bool = False
+    snapshot_momentum_lookback: int = 3
+    min_snapshot_momentum_percent: float = 0.05
 
 
 @dataclass(frozen=True)
