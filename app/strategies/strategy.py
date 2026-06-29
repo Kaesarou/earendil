@@ -7,6 +7,9 @@ from app.strategies.balanced_strategy import BalancedStrategyConfig
 from app.strategies.models import StrategyProfileConfig, TrendStrategyConfig
 from app.strategies.signals import Signal
 
+StrategyMetadata = dict[str, float | str | bool]
+
+
 def strategy_profile_from_name(name: str) -> StrategyProfileConfig:
     normalized_name = name.strip().lower()
     if normalized_name in ('balanced', 'balance'):
@@ -67,7 +70,7 @@ class TrendStrategy:
     def _evaluate_long_setup(
         self,
         session_move_percent: float,
-        regime_metadata: dict[str, float | str],
+        regime_metadata: StrategyMetadata,
     ) -> Signal:
         fast_ma, slow_ma = self._moving_averages()
 
@@ -75,6 +78,10 @@ class TrendStrategy:
             return Signal.hold('bullish_trend_not_confirmed', metadata=regime_metadata)
 
         current_candle = self.candles[-1]
+        setup_metadata = {
+            **regime_metadata,
+            **self._candle_reliability_metadata(current_candle),
+        }
         previous_candles = self._previous_range_candles()
 
         range_high = max(previous_candle.high for previous_candle in previous_candles)
@@ -83,11 +90,11 @@ class TrendStrategy:
         )
 
         if current_candle.close <= breakout_threshold:
-            return Signal.hold('bullish_breakout_not_confirmed', metadata=regime_metadata)
+            return Signal.hold('bullish_breakout_not_confirmed', metadata=setup_metadata)
 
         rejection_reason = self._long_candle_rejection_reason(current_candle)
         if rejection_reason is not None:
-            return Signal.hold(rejection_reason, metadata=regime_metadata)
+            return Signal.hold(rejection_reason, metadata=setup_metadata)
 
         trend_strength_percent = self._trend_strength_percent(fast_ma, slow_ma)
         breakout_percent = ((current_candle.close - range_high) / range_high) * 100
@@ -100,7 +107,7 @@ class TrendStrategy:
             confidence=0.8,
             reason='trend_bullish_breakout',
             metadata={
-                **regime_metadata,
+                **setup_metadata,
                 'session_move_percent': round(session_move_percent, 4),
                 'trend_strength_percent': round(trend_strength_percent, 4),
                 'breakout_percent': round(breakout_percent, 4),
@@ -116,7 +123,7 @@ class TrendStrategy:
     def _evaluate_short_setup(
         self,
         session_move_percent: float,
-        regime_metadata: dict[str, float | str],
+        regime_metadata: StrategyMetadata,
     ) -> Signal:
         fast_ma, slow_ma = self._moving_averages()
 
@@ -124,6 +131,10 @@ class TrendStrategy:
             return Signal.hold('bearish_trend_not_confirmed', metadata=regime_metadata)
 
         current_candle = self.candles[-1]
+        setup_metadata = {
+            **regime_metadata,
+            **self._candle_reliability_metadata(current_candle),
+        }
         previous_candles = self._previous_range_candles()
 
         range_low = min(previous_candle.low for previous_candle in previous_candles)
@@ -132,11 +143,11 @@ class TrendStrategy:
         )
 
         if current_candle.close >= breakdown_threshold:
-            return Signal.hold('bearish_breakdown_not_confirmed', metadata=regime_metadata)
+            return Signal.hold('bearish_breakdown_not_confirmed', metadata=setup_metadata)
 
         rejection_reason = self._short_candle_rejection_reason(current_candle)
         if rejection_reason is not None:
-            return Signal.hold(rejection_reason, metadata=regime_metadata)
+            return Signal.hold(rejection_reason, metadata=setup_metadata)
 
         trend_strength_percent = self._trend_strength_percent(fast_ma, slow_ma)
         breakdown_percent = ((range_low - current_candle.close) / range_low) * 100
@@ -149,7 +160,7 @@ class TrendStrategy:
             confidence=0.8,
             reason='trend_bearish_breakdown',
             metadata={
-                **regime_metadata,
+                **setup_metadata,
                 'session_move_percent': round(session_move_percent, 4),
                 'trend_strength_percent': round(trend_strength_percent, 4),
                 'breakdown_percent': round(breakdown_percent, 4),
@@ -182,7 +193,7 @@ class TrendStrategy:
 
         return ((current_close - reference_close) / reference_close) * 100
 
-    def _market_regime_metadata(self, session_move_percent: float) -> dict[str, float | str]:
+    def _market_regime_metadata(self, session_move_percent: float) -> StrategyMetadata:
         fast_ma, slow_ma = self._moving_averages()
         trend_strength_percent = self._trend_strength_percent(fast_ma, slow_ma)
         atr_percent = self._atr_percent()
@@ -265,15 +276,12 @@ class TrendStrategy:
         return candles[-(self.config.lookback + 1):-1]
 
     def _long_candle_rejection_reason(self, candle: Candle) -> str | None:
+        unreliable_reason = self._unreliable_candle_reason(candle)
+        if unreliable_reason is not None:
+            return unreliable_reason
+
         if candle.close <= candle.open:
             return 'long_candle_not_green'
-
-        candle_range = candle.high - candle.low
-        if candle_range <= 0:
-            return 'candle_has_no_range'
-
-        if candle.open <= 0:
-            return 'invalid_candle_open'
 
         candle_range_percent = self._candle_range_percent(candle)
         if candle_range_percent < self.config.min_candle_range_percent:
@@ -286,15 +294,12 @@ class TrendStrategy:
         return None
 
     def _short_candle_rejection_reason(self, candle: Candle) -> str | None:
+        unreliable_reason = self._unreliable_candle_reason(candle)
+        if unreliable_reason is not None:
+            return unreliable_reason
+
         if candle.close >= candle.open:
             return 'short_candle_not_red'
-
-        candle_range = candle.high - candle.low
-        if candle_range <= 0:
-            return 'candle_has_no_range'
-
-        if candle.open <= 0:
-            return 'invalid_candle_open'
 
         candle_range_percent = self._candle_range_percent(candle)
         if candle_range_percent < self.config.min_candle_range_percent:
@@ -305,6 +310,32 @@ class TrendStrategy:
 
         if close_position_percent > max_close_position_for_short:
             return 'short_close_not_near_low'
+
+        return None
+
+    def _candle_reliability_metadata(self, candle: Candle) -> StrategyMetadata:
+        unreliable_reason = self._unreliable_candle_reason(candle)
+        return {
+            'candle_reliable': unreliable_reason is None,
+            'candle_unreliable_reason': unreliable_reason or '',
+        }
+
+    def _unreliable_candle_reason(self, candle: Candle) -> str | None:
+        if candle.open <= 0:
+            return 'invalid_candle_open'
+
+        if candle.high < candle.low:
+            return 'invalid_candle_range'
+
+        if (
+            candle.open == candle.high
+            and candle.high == candle.low
+            and candle.low == candle.close
+        ):
+            return 'flat_candle_ohlc'
+
+        if candle.high == candle.low:
+            return 'candle_has_no_range'
 
         return None
 

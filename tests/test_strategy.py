@@ -92,6 +92,7 @@ def test_trend_strategy_emits_buy_when_session_and_breakout_are_bullish():
     assert signal.metadata is not None
     assert signal.metadata['atr_percent'] > 0
     assert signal.metadata['market_regime'] == 'TRENDING'
+    assert signal.metadata['candle_reliable'] is True
 
 
 def test_trend_strategy_emits_sell_when_session_and_breakdown_are_bearish():
@@ -118,6 +119,57 @@ def test_trend_strategy_emits_sell_when_session_and_breakdown_are_bearish():
     assert signal.metadata is not None
     assert signal.metadata['atr_percent'] > 0
     assert signal.metadata['market_regime'] == 'TRENDING'
+    assert signal.metadata['candle_reliable'] is True
+
+
+def test_trend_strategy_marks_flat_bullish_breakout_candle_as_unreliable():
+    strategy = TrendStrategy(config())
+
+    strategy.on_candle(candle(open=100.0, close=100.0, high=100.1, low=99.8))
+    strategy.on_candle(candle(open=101.0, close=101.0, high=101.1, low=100.8))
+    strategy.on_candle(candle(open=102.0, close=102.0, high=102.1, low=101.8))
+    strategy.on_candle(candle(open=103.0, close=103.0, high=103.1, low=102.8))
+    strategy.on_candle(candle(open=104.0, close=104.0, high=104.1, low=103.8))
+
+    signal = strategy.on_candle(
+        candle(
+            open=105.2,
+            close=105.2,
+            high=105.2,
+            low=105.2,
+        )
+    )
+
+    assert signal.action == 'HOLD'
+    assert signal.reason == 'flat_candle_ohlc'
+    assert signal.metadata is not None
+    assert signal.metadata['candle_reliable'] is False
+    assert signal.metadata['candle_unreliable_reason'] == 'flat_candle_ohlc'
+
+
+def test_trend_strategy_marks_flat_bearish_breakdown_candle_as_unreliable():
+    strategy = TrendStrategy(config())
+
+    strategy.on_candle(candle(open=105.0, close=105.0, high=105.2, low=104.9))
+    strategy.on_candle(candle(open=104.0, close=104.0, high=104.2, low=103.9))
+    strategy.on_candle(candle(open=103.0, close=103.0, high=103.2, low=102.9))
+    strategy.on_candle(candle(open=102.0, close=102.0, high=102.2, low=101.9))
+    strategy.on_candle(candle(open=101.0, close=101.0, high=101.2, low=100.9))
+
+    signal = strategy.on_candle(
+        candle(
+            open=99.8,
+            close=99.8,
+            high=99.8,
+            low=99.8,
+        )
+    )
+
+    assert signal.action == 'HOLD'
+    assert signal.reason == 'flat_candle_ohlc'
+    assert signal.metadata is not None
+    assert signal.metadata['candle_reliable'] is False
+    assert signal.metadata['candle_unreliable_reason'] == 'flat_candle_ohlc'
 
 
 def test_trend_strategy_returns_hold_when_session_move_is_neutral():
