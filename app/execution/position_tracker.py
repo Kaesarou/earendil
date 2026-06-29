@@ -64,6 +64,9 @@ class PositionTracker:
     def open_positions_snapshot(self) -> list[TrackedPosition]:
         return list(self.positions.values())
 
+    def remove_position(self, position_id: str) -> TrackedPosition | None:
+        return self.positions.pop(position_id, None)
+
     def record_open_position(
         self,
         position_id: str,
