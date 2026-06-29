@@ -31,13 +31,6 @@ class Settings(BaseSettings):
     max_open_positions_per_symbol: int = Field(default=1, alias='MAX_OPEN_POSITIONS_PER_SYMBOL')
     max_trades_per_day: int = Field(default=3, alias='MAX_TRADES_PER_DAY')
 
-    breakeven_stop_enabled: bool = Field(default=False, alias='BREAKEVEN_STOP_ENABLED')
-    breakeven_trigger_percent: float = Field(default=1.0, alias='BREAKEVEN_TRIGGER_PERCENT')
-    breakeven_buffer_percent: float = Field(default=0.0, alias='BREAKEVEN_BUFFER_PERCENT')
-    trailing_stop_enabled: bool = Field(default=False, alias='TRAILING_STOP_ENABLED')
-    trailing_stop_trigger_percent: float = Field(default=1.5, alias='TRAILING_STOP_TRIGGER_PERCENT')
-    trailing_stop_distance_percent: float = Field(default=0.8, alias='TRAILING_STOP_DISTANCE_PERCENT')
-
     crypto_symbols: str = Field(default='', alias='CRYPTO_SYMBOLS')
     equity_us_symbols: str = Field(default='', alias='EQUITY_US_SYMBOLS')
     equity_eu_symbols: str = Field(default='', alias='EQUITY_EU_SYMBOLS')
