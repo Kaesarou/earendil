@@ -23,6 +23,9 @@ class BalancedStrategyConfig(StrategyProfileConfig):
             market_regime_min_atr_percent=0.02,
             market_regime_max_atr_percent=0.80,
             market_regime_max_noise_ratio=2.0,
+            snapshot_momentum_fallback_enabled=True,
+            snapshot_momentum_lookback=3,
+            min_snapshot_momentum_percent=0.05,
         ),
         pre_scan=PreScanConfig(
             enabled=True,
@@ -53,6 +56,9 @@ class BalancedStrategyConfig(StrategyProfileConfig):
             market_regime_min_atr_percent=0.01,
             market_regime_max_atr_percent=0.50,
             market_regime_max_noise_ratio=2.0,
+            snapshot_momentum_fallback_enabled=True,
+            snapshot_momentum_lookback=3,
+            min_snapshot_momentum_percent=0.04,
         ),
         pre_scan=PreScanConfig(
             enabled=True,
@@ -83,6 +89,9 @@ class BalancedStrategyConfig(StrategyProfileConfig):
             market_regime_min_atr_percent=0.01,
             market_regime_max_atr_percent=0.50,
             market_regime_max_noise_ratio=2.0,
+            snapshot_momentum_fallback_enabled=True,
+            snapshot_momentum_lookback=3,
+            min_snapshot_momentum_percent=0.04,
         ),
         pre_scan=PreScanConfig(
             enabled=True,

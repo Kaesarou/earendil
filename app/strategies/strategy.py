@@ -1,7 +1,7 @@
 from collections import deque
 from dataclasses import dataclass
 
-from app.market.models import Candle
+from app.market.models import Candle, MarketSnapshot
 from app.strategies.aggressive_strategy import AggressiveStrategyConfig
 from app.strategies.balanced_strategy import BalancedStrategyConfig
 from app.strategies.models import StrategyProfileConfig, TrendStrategyConfig
@@ -42,6 +42,12 @@ class TrendStrategy:
             self.config.atr_lookback + 1,
         )
         self.candles: deque[Candle] = deque(maxlen=max_candles)
+
+        snapshot_lookback = max(1, self.config.snapshot_momentum_lookback)
+        self.snapshots: deque[MarketSnapshot] = deque(maxlen=snapshot_lookback + 1)
+
+    def on_snapshot(self, snapshot: MarketSnapshot) -> None:
+        self.snapshots.append(snapshot)
 
     def on_candle(self, candle: Candle) -> Signal:
         self.candles.append(candle)
@@ -85,6 +91,16 @@ class TrendStrategy:
         previous_candles = self._previous_range_candles()
 
         range_high = max(previous_candle.high for previous_candle in previous_candles)
+
+        if setup_metadata['candle_reliable'] is False:
+            return self._evaluate_long_snapshot_momentum_fallback(
+                session_move_percent=session_move_percent,
+                fast_ma=fast_ma,
+                slow_ma=slow_ma,
+                range_high=range_high,
+                setup_metadata=setup_metadata,
+            )
+
         breakout_threshold = range_high * (
             1 + self.config.min_breakout_percent / 100
         )
@@ -138,6 +154,16 @@ class TrendStrategy:
         previous_candles = self._previous_range_candles()
 
         range_low = min(previous_candle.low for previous_candle in previous_candles)
+
+        if setup_metadata['candle_reliable'] is False:
+            return self._evaluate_short_snapshot_momentum_fallback(
+                session_move_percent=session_move_percent,
+                fast_ma=fast_ma,
+                slow_ma=slow_ma,
+                range_low=range_low,
+                setup_metadata=setup_metadata,
+            )
+
         breakdown_threshold = range_low * (
             1 - self.config.min_breakout_percent / 100
         )
@@ -172,6 +198,277 @@ class TrendStrategy:
                 'range_low': round(range_low, 5),
             },
         )
+
+    def _evaluate_long_snapshot_momentum_fallback(
+        self,
+        session_move_percent: float,
+        fast_ma: float,
+        slow_ma: float,
+        range_high: float,
+        setup_metadata: StrategyMetadata,
+    ) -> Signal:
+        if not self.config.snapshot_momentum_fallback_enabled:
+            return Signal.hold(
+                str(setup_metadata['candle_unreliable_reason']),
+                metadata=setup_metadata,
+            )
+
+        confirmed, reason, snapshot_metadata = self._snapshot_momentum_confirmation('long')
+        fallback_metadata = {
+            **setup_metadata,
+            **snapshot_metadata,
+        }
+
+        if not confirmed:
+            return Signal.hold(reason, metadata=fallback_metadata)
+
+        return self._build_long_snapshot_momentum_signal(
+            session_move_percent=session_move_percent,
+            fast_ma=fast_ma,
+            slow_ma=slow_ma,
+            range_high=range_high,
+            setup_metadata=setup_metadata,
+            snapshot_metadata=snapshot_metadata,
+        )
+
+    def _evaluate_short_snapshot_momentum_fallback(
+        self,
+        session_move_percent: float,
+        fast_ma: float,
+        slow_ma: float,
+        range_low: float,
+        setup_metadata: StrategyMetadata,
+    ) -> Signal:
+        if not self.config.snapshot_momentum_fallback_enabled:
+            return Signal.hold(
+                str(setup_metadata['candle_unreliable_reason']),
+                metadata=setup_metadata,
+            )
+
+        confirmed, reason, snapshot_metadata = self._snapshot_momentum_confirmation('short')
+        fallback_metadata = {
+            **setup_metadata,
+            **snapshot_metadata,
+        }
+
+        if not confirmed:
+            return Signal.hold(reason, metadata=fallback_metadata)
+
+        return self._build_short_snapshot_momentum_signal(
+            session_move_percent=session_move_percent,
+            fast_ma=fast_ma,
+            slow_ma=slow_ma,
+            range_low=range_low,
+            setup_metadata=setup_metadata,
+            snapshot_metadata=snapshot_metadata,
+        )
+
+    def _build_long_snapshot_momentum_signal(
+        self,
+        session_move_percent: float,
+        fast_ma: float,
+        slow_ma: float,
+        range_high: float,
+        setup_metadata: StrategyMetadata,
+        snapshot_metadata: StrategyMetadata,
+    ) -> Signal:
+        trend_strength_percent = self._trend_strength_percent(fast_ma, slow_ma)
+        atr_percent = self._atr_percent()
+
+        return Signal(
+            action='BUY',
+            confidence=0.75,
+            reason='trend_bullish_snapshot_momentum',
+            metadata={
+                **setup_metadata,
+                **snapshot_metadata,
+                'session_move_percent': round(session_move_percent, 4),
+                'trend_strength_percent': round(trend_strength_percent, 4),
+                'breakout_percent': snapshot_metadata.get('snapshot_breakout_percent', 0.0),
+                'candle_range_percent': snapshot_metadata.get('snapshot_range_percent', 0.0),
+                'close_position_percent': snapshot_metadata.get(
+                    'snapshot_close_position_percent',
+                    0.0,
+                ),
+                'atr_percent': round(atr_percent, 4),
+                'fast_ma': round(fast_ma, 5),
+                'slow_ma': round(slow_ma, 5),
+                'range_high': round(range_high, 5),
+                'confirmation_source': 'snapshot_momentum',
+            },
+        )
+
+    def _build_short_snapshot_momentum_signal(
+        self,
+        session_move_percent: float,
+        fast_ma: float,
+        slow_ma: float,
+        range_low: float,
+        setup_metadata: StrategyMetadata,
+        snapshot_metadata: StrategyMetadata,
+    ) -> Signal:
+        trend_strength_percent = self._trend_strength_percent(fast_ma, slow_ma)
+        atr_percent = self._atr_percent()
+
+        return Signal(
+            action='SELL',
+            confidence=0.75,
+            reason='trend_bearish_snapshot_momentum',
+            metadata={
+                **setup_metadata,
+                **snapshot_metadata,
+                'session_move_percent': round(session_move_percent, 4),
+                'trend_strength_percent': round(trend_strength_percent, 4),
+                'breakdown_percent': snapshot_metadata.get('snapshot_breakdown_percent', 0.0),
+                'candle_range_percent': snapshot_metadata.get('snapshot_range_percent', 0.0),
+                'close_position_percent': snapshot_metadata.get(
+                    'snapshot_close_position_percent',
+                    100.0,
+                ),
+                'atr_percent': round(atr_percent, 4),
+                'fast_ma': round(fast_ma, 5),
+                'slow_ma': round(slow_ma, 5),
+                'range_low': round(range_low, 5),
+                'confirmation_source': 'snapshot_momentum',
+            },
+        )
+
+    def _snapshot_momentum_confirmation(
+        self,
+        side: str,
+    ) -> tuple[bool, str, StrategyMetadata]:
+        snapshot_lookback = max(1, self.config.snapshot_momentum_lookback)
+        required_snapshots = snapshot_lookback + 1
+
+        if len(self.snapshots) < required_snapshots:
+            return (
+                False,
+                'snapshot_momentum_not_enough_data',
+                {
+                    'snapshot_momentum_confirmed': False,
+                    'snapshot_count': len(self.snapshots),
+                    'snapshot_required_count': required_snapshots,
+                },
+            )
+
+        recent_snapshots = list(self.snapshots)[-required_snapshots:]
+        prices = [snapshot.last for snapshot in recent_snapshots]
+        reference_price = prices[0]
+        current_price = prices[-1]
+
+        if reference_price <= 0 or current_price <= 0:
+            return (
+                False,
+                'snapshot_momentum_invalid_price',
+                {
+                    'snapshot_momentum_confirmed': False,
+                    'snapshot_reference_price': reference_price,
+                    'snapshot_current_price': current_price,
+                },
+            )
+
+        previous_prices = prices[:-1]
+        if any(price <= 0 for price in previous_prices):
+            return (
+                False,
+                'snapshot_momentum_invalid_price',
+                {
+                    'snapshot_momentum_confirmed': False,
+                    'snapshot_reference_price': reference_price,
+                    'snapshot_current_price': current_price,
+                },
+            )
+
+        momentum_percent = ((current_price - reference_price) / reference_price) * 100
+        snapshot_range_percent = self._snapshot_range_percent(prices, reference_price)
+        snapshot_close_position_percent = self._snapshot_close_position_percent(prices)
+
+        if side == 'long':
+            snapshot_range_high = max(previous_prices)
+            breakout_percent = ((current_price - snapshot_range_high) / snapshot_range_high) * 100
+
+            confirmed = (
+                momentum_percent >= self.config.min_snapshot_momentum_percent
+                and breakout_percent >= self.config.min_breakout_percent
+            )
+
+            reason = (
+                'snapshot_momentum_confirmed'
+                if confirmed
+                else 'snapshot_bullish_momentum_not_confirmed'
+            )
+
+            return (
+                confirmed,
+                reason,
+                {
+                    'snapshot_momentum_confirmed': confirmed,
+                    'snapshot_momentum_side': side,
+                    'snapshot_momentum_percent': round(momentum_percent, 4),
+                    'snapshot_breakout_percent': round(breakout_percent, 4),
+                    'snapshot_range_percent': round(snapshot_range_percent, 4),
+                    'snapshot_close_position_percent': round(snapshot_close_position_percent, 4),
+                    'snapshot_reference_price': round(reference_price, 5),
+                    'snapshot_current_price': round(current_price, 5),
+                    'snapshot_range_high': round(snapshot_range_high, 5),
+                },
+            )
+
+        if side == 'short':
+            snapshot_range_low = min(previous_prices)
+            breakdown_percent = ((snapshot_range_low - current_price) / snapshot_range_low) * 100
+
+            confirmed = (
+                momentum_percent <= -self.config.min_snapshot_momentum_percent
+                and breakdown_percent >= self.config.min_breakout_percent
+            )
+
+            reason = (
+                'snapshot_momentum_confirmed'
+                if confirmed
+                else 'snapshot_bearish_momentum_not_confirmed'
+            )
+
+            return (
+                confirmed,
+                reason,
+                {
+                    'snapshot_momentum_confirmed': confirmed,
+                    'snapshot_momentum_side': side,
+                    'snapshot_momentum_percent': round(momentum_percent, 4),
+                    'snapshot_breakdown_percent': round(breakdown_percent, 4),
+                    'snapshot_range_percent': round(snapshot_range_percent, 4),
+                    'snapshot_close_position_percent': round(snapshot_close_position_percent, 4),
+                    'snapshot_reference_price': round(reference_price, 5),
+                    'snapshot_current_price': round(current_price, 5),
+                    'snapshot_range_low': round(snapshot_range_low, 5),
+                },
+            )
+
+        return (
+            False,
+            'snapshot_momentum_invalid_side',
+            {
+                'snapshot_momentum_confirmed': False,
+                'snapshot_momentum_side': side,
+            },
+        )
+
+    def _snapshot_range_percent(self, prices: list[float], reference_price: float) -> float:
+        if reference_price <= 0:
+            return 0.0
+
+        snapshot_range = max(prices) - min(prices)
+        return (snapshot_range / reference_price) * 100
+
+    def _snapshot_close_position_percent(self, prices: list[float]) -> float:
+        snapshot_range = max(prices) - min(prices)
+
+        if snapshot_range <= 0:
+            return 50.0
+
+        current_price = prices[-1]
+        return ((current_price - min(prices)) / snapshot_range) * 100
 
     def _required_candles(self) -> int:
         return max(
