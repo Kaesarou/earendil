@@ -87,7 +87,7 @@ def _pre_scan_rejection_reason(
         if market_regime not in config.allowed_market_regimes:
             return 'pre_scan_market_regime_rejected'
 
-    spread_percent = _spread_percent(candidate.snapshot)
+    spread_percent = spread_percent(candidate.snapshot)
     if config.max_spread_percent > 0 and spread_percent > config.max_spread_percent:
         return 'pre_scan_spread_too_high'
 
