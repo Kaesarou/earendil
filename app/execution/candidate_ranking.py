@@ -1,6 +1,7 @@
 from app.execution.trade_candidate import TradeCandidate
 from app.market.models import Candle, MarketSnapshot
 from app.strategies.signals import Signal
+from app.utils.commons import spread_percent
 
 
 def build_trade_candidate(
@@ -57,7 +58,7 @@ def _score_signal(
     else:
         close_quality = close_position_percent
 
-    spread_percent = _spread_percent(snapshot)
+    spread_percent = spread_percent(snapshot)
 
     score = 0.0
     score += signal.confidence * 100
@@ -88,7 +89,7 @@ def _rank_reason(
         f'breakdown={_float_metadata(metadata, "breakdown_percent")} | '
         f'candle_range={_float_metadata(metadata, "candle_range_percent")} | '
         f'close_position={_float_metadata(metadata, "close_position_percent")} | '
-        f'spread={round(_spread_percent(snapshot), 4)}'
+        f'spread={round(spread_percent(snapshot), 4)}'
     )
 
 
@@ -102,14 +103,3 @@ def _float_metadata(metadata: dict, key: str) -> float:
         return float(value)
     except (TypeError, ValueError):
         return 0.0
-
-
-def _spread_percent(snapshot: MarketSnapshot) -> float:
-    if snapshot.last <= 0:
-        return 100.0
-
-    if snapshot.bid <= 0 or snapshot.ask <= 0:
-        return 100.0
-
-    spread = max(0.0, snapshot.ask - snapshot.bid)
-    return (spread / snapshot.last) * 100

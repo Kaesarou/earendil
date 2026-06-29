@@ -1,8 +1,6 @@
 from collections import deque
 from dataclasses import dataclass
 
-from app.execution.pre_scan import PreScanConfig
-from app.instruments.models import AssetClass
 from app.market.models import Candle
 from app.strategies.aggressive_strategy import AggressiveStrategyConfig
 from app.strategies.balanced_strategy import BalancedStrategyConfig
@@ -33,7 +31,7 @@ class TrendStrategy:
 
     def __init__(self, config: TrendStrategyConfig):
         self.config = config
-        
+
         max_candles = max(
             self.config.lookback + 1,
             self.config.slow_lookback,

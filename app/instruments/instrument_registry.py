@@ -3,6 +3,7 @@ from collections.abc import Mapping
 from app.config.settings import Settings
 from app.instruments.models import AssetClass, InstrumentProfile, RiskProfile
 from app.risk.profiles import DEFAULT_RISK_PROFILES
+from app.utils.commons import normalize_symbol
 
 
 class InstrumentRegistry:
@@ -18,7 +19,7 @@ class InstrumentRegistry:
         self.equity_eu_symbols = self._parse_symbols(settings.equity_eu_symbols)
 
     def resolve(self, symbol: str) -> InstrumentProfile:
-        normalized_symbol = self._normalize_symbol(symbol)
+        normalized_symbol = normalize_symbol(symbol)
 
         if normalized_symbol in self.crypto_symbols:
             return InstrumentProfile(
@@ -52,10 +53,7 @@ class InstrumentRegistry:
 
     def _parse_symbols(self, raw_symbols: str) -> set[str]:
         return {
-            self._normalize_symbol(symbol)
+            normalize_symbol(symbol)
             for symbol in raw_symbols.split(',')
             if symbol.strip()
         }
-
-    def _normalize_symbol(self, symbol: str) -> str:
-        return symbol.strip().upper()

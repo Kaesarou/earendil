@@ -156,14 +156,3 @@ def _float_value(value) -> float:
         return float(value)
     except (TypeError, ValueError):
         return 0.0
-
-
-def _spread_percent(snapshot: MarketSnapshot) -> float:
-    if snapshot.last <= 0:
-        return 100.0
-
-    if snapshot.bid <= 0 or snapshot.ask <= 0:
-        return 100.0
-
-    spread = max(0.0, snapshot.ask - snapshot.bid)
-    return (spread / snapshot.last) * 100

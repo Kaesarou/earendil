@@ -9,6 +9,7 @@ from app.market.models import MarketSnapshot
 from app.risk.models import TradePlan
 from app.risk.position_sizing import PositionSizingStrategy
 from app.strategies.signals import Signal
+from app.utils.commons import normalize_symbol
 
 
 @dataclass(frozen=True)
@@ -129,18 +130,18 @@ class RiskManager:
         return self.instrument_registry.risk_profile_for(symbol)
 
     def record_open_position(self, symbol: str) -> None:
-        normalized_symbol = self._normalize_symbol(symbol)
+        normalized_symbol = normalize_symbol(symbol)
         self.open_positions += 1
         self.open_positions_by_symbol[normalized_symbol] += 1
         self.trades_today += 1
 
     def restore_open_position(self, symbol: str) -> None:
-        normalized_symbol = self._normalize_symbol(symbol)
+        normalized_symbol = normalize_symbol(symbol)
         self.open_positions += 1
         self.open_positions_by_symbol[normalized_symbol] += 1
 
     def record_close_position(self, symbol: str) -> None:
-        normalized_symbol = self._normalize_symbol(symbol)
+        normalized_symbol = normalize_symbol(symbol)
 
         self.open_positions = max(0, self.open_positions - 1)
 
@@ -174,7 +175,7 @@ class RiskManager:
         if self.open_positions >= self.settings.max_open_positions:
             return 'max_open_positions_reached'
 
-        normalized_symbol = self._normalize_symbol(symbol)
+        normalized_symbol = normalize_symbol(symbol)
         if (
             self.open_positions_by_symbol.get(normalized_symbol, 0)
             >= self.settings.max_open_positions_per_symbol
@@ -389,6 +390,3 @@ class RiskManager:
             return None
 
         return round(value, 4)
-
-    def _normalize_symbol(self, symbol: str) -> str:
-        return symbol.strip().upper()

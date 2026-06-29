@@ -71,7 +71,6 @@ class CachedBrokerClient(BrokerClient):
     def close_position(self, position_id: str) -> None:
         self.delegate.close_position(position_id)
         self.invalidate_account_and_positions()
-        self.position_status_cache.pop(position_id, None)
 
     def is_position_open(self, position_id: str) -> bool:
         cached_status = self._get_cache_entry(
@@ -126,9 +125,6 @@ class CachedBrokerClient(BrokerClient):
     def _log_cache_miss(self, cache_name: str, key: str) -> None:
         if self.logging_enabled:
             logger.info('Broker cache miss | cache=%s | key=%s', cache_name, key)
-
-    def _normalize_symbol(self, symbol: str) -> str:
-        return symbol.strip().upper()
 
     def _now(self) -> float:
         return time.monotonic()
