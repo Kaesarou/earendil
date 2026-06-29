@@ -203,6 +203,7 @@ def process_symbol(
 ) -> TradeCandidate | None:
     snapshot = snapshot or broker.get_market_snapshot(symbol)
     market_journal.write('market_snapshot', {'symbol': symbol, 'snapshot': snapshot})
+    strategy.on_snapshot(snapshot)
 
     close_signals = position_tracker.evaluate_snapshot(snapshot)
     for close_signal in close_signals:
