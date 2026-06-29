@@ -32,7 +32,12 @@ def test_instrument_registry_returns_default_crypto_risk_profile():
 
 
 def test_instrument_registry_falls_back_to_default_unknown_risk_profile():
-    registry = InstrumentRegistry(Settings())
+    settings = Settings(
+        CRYPTO_SYMBOLS='',
+        EQUITY_US_SYMBOLS='',
+        EQUITY_EU_SYMBOLS='',
+    )
+    registry = InstrumentRegistry(settings)
 
     risk_profile = registry.risk_profile_for('AAPL')
 

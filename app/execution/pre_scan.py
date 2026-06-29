@@ -3,6 +3,7 @@ from dataclasses import dataclass
 from app.execution.candidate_ranking import rank_trade_candidates
 from app.execution.trade_candidate import TradeCandidate
 from app.market.models import MarketSnapshot
+from app.utils.commons import spread_percent
 
 
 @dataclass(frozen=True)
@@ -87,8 +88,8 @@ def _pre_scan_rejection_reason(
         if market_regime not in config.allowed_market_regimes:
             return 'pre_scan_market_regime_rejected'
 
-    spread_percent = spread_percent(candidate.snapshot)
-    if config.max_spread_percent > 0 and spread_percent > config.max_spread_percent:
+    
+    if config.max_spread_percent > 0 and spread_percent(candidate.snapshot) > config.max_spread_percent:
         return 'pre_scan_spread_too_high'
 
     session_move_percent = abs(

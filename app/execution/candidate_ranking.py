@@ -58,8 +58,6 @@ def _score_signal(
     else:
         close_quality = close_position_percent
 
-    spread_percent = spread_percent(snapshot)
-
     score = 0.0
     score += signal.confidence * 100
     score += min(session_move_percent * 15, 30)
@@ -67,7 +65,7 @@ def _score_signal(
     score += min(impulse_percent * 40, 20)
     score += min(candle_range_percent * 20, 10)
     score += close_quality * 0.15
-    score -= spread_percent * 120
+    score -= spread_percent(snapshot) * 120
 
     return score
 
