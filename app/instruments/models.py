@@ -2,6 +2,7 @@ from dataclasses import dataclass, field
 from enum import StrEnum
 
 from app.risk.trade_cooldown import TradeCooldownConfig
+from app.risk.trade_cost_model import TradeCostConfig
 
 
 class AssetClass(StrEnum):
@@ -44,3 +45,4 @@ class RiskProfile:
     trailing_stop_trigger_percent: float = 0.0
     trailing_stop_distance_percent: float = 0.0
     trade_cooldown: TradeCooldownConfig = field(default_factory=TradeCooldownConfig)
+    trade_cost: TradeCostConfig = field(default_factory=TradeCostConfig)
