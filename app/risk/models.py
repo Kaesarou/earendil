@@ -13,6 +13,13 @@ class TradePlan:
     expected_gross_profit: float | None = None
     estimated_fees: float | None = None
     expected_net_profit: float | None = None
+    estimated_open_fee: float | None = None
+    estimated_close_fee: float | None = None
+    estimated_fixed_fees: float | None = None
+    estimated_spread_cost: float | None = None
+    estimated_total_cost: float | None = None
+    estimated_total_cost_percent: float | None = None
+    min_expected_net_profit: float | None = None
     spread_percent: float | None = None
     max_spread_percent: float | None = None
     expected_move_percent: float | None = None
@@ -23,6 +30,8 @@ class TradePlan:
     effective_stop_loss_percent: float | None = None
     effective_take_profit_percent: float | None = None
     breakeven_stop_enabled: bool = False
+    configured_breakeven_trigger_percent: float = 0.0
+    configured_breakeven_buffer_percent: float = 0.0
     breakeven_trigger_percent: float = 0.0
     breakeven_buffer_percent: float = 0.0
     trailing_stop_enabled: bool = False
