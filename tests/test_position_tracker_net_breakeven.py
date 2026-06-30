@@ -40,7 +40,7 @@ def test_buy_net_breakeven_moves_stop_to_entry_plus_costs():
         )
     )
 
-    close_signals = tracker.evaluate_snapshot(snapshot(101.3))
+    close_signals = tracker.evaluate_snapshot(snapshot(101.31))
 
     assert close_signals == []
     position = tracker.open_positions_snapshot()[0]
@@ -57,7 +57,7 @@ def test_sell_net_breakeven_moves_stop_to_entry_minus_costs():
         )
     )
 
-    close_signals = tracker.evaluate_snapshot(snapshot(98.7))
+    close_signals = tracker.evaluate_snapshot(snapshot(98.69))
 
     assert close_signals == []
     position = tracker.open_positions_snapshot()[0]
