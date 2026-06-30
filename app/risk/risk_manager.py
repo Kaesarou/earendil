@@ -8,6 +8,7 @@ from app.instruments.models import InstrumentProfile, RiskProfile
 from app.market.models import MarketSnapshot
 from app.risk.models import TradePlan
 from app.risk.position_sizing import PositionSizingStrategy
+from app.risk.trade_cost_model import TradeCostEstimate, TradeCostModel
 from app.strategies.signals import Signal
 from app.utils.commons import normalize_symbol
 
@@ -26,10 +27,12 @@ class RiskManager:
         settings: Settings,
         position_sizing_strategy: PositionSizingStrategy,
         instrument_registry: InstrumentRegistry,
+        trade_cost_model: TradeCostModel | None = None,
     ):
         self.settings = settings
         self.position_sizing_strategy = position_sizing_strategy
         self.instrument_registry = instrument_registry
+        self.trade_cost_model = trade_cost_model or TradeCostModel()
         self.trades_today = 0
         self.open_positions = 0
         self.open_positions_by_symbol: dict[str, int] = defaultdict(int)
@@ -86,14 +89,16 @@ class RiskManager:
                 min_required_move_percent=min_required_move_percent,
             )
 
-        expected_gross_profit = self._calculate_expected_gross_profit(
-            amount=amount,
-            effective_risk=effective_risk,
+        trade_cost_estimate = self.trade_cost_model.estimate(
+            position_value=amount,
+            expected_move_percent=expected_move_percent,
+            spread_percent=spread_percent,
+            config=risk_profile.trade_cost,
+            legacy_estimated_round_trip_fees=risk_profile.estimated_round_trip_fees,
+            legacy_min_expected_net_profit=risk_profile.min_expected_net_profit,
         )
-        estimated_fees = risk_profile.estimated_round_trip_fees
-        expected_net_profit = expected_gross_profit - estimated_fees
 
-        if expected_net_profit < risk_profile.min_expected_net_profit:
+        if trade_cost_estimate.expected_net_profit < trade_cost_estimate.min_expected_net_profit:
             return self._rejected_plan(
                 reason='expected_profit_too_low_after_fees',
                 signal=signal,
@@ -104,18 +109,14 @@ class RiskManager:
                 expected_move_percent=expected_move_percent,
                 min_required_move_percent=min_required_move_percent,
                 amount=amount,
-                expected_gross_profit=expected_gross_profit,
-                estimated_fees=estimated_fees,
-                expected_net_profit=expected_net_profit,
+                trade_cost_estimate=trade_cost_estimate,
             )
 
         return self._build_trade_plan(
             signal=signal,
             snapshot=snapshot,
             amount=amount,
-            expected_gross_profit=expected_gross_profit,
-            estimated_fees=estimated_fees,
-            expected_net_profit=expected_net_profit,
+            trade_cost_estimate=trade_cost_estimate,
             risk_profile=risk_profile,
             effective_risk=effective_risk,
             spread_percent=spread_percent,
@@ -220,9 +221,7 @@ class RiskManager:
         expected_move_percent: float,
         min_required_move_percent: float | None,
         amount: float | None = None,
-        expected_gross_profit: float | None = None,
-        estimated_fees: float | None = None,
-        expected_net_profit: float | None = None,
+        trade_cost_estimate: TradeCostEstimate | None = None,
     ) -> TradePlan:
         return TradePlan(
             approved=False,
@@ -230,9 +229,7 @@ class RiskManager:
             symbol=snapshot.symbol,
             side=signal.action,
             amount=self._round_optional(amount),
-            expected_gross_profit=self._round_optional(expected_gross_profit),
-            estimated_fees=self._round_optional(estimated_fees),
-            expected_net_profit=self._round_optional(expected_net_profit),
+            **self._trade_cost_plan_kwargs(trade_cost_estimate),
             spread_percent=self._round_optional(spread_percent),
             max_spread_percent=risk_profile.max_spread_percent,
             expected_move_percent=round(expected_move_percent, 4),
@@ -249,9 +246,7 @@ class RiskManager:
         signal: Signal,
         snapshot: MarketSnapshot,
         amount: float,
-        expected_gross_profit: float,
-        estimated_fees: float,
-        expected_net_profit: float,
+        trade_cost_estimate: TradeCostEstimate,
         risk_profile: RiskProfile,
         effective_risk: EffectiveRisk,
         spread_percent: float | None,
@@ -267,6 +262,16 @@ class RiskManager:
         else:
             raise ValueError(f'Unsupported signal action for trade plan: {signal.action}')
 
+        effective_breakeven_buffer_percent = (
+            risk_profile.breakeven_buffer_percent
+            + trade_cost_estimate.total_estimated_cost_percent
+        )
+        effective_breakeven_trigger_percent = max(
+            risk_profile.breakeven_trigger_percent
+            + trade_cost_estimate.total_estimated_cost_percent,
+            effective_breakeven_buffer_percent,
+        )
+
         return TradePlan(
             approved=True,
             reason=signal.reason,
@@ -275,9 +280,7 @@ class RiskManager:
             amount=round(amount, 4),
             stop_loss=round(stop_loss, 5),
             take_profit=round(take_profit, 5),
-            expected_gross_profit=round(expected_gross_profit, 4),
-            estimated_fees=round(estimated_fees, 4),
-            expected_net_profit=round(expected_net_profit, 4),
+            **self._trade_cost_plan_kwargs(trade_cost_estimate),
             spread_percent=self._round_optional(spread_percent),
             max_spread_percent=risk_profile.max_spread_percent,
             expected_move_percent=round(expected_move_percent, 4),
@@ -288,19 +291,48 @@ class RiskManager:
             effective_stop_loss_percent=round(effective_risk.stop_loss_percent, 4),
             effective_take_profit_percent=round(effective_risk.take_profit_percent, 4),
             breakeven_stop_enabled=risk_profile.breakeven_stop_enabled,
-            breakeven_trigger_percent=risk_profile.breakeven_trigger_percent,
-            breakeven_buffer_percent=risk_profile.breakeven_buffer_percent,
+            configured_breakeven_trigger_percent=round(risk_profile.breakeven_trigger_percent, 4),
+            configured_breakeven_buffer_percent=round(risk_profile.breakeven_buffer_percent, 4),
+            breakeven_trigger_percent=round(effective_breakeven_trigger_percent, 4),
+            breakeven_buffer_percent=round(effective_breakeven_buffer_percent, 4),
             trailing_stop_enabled=risk_profile.trailing_stop_enabled,
             trailing_stop_trigger_percent=risk_profile.trailing_stop_trigger_percent,
             trailing_stop_distance_percent=risk_profile.trailing_stop_distance_percent,
         )
 
-    def _calculate_expected_gross_profit(
+    def _trade_cost_plan_kwargs(
         self,
-        amount: float,
-        effective_risk: EffectiveRisk,
-    ) -> float:
-        return amount * (effective_risk.take_profit_percent / 100)
+        trade_cost_estimate: TradeCostEstimate | None,
+    ) -> dict[str, float | None]:
+        if trade_cost_estimate is None:
+            return {
+                'expected_gross_profit': None,
+                'estimated_fees': None,
+                'expected_net_profit': None,
+                'estimated_open_fee': None,
+                'estimated_close_fee': None,
+                'estimated_fixed_fees': None,
+                'estimated_spread_cost': None,
+                'estimated_total_cost': None,
+                'estimated_total_cost_percent': None,
+                'min_expected_net_profit': None,
+            }
+
+        return {
+            'expected_gross_profit': round(trade_cost_estimate.expected_gross_profit, 4),
+            'estimated_fees': round(trade_cost_estimate.total_estimated_cost, 4),
+            'expected_net_profit': round(trade_cost_estimate.expected_net_profit, 4),
+            'estimated_open_fee': round(trade_cost_estimate.open_fee, 4),
+            'estimated_close_fee': round(trade_cost_estimate.close_fee, 4),
+            'estimated_fixed_fees': round(trade_cost_estimate.fixed_fees, 4),
+            'estimated_spread_cost': round(trade_cost_estimate.spread_cost, 4),
+            'estimated_total_cost': round(trade_cost_estimate.total_estimated_cost, 4),
+            'estimated_total_cost_percent': round(
+                trade_cost_estimate.total_estimated_cost_percent,
+                4,
+            ),
+            'min_expected_net_profit': round(trade_cost_estimate.min_expected_net_profit, 4),
+        }
 
     def _effective_risk(
         self,
