@@ -2,6 +2,7 @@ from dataclasses import replace
 
 from app.instruments.models import AssetClass, RiskProfile
 from app.risk.trade_cooldown import TradeCooldownConfig
+from app.risk.trade_cost_model import TradeCostConfig
 
 
 BALANCED_TRADE_COOLDOWN = TradeCooldownConfig(
@@ -16,6 +17,28 @@ AGGRESSIVE_TRADE_COOLDOWN = TradeCooldownConfig(
     after_stop_loss_minutes=30,
     after_manual_close_minutes=10,
     after_unknown_close_minutes=10,
+)
+
+UNKNOWN_TRADE_COST = TradeCostConfig(enabled=False)
+
+EQUITY_CFD_TRADE_COST = TradeCostConfig(
+    enabled=True,
+    open_fee_percent=0.15,
+    close_fee_percent=0.15,
+    fixed_open_fee=0.0,
+    fixed_close_fee=0.0,
+    include_spread_cost=True,
+    min_expected_net_profit=5.00,
+)
+
+CRYPTO_TRADE_COST = TradeCostConfig(
+    enabled=True,
+    open_fee_percent=1.00,
+    close_fee_percent=1.00,
+    fixed_open_fee=0.0,
+    fixed_close_fee=0.0,
+    include_spread_cost=True,
+    min_expected_net_profit=8.00,
 )
 
 UNKNOWN_RISK_PROFILE = RiskProfile(
@@ -43,6 +66,7 @@ UNKNOWN_RISK_PROFILE = RiskProfile(
     trailing_stop_enabled=False,
     trailing_stop_trigger_percent=1.5,
     trailing_stop_distance_percent=0.8,
+    trade_cost=UNKNOWN_TRADE_COST,
 )
 
 CRYPTO_RISK_PROFILE = RiskProfile(
@@ -70,6 +94,7 @@ CRYPTO_RISK_PROFILE = RiskProfile(
     trailing_stop_enabled=False,
     trailing_stop_trigger_percent=1.5,
     trailing_stop_distance_percent=0.8,
+    trade_cost=CRYPTO_TRADE_COST,
 )
 
 EQUITY_US_RISK_PROFILE = RiskProfile(
@@ -97,6 +122,7 @@ EQUITY_US_RISK_PROFILE = RiskProfile(
     trailing_stop_enabled=False,
     trailing_stop_trigger_percent=1.5,
     trailing_stop_distance_percent=0.8,
+    trade_cost=EQUITY_CFD_TRADE_COST,
 )
 
 EQUITY_EU_RISK_PROFILE = RiskProfile(
@@ -124,6 +150,7 @@ EQUITY_EU_RISK_PROFILE = RiskProfile(
     trailing_stop_enabled=False,
     trailing_stop_trigger_percent=1.5,
     trailing_stop_distance_percent=0.8,
+    trade_cost=EQUITY_CFD_TRADE_COST,
 )
 
 
