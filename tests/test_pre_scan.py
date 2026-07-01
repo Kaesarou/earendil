@@ -115,22 +115,6 @@ def test_pre_scan_rejects_low_quality_market_regime():
     assert result.rejected_candidates[0].reason == 'pre_scan_market_regime_rejected'
 
 
-def test_pre_scan_rejects_wide_spread_candidate():
-    wide_spread = build_trade_candidate(
-        symbol='WIDE',
-        snapshot=snapshot('WIDE', bid=99.0, ask=101.0, last=100.0),
-        candle=candle('WIDE'),
-        signal=signal(),
-    )
-
-    result = pre_scan_candidates(
-        [wide_spread],
-        PreScanConfig(enabled=True, max_spread_percent=0.5),
-    )
-
-    assert result.selected_candidates == []
-    assert result.rejected_candidates[0].reason == 'pre_scan_spread_too_high'
-
 
 def test_pre_scan_rejects_noisy_candidate():
     noisy = candidate('NOISY', signal(noise_ratio=2.5))
