@@ -501,8 +501,10 @@ class EtoroClient(BrokerClient):
 
     def _to_market_snapshots(self, rates_payload: dict) -> dict[str, MarketSnapshot]:
         
-        rates: dict[str, MarketSnapshot] = {}
-        for rate in rates_payload:
+        result: dict[str, MarketSnapshot] = {}
+        rates = rates_payload['rates']
+
+        for rate in rates:
             instrument_id = self._extract_int(rate, ('instrumentID', 'instrumentId'))
 
             symbol = self.symbol_by_instrument_id.get(instrument_id)
@@ -520,13 +522,13 @@ class EtoroClient(BrokerClient):
             if last is None:
                 last = (bid + ask) / 2
 
-            rates[symbol] = MarketSnapshot.now(
+            result[symbol] = MarketSnapshot.now(
                 symbol=symbol,
                 bid=bid,
                 ask=ask,
                 last=last,
             )
-        return rates
+        return result
 
     # -------------------------------------------------------------------------
     # Order confirmation
@@ -776,27 +778,6 @@ class EtoroClient(BrokerClient):
 
         return []
 
-    def _first_item(self, payload: dict) -> dict:
-        for key in ('data', 'items', 'Data', 'Items', 'instruments', 'rates'):
-            value = payload.get(key)
-
-            if isinstance(value, list) and value:
-                first = value[0]
-                if isinstance(first, dict):
-                    return first
-
-            if isinstance(value, dict):
-                return value
-
-        if isinstance(payload, list) and payload:
-            first = payload[0]
-            if isinstance(first, dict):
-                return first
-
-        if isinstance(payload, dict):
-            return payload
-
-        raise ValueError(f'Unable to extract item from payload={payload}')
 
     def _extract_float(self, payload: dict, keys: tuple[str, ...]) -> float:
         value = self._extract_optional_float(payload, keys)

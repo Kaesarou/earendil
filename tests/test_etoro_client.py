@@ -59,12 +59,15 @@ def test_to_market_snapshot_uses_mid_price_when_last_is_missing():
         ETORO_USER_KEY='user-key',
     )
 
+
     client = EtoroClient(settings=settings)
+
+    client.symbol_by_instrument_id = {1:'BTC'}
 
     snapshot = client._to_market_snapshot(
         symbol='BTC',
         rates_payload={
-            'data': [
+            'rates': [
                 {
                     'instrumentID': 1,
                     'Bid': 100.0,
