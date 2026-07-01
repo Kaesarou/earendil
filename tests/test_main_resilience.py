@@ -62,6 +62,10 @@ def candidate(symbol: str, score: float) -> TradeCandidate:
 
 
 class FakeExecutionBroker(BrokerClient):
+    
+    def get_market_snapshots(self, symbols: list[str]) -> dict[str, MarketSnapshot]:
+        raise NotImplementedError
+
     def get_market_snapshot(self, symbol: str) -> MarketSnapshot:
         raise NotImplementedError
 

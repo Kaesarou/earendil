@@ -66,6 +66,7 @@ def test_to_market_snapshot_uses_mid_price_when_last_is_missing():
         rates_payload={
             'data': [
                 {
+                    'instrumentID': 1,
                     'Bid': 100.0,
                     'Ask': 102.0,
                 }

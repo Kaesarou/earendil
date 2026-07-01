@@ -16,6 +16,7 @@ class EtoroClient(BrokerClient):
     env:str 
     position_instruments: dict[str, int]
     instrument_ids_by_symbol: dict[str, int]
+    symbol_by_instrument_id: dict[int, str]
     etoro_api_base_url = 'https://public-api.etoro.com'
 
     def __init__(self, settings: Settings):
@@ -23,6 +24,7 @@ class EtoroClient(BrokerClient):
         self.env = settings.broker.split('_')[-1]
         self.position_instruments: dict[str, int] = {}
         self.instrument_ids_by_symbol: dict[str, int] = {}
+        self.symbol_by_instrument_id: dict[int, str] = {}
 
     # -------------------------------------------------------------------------
     # Public broker API
@@ -30,10 +32,18 @@ class EtoroClient(BrokerClient):
 
     def get_market_snapshot(self, symbol: str) -> MarketSnapshot:
         instrument_id = self._find_instrument_id(symbol)
-        rates_payload = self._get_market_rates(instrument_id)
+        rates_payload = self._get_market_rates([instrument_id])
 
         return self._to_market_snapshot(
-            symbol=symbol,
+            symbol,
+            rates_payload=rates_payload,
+        )
+    
+    #Pour l'instant on est limité à 100 symbols
+    def get_market_snapshots(self, symbols: list[str]) -> dict[str, MarketSnapshot]:
+        instruments_ids = self._find_instruments_ids(symbols)
+        rates_payload = self._get_market_rates(instruments_ids)
+        return self._to_market_snapshots(
             rates_payload=rates_payload,
         )
 
@@ -410,6 +420,12 @@ class EtoroClient(BrokerClient):
     # -------------------------------------------------------------------------
     # Market data
     # -------------------------------------------------------------------------
+    def _find_instruments_ids(self, symbols: list[str]) -> list[int]:
+        ids = []
+        for symbol in symbols:
+            ids.append(self._find_instrument_id(symbol))
+        return ids
+
 
     def _find_instrument_id(self, symbol: str) -> int:
         normalized_symbol = symbol.upper()
@@ -462,6 +478,7 @@ class EtoroClient(BrokerClient):
 
         resolved_instrument_id = int(instrument_id)
         self.instrument_ids_by_symbol[normalized_symbol] = resolved_instrument_id
+        self.symbol_by_instrument_id[resolved_instrument_id] = normalized_symbol
 
         logger.info(
             'Selected eToro instrument | symbol=%s | display_name=%s | instrument_id=%s | current_rate=%s',
@@ -473,32 +490,43 @@ class EtoroClient(BrokerClient):
 
         return resolved_instrument_id
 
-    def _get_market_rates(self, instrument_id: int) -> dict:
+    def _get_market_rates(self, instrument_id: list[int]) -> dict:
         return self._get(
             '/api/v1/market-data/instruments/rates',
             params={'instrumentIds': instrument_id},
         )
-
+    
     def _to_market_snapshot(self, symbol: str, rates_payload: dict) -> MarketSnapshot:
-        rate = self._first_item(rates_payload)
+        return self._to_market_snapshots(rates_payload)[symbol]
 
-        bid = self._extract_float(rate, ('Bid', 'bid', 'bidPrice'))
-        ask = self._extract_float(rate, ('Ask', 'ask', 'askPrice'))
+    def _to_market_snapshots(self, rates_payload: dict) -> dict[str, MarketSnapshot]:
+        
+        rates: dict[str, MarketSnapshot] = {}
+        for rate in rates_payload:
+            instrument_id = self._extract_int(rate, ('instrumentID', 'instrumentId'))
 
-        last = self._extract_optional_float(
-            rate,
-            ('Last', 'last', 'lastPrice', 'Price', 'price'),
-        )
+            symbol = self.symbol_by_instrument_id.get(instrument_id)
+            if symbol is None:
+                raise ValueError(f'Unable to find cached symbol by instrument_id={instrument_id}.')
 
-        if last is None:
-            last = (bid + ask) / 2
+            bid = self._extract_float(rate, ('Bid', 'bid', 'bidPrice'))
+            ask = self._extract_float(rate, ('Ask', 'ask', 'askPrice'))
 
-        return MarketSnapshot.now(
-            symbol=symbol,
-            bid=bid,
-            ask=ask,
-            last=last,
-        )
+            last = self._extract_optional_float(
+                rate,
+                ('Last', 'last', 'lastPrice', 'Price', 'price'),
+            )
+
+            if last is None:
+                last = (bid + ask) / 2
+
+            rates[symbol] = MarketSnapshot.now(
+                symbol=symbol,
+                bid=bid,
+                ask=ask,
+                last=last,
+            )
+        return rates
 
     # -------------------------------------------------------------------------
     # Order confirmation
@@ -783,6 +811,22 @@ class EtoroClient(BrokerClient):
             value = payload.get(key)
             if value is not None:
                 return float(value)
+
+        return None
+    
+    def _extract_int(self, payload: dict, keys: tuple[str, ...]) -> int:
+        value = self._extract_optional_int(payload, keys)
+
+        if value is None:
+            raise ValueError(f'Unable to extract required int keys={keys}. Payload={payload}')
+
+        return value
+    
+    def _extract_optional_int(self, payload: dict, keys: tuple[str, ...]) -> int | None:
+        for key in keys:
+            value = payload.get(key)
+            if value is not None:
+                return int(value)
 
         return None
     
