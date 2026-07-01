@@ -44,8 +44,6 @@ class EtoroClient(BrokerClient):
         instruments_ids = self._find_instruments_ids(symbols)
         rates_payload = self._get_market_rates(instruments_ids)
 
-        print(rates_payload)
-
         return self._to_market_snapshots(
             rates_payload=rates_payload,
         )
@@ -523,7 +521,7 @@ class EtoroClient(BrokerClient):
 
             last = self._extract_optional_float(
                 rate,
-                ('Last', 'last', 'lastPrice', 'Price', 'price'),
+                ('Last', 'last', 'lastPrice', 'Price', 'price', 'lastExecution'),
             )
 
             if last is None:
