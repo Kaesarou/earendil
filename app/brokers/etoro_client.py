@@ -43,6 +43,9 @@ class EtoroClient(BrokerClient):
     def get_market_snapshots(self, symbols: list[str]) -> dict[str, MarketSnapshot]:
         instruments_ids = self._find_instruments_ids(symbols)
         rates_payload = self._get_market_rates(instruments_ids)
+
+        print(rates_payload)
+
         return self._to_market_snapshots(
             rates_payload=rates_payload,
         )
@@ -490,10 +493,14 @@ class EtoroClient(BrokerClient):
 
         return resolved_instrument_id
 
-    def _get_market_rates(self, instrument_id: list[int]) -> dict:
+    def _get_market_rates(self, instrument_ids: list[int]) -> dict:
+        joined_instrument_ids = ','.join(
+            str(instrument_id)
+            for instrument_id in instrument_ids
+        )
+
         return self._get(
-            '/api/v1/market-data/instruments/rates',
-            params={'instrumentIds': instrument_id},
+            f'/api/v1/market-data/instruments/rates?instrumentIds={joined_instrument_ids}',
         )
     
     def _to_market_snapshot(self, symbol: str, rates_payload: dict) -> MarketSnapshot:
