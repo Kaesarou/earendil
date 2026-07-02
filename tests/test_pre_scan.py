@@ -55,10 +55,14 @@ def signal(
     )
 
 
-def candidate(symbol: str, candidate_signal: Signal | None = None):
+def candidate(
+    symbol: str,
+    candidate_signal: Signal | None = None,
+    candidate_snapshot: MarketSnapshot | None = None,
+):
     return build_trade_candidate(
         symbol=symbol,
-        snapshot=snapshot(symbol),
+        snapshot=candidate_snapshot or snapshot(symbol),
         candle=candle(symbol),
         signal=candidate_signal or signal(),
     )
@@ -100,29 +104,32 @@ def test_pre_scan_keeps_only_top_n_candidates():
     assert result.rejected_candidates[0].reason == 'pre_scan_outside_top_n'
 
 
-def test_pre_scan_rejects_low_quality_market_regime():
-    ranging = candidate('RANGE', signal(market_regime='RANGING'))
+def test_pre_scan_no_longer_rejects_strategy_quality_metadata():
+    ranging = candidate('RANGE', signal(market_regime='RANGING', noise_ratio=2.5))
 
     result = pre_scan_candidates(
         [ranging],
         PreScanConfig(
             enabled=True,
             allowed_market_regimes=('TRENDING',),
+            max_noise_ratio=1.0,
         ),
     )
 
-    assert result.selected_candidates == []
-    assert result.rejected_candidates[0].reason == 'pre_scan_market_regime_rejected'
+    assert result.selected_candidates == [ranging]
+    assert result.rejected_candidates == []
 
 
-
-def test_pre_scan_rejects_noisy_candidate():
-    noisy = candidate('NOISY', signal(noise_ratio=2.5))
-
-    result = pre_scan_candidates(
-        [noisy],
-        PreScanConfig(enabled=True, max_noise_ratio=1.0),
+def test_pre_scan_does_not_reject_high_spread_candidate_before_risk_manager():
+    high_spread = candidate(
+        'WIDE',
+        candidate_snapshot=snapshot('WIDE', bid=98.0, ask=102.0, last=100.0),
     )
 
-    assert result.selected_candidates == []
-    assert result.rejected_candidates[0].reason == 'pre_scan_noise_ratio_too_high'
+    result = pre_scan_candidates(
+        [high_spread],
+        PreScanConfig(enabled=True, min_score=9999.0),
+    )
+
+    assert result.selected_candidates == [high_spread]
+    assert result.rejected_candidates == []
