@@ -377,9 +377,7 @@ def test_strategy_profile_from_name_resolves_balanced_profile():
     assert equity_us_trend.min_snapshot_momentum_percent == 0.20
     assert equity_eu_trend.snapshot_momentum_window_seconds == 180
     assert equity_eu_trend.min_snapshot_momentum_percent == 0.20
-    assert crypto_pre_scan.enabled is True
     assert crypto_pre_scan.top_n == 2
-    assert crypto_pre_scan.min_score == 0.0
 
 
 def test_strategy_profile_from_name_resolves_aggressive_profile():
@@ -400,9 +398,7 @@ def test_strategy_profile_from_name_resolves_aggressive_profile():
     assert equity_us_trend.min_snapshot_momentum_percent == 0.15
     assert equity_eu_trend.snapshot_momentum_window_seconds == 180
     assert equity_eu_trend.min_snapshot_momentum_percent == 0.15
-    assert crypto_pre_scan.enabled is True
     assert crypto_pre_scan.top_n == 2
-    assert crypto_pre_scan.min_score == 0.0
 
 
 def test_strategy_profile_from_name_rejects_unknown_profile():

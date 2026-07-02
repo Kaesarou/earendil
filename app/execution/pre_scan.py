@@ -6,15 +6,7 @@ from app.execution.trade_candidate import TradeCandidate
 
 @dataclass(frozen=True)
 class PreScanConfig:
-    enabled: bool = False
     top_n: int = 0
-    min_score: float = 0.0
-    allowed_market_regimes: tuple[str, ...] = ()
-    min_session_move_percent: float = 0.0
-    min_trend_strength_percent: float = 0.0
-    min_atr_percent: float = 0.0
-    max_atr_percent: float = 0.0
-    max_noise_ratio: float = 0.0
 
 
 @dataclass(frozen=True)
@@ -33,11 +25,6 @@ def pre_scan_candidates(
     candidates: list[TradeCandidate],
     config: PreScanConfig,
 ) -> PreScanResult:
-    if not config.enabled:
-        return PreScanResult(
-            selected_candidates=rank_trade_candidates(candidates),
-            rejected_candidates=[],
-        )
 
     selected_candidates: list[TradeCandidate] = []
     rejected_candidates: list[RejectedPreScanCandidate] = []

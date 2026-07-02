@@ -68,25 +68,6 @@ def candidate(
     )
 
 
-def test_pre_scan_returns_ranked_candidates_when_disabled():
-    weaker = candidate(
-        'WEAK',
-        signal(session_move_percent=0.2, trend_strength_percent=0.05),
-    )
-    stronger = candidate(
-        'STRONG',
-        signal(session_move_percent=1.8, trend_strength_percent=0.5),
-    )
-
-    result = pre_scan_candidates(
-        [weaker, stronger],
-        PreScanConfig(enabled=False),
-    )
-
-    assert [item.symbol for item in result.selected_candidates] == ['STRONG', 'WEAK']
-    assert result.rejected_candidates == []
-
-
 def test_pre_scan_keeps_only_top_n_candidates():
     candidates = [
         candidate('ONE', signal(session_move_percent=1.8)),
@@ -96,7 +77,7 @@ def test_pre_scan_keeps_only_top_n_candidates():
 
     result = pre_scan_candidates(
         candidates,
-        PreScanConfig(enabled=True, top_n=2),
+        PreScanConfig(top_n=2),
     )
 
     assert len(result.selected_candidates) == 2
@@ -104,20 +85,6 @@ def test_pre_scan_keeps_only_top_n_candidates():
     assert result.rejected_candidates[0].reason == 'pre_scan_outside_top_n'
 
 
-def test_pre_scan_no_longer_rejects_strategy_quality_metadata():
-    ranging = candidate('RANGE', signal(market_regime='RANGING', noise_ratio=2.5))
-
-    result = pre_scan_candidates(
-        [ranging],
-        PreScanConfig(
-            enabled=True,
-            allowed_market_regimes=('TRENDING',),
-            max_noise_ratio=1.0,
-        ),
-    )
-
-    assert result.selected_candidates == [ranging]
-    assert result.rejected_candidates == []
 
 
 def test_pre_scan_does_not_reject_high_spread_candidate_before_risk_manager():
@@ -128,7 +95,7 @@ def test_pre_scan_does_not_reject_high_spread_candidate_before_risk_manager():
 
     result = pre_scan_candidates(
         [high_spread],
-        PreScanConfig(enabled=True, min_score=9999.0),
+        PreScanConfig(),
     )
 
     assert result.selected_candidates == [high_spread]
