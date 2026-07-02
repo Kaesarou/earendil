@@ -26,17 +26,7 @@ class AggressiveStrategyConfig(StrategyProfileConfig):
             snapshot_momentum_window_seconds=180,
             min_snapshot_momentum_percent=0.20,
         ),
-        pre_scan=PreScanConfig(
-            enabled=True,
-            top_n=2,
-            min_score=105.0,
-            allowed_market_regimes=('TRENDING',),
-            min_session_move_percent=0.20,
-            min_trend_strength_percent=0.03,
-            min_atr_percent=0.02,
-            max_atr_percent=0.80,
-            max_noise_ratio=2.0,
-        ),
+        pre_scan=PreScanConfig(enabled=True, top_n=2),
     )
     equity_us: AssetStrategyConfig = AssetStrategyConfig(
         trend=TrendStrategyConfig(
@@ -57,17 +47,7 @@ class AggressiveStrategyConfig(StrategyProfileConfig):
             snapshot_momentum_window_seconds=180,
             min_snapshot_momentum_percent=0.15,
         ),
-        pre_scan=PreScanConfig(
-            enabled=True,
-            top_n=2,
-            min_score=100.0,
-            allowed_market_regimes=('TRENDING',),
-            min_session_move_percent=0.12,
-            min_trend_strength_percent=0.02,
-            min_atr_percent=0.005,
-            max_atr_percent=0.70,
-            max_noise_ratio=2.5,
-        ),
+        pre_scan=PreScanConfig(enabled=True, top_n=2),
     )
     equity_eu: AssetStrategyConfig = AssetStrategyConfig(
         trend=TrendStrategyConfig(
@@ -88,15 +68,5 @@ class AggressiveStrategyConfig(StrategyProfileConfig):
             snapshot_momentum_window_seconds=180,
             min_snapshot_momentum_percent=0.15,
         ),
-        pre_scan=PreScanConfig(
-            enabled=True,
-            top_n=2,
-            min_score=100.0,
-            allowed_market_regimes=('TRENDING',),
-            min_session_move_percent=0.10,
-            min_trend_strength_percent=0.02,
-            min_atr_percent=0.005,
-            max_atr_percent=0.70,
-            max_noise_ratio=2.5,
-        ),
+        pre_scan=PreScanConfig(enabled=True, top_n=2),
     )
