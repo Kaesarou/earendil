@@ -64,8 +64,7 @@ def config(
     market_regime_min_atr_percent: float = 0.0,
     market_regime_max_atr_percent: float = 0.0,
     market_regime_max_noise_ratio: float = 0.0,
-    snapshot_momentum_fallback_enabled: bool = False,
-    snapshot_momentum_lookback: int = 3,
+    snapshot_momentum_window_seconds: int = 180,
     min_snapshot_momentum_percent: float = 0.05,
 ) -> TrendStrategyConfig:
     return TrendStrategyConfig(
@@ -83,8 +82,7 @@ def config(
         market_regime_min_atr_percent=market_regime_min_atr_percent,
         market_regime_max_atr_percent=market_regime_max_atr_percent,
         market_regime_max_noise_ratio=market_regime_max_noise_ratio,
-        snapshot_momentum_fallback_enabled=snapshot_momentum_fallback_enabled,
-        snapshot_momentum_lookback=snapshot_momentum_lookback,
+        snapshot_momentum_window_seconds=snapshot_momentum_window_seconds,
         min_snapshot_momentum_percent=min_snapshot_momentum_percent,
     )
 
@@ -102,6 +100,23 @@ def feed_bullish_breakout_setup(strategy: TrendStrategy):
             close=105.2,
             high=105.3,
             low=104.0,
+        )
+    )
+
+
+def feed_bearish_breakdown_setup(strategy: TrendStrategy):
+    strategy.on_candle(candle(open=105.0, close=105.0, high=105.2, low=104.9))
+    strategy.on_candle(candle(open=104.0, close=104.0, high=104.2, low=103.9))
+    strategy.on_candle(candle(open=103.0, close=103.0, high=103.2, low=102.9))
+    strategy.on_candle(candle(open=102.0, close=102.0, high=102.2, low=101.9))
+    strategy.on_candle(candle(open=101.0, close=101.0, high=101.2, low=100.9))
+
+    return strategy.on_candle(
+        candle(
+            open=101.0,
+            close=99.8,
+            high=101.0,
+            low=99.7,
         )
     )
 
@@ -152,6 +167,7 @@ def feed_snapshots(strategy: TrendStrategy, prices: list[float]):
 
 def test_trend_strategy_emits_buy_when_session_and_breakout_are_bullish():
     strategy = TrendStrategy(config())
+    feed_snapshots(strategy, [104.8, 104.9, 105.0, 105.2])
 
     signal = feed_bullish_breakout_setup(strategy)
 
@@ -162,25 +178,15 @@ def test_trend_strategy_emits_buy_when_session_and_breakout_are_bullish():
     assert signal.metadata['atr_percent'] > 0
     assert signal.metadata['market_regime'] == 'TRENDING'
     assert signal.metadata['candle_reliable'] is True
+    assert signal.metadata['snapshot_momentum_confirmed'] is True
+    assert signal.metadata['entry_confirmation_source'] == 'candle_and_snapshot_momentum'
 
 
 def test_trend_strategy_emits_sell_when_session_and_breakdown_are_bearish():
     strategy = TrendStrategy(config())
+    feed_snapshots(strategy, [100.2, 100.1, 100.0, 99.8])
 
-    strategy.on_candle(candle(open=105.0, close=105.0, high=105.2, low=104.9))
-    strategy.on_candle(candle(open=104.0, close=104.0, high=104.2, low=103.9))
-    strategy.on_candle(candle(open=103.0, close=103.0, high=103.2, low=102.9))
-    strategy.on_candle(candle(open=102.0, close=102.0, high=102.2, low=101.9))
-    strategy.on_candle(candle(open=101.0, close=101.0, high=101.2, low=100.9))
-
-    signal = strategy.on_candle(
-        candle(
-            open=101.0,
-            close=99.8,
-            high=101.0,
-            low=99.7,
-        )
-    )
+    signal = feed_bearish_breakdown_setup(strategy)
 
     assert signal.action == 'SELL'
     assert signal.reason == 'trend_bearish_breakdown'
@@ -189,34 +195,128 @@ def test_trend_strategy_emits_sell_when_session_and_breakdown_are_bearish():
     assert signal.metadata['atr_percent'] > 0
     assert signal.metadata['market_regime'] == 'TRENDING'
     assert signal.metadata['candle_reliable'] is True
+    assert signal.metadata['snapshot_momentum_confirmed'] is True
+    assert signal.metadata['entry_confirmation_source'] == 'candle_and_snapshot_momentum'
 
 
-def test_trend_strategy_marks_flat_bullish_breakout_candle_as_unreliable():
-    strategy = TrendStrategy(config())
+def test_reliable_bullish_breakout_is_rejected_when_snapshot_momentum_is_too_weak():
+    strategy = TrendStrategy(
+        config(
+            snapshot_momentum_window_seconds=180,
+            min_snapshot_momentum_percent=0.20,
+        )
+    )
+    feed_snapshots(strategy, [105.0, 105.02, 105.04, 105.05])
 
-    signal = feed_bullish_flat_breakout_candle(strategy)
-
-    assert signal.action == 'HOLD'
-    assert signal.reason == 'flat_candle_ohlc'
-    assert signal.metadata is not None
-    assert signal.metadata['candle_reliable'] is False
-    assert signal.metadata['candle_unreliable_reason'] == 'flat_candle_ohlc'
-
-
-def test_trend_strategy_marks_flat_bearish_breakdown_candle_as_unreliable():
-    strategy = TrendStrategy(config())
-
-    signal = feed_bearish_flat_breakdown_candle(strategy)
+    signal = feed_bullish_breakout_setup(strategy)
 
     assert signal.action == 'HOLD'
-    assert signal.reason == 'flat_candle_ohlc'
+    assert signal.reason == 'snapshot_bullish_momentum_not_confirmed'
     assert signal.metadata is not None
-    assert signal.metadata['candle_reliable'] is False
-    assert signal.metadata['candle_unreliable_reason'] == 'flat_candle_ohlc'
+    assert signal.metadata['candle_reliable'] is True
+    assert signal.metadata['snapshot_momentum_confirmed'] is False
+    assert signal.metadata['entry_confirmation_source'] == 'candle_and_snapshot_momentum'
+
+
+def test_reliable_bullish_breakout_is_rejected_when_snapshot_momentum_is_negative():
+    strategy = TrendStrategy(
+        config(
+            snapshot_momentum_window_seconds=180,
+            min_snapshot_momentum_percent=0.20,
+        )
+    )
+    feed_snapshots(strategy, [105.2, 105.1, 105.0, 104.9])
+
+    signal = feed_bullish_breakout_setup(strategy)
+
+    assert signal.action == 'HOLD'
+    assert signal.reason == 'snapshot_bullish_momentum_not_confirmed'
+    assert signal.metadata is not None
+    assert signal.metadata['snapshot_momentum_percent'] < 0
+
+
+def test_reliable_bearish_breakdown_is_rejected_when_snapshot_momentum_is_too_weak():
+    strategy = TrendStrategy(
+        config(
+            snapshot_momentum_window_seconds=180,
+            min_snapshot_momentum_percent=0.20,
+        )
+    )
+    feed_snapshots(strategy, [99.8, 99.78, 99.76, 99.75])
+
+    signal = feed_bearish_breakdown_setup(strategy)
+
+    assert signal.action == 'HOLD'
+    assert signal.reason == 'snapshot_bearish_momentum_not_confirmed'
+    assert signal.metadata is not None
+    assert signal.metadata['candle_reliable'] is True
+    assert signal.metadata['snapshot_momentum_confirmed'] is False
+    assert signal.metadata['entry_confirmation_source'] == 'candle_and_snapshot_momentum'
+
+
+def test_reliable_bearish_breakdown_is_rejected_when_snapshot_momentum_is_positive():
+    strategy = TrendStrategy(
+        config(
+            snapshot_momentum_window_seconds=180,
+            min_snapshot_momentum_percent=0.20,
+        )
+    )
+    feed_snapshots(strategy, [99.8, 99.9, 100.0, 100.1])
+
+    signal = feed_bearish_breakdown_setup(strategy)
+
+    assert signal.action == 'HOLD'
+    assert signal.reason == 'snapshot_bearish_momentum_not_confirmed'
+    assert signal.metadata is not None
+    assert signal.metadata['snapshot_momentum_percent'] > 0
+
+
+def test_reliable_breakout_is_rejected_when_snapshot_window_is_not_available():
+    strategy = TrendStrategy(
+        config(
+            snapshot_momentum_window_seconds=180,
+            min_snapshot_momentum_percent=0.20,
+        )
+    )
+
+    signal = feed_bullish_breakout_setup(strategy)
+
+    assert signal.action == 'HOLD'
+    assert signal.reason == 'snapshot_bullish_momentum_not_confirmed'
+    assert signal.metadata is not None
+    assert signal.metadata['snapshot_momentum_confirmed'] is False
+    assert signal.metadata['snapshot_momentum_rejection_detail'] == (
+        'snapshot_momentum_not_enough_time_window'
+    )
+
+
+def test_snapshot_momentum_confirmation_uses_time_window_not_snapshot_count():
+    strategy = TrendStrategy(
+        config(
+            snapshot_momentum_window_seconds=180,
+            min_snapshot_momentum_percent=0.20,
+        )
+    )
+
+    base_time = datetime(2026, 6, 25, 12, 0, tzinfo=timezone.utc)
+    strategy.on_snapshot(snapshot(last=100.0, timestamp=base_time))
+    strategy.on_snapshot(snapshot(last=110.0, timestamp=base_time + timedelta(seconds=120)))
+    strategy.on_snapshot(snapshot(last=100.3, timestamp=base_time + timedelta(seconds=180)))
+
+    confirmed, reason, metadata = strategy._snapshot_momentum_confirmation(
+        side='long',
+        mode='entry_confirmation',
+    )
+
+    assert confirmed is True
+    assert reason == 'snapshot_momentum_confirmed'
+    assert metadata['snapshot_reference_price'] == 100.0
+    assert metadata['snapshot_current_price'] == 100.3
+    assert metadata['snapshot_momentum_percent'] == pytest.approx(0.3)
 
 
 def test_trend_strategy_uses_snapshot_momentum_fallback_for_flat_bullish_candle():
-    strategy = TrendStrategy(config(snapshot_momentum_fallback_enabled=True))
+    strategy = TrendStrategy(config())
     feed_snapshots(strategy, [102.0, 103.0, 104.0, 105.3])
 
     signal = feed_bullish_flat_breakout_candle(strategy)
@@ -234,7 +334,7 @@ def test_trend_strategy_uses_snapshot_momentum_fallback_for_flat_bullish_candle(
 
 
 def test_trend_strategy_rejects_flat_bullish_candle_when_snapshot_momentum_is_weak():
-    strategy = TrendStrategy(config(snapshot_momentum_fallback_enabled=True))
+    strategy = TrendStrategy(config())
     feed_snapshots(strategy, [105.2, 105.19, 105.18, 105.17])
 
     signal = feed_bullish_flat_breakout_candle(strategy)
@@ -247,7 +347,7 @@ def test_trend_strategy_rejects_flat_bullish_candle_when_snapshot_momentum_is_we
 
 
 def test_trend_strategy_uses_snapshot_momentum_fallback_for_flat_bearish_candle():
-    strategy = TrendStrategy(config(snapshot_momentum_fallback_enabled=True))
+    strategy = TrendStrategy(config())
     feed_snapshots(strategy, [103.0, 102.0, 101.0, 99.7])
 
     signal = feed_bearish_flat_breakdown_candle(strategy)
@@ -323,12 +423,12 @@ def test_strategy_profile_from_name_resolves_balanced_profile():
     equity_eu_trend = profile.trend_config_for_asset_class(AssetClass.EQUITY_EU)
 
     assert crypto_trend.min_session_move_percent == 0.30
-    assert crypto_trend.snapshot_momentum_fallback_enabled is True
-    assert crypto_trend.min_snapshot_momentum_percent == 0.05
-    assert equity_us_trend.snapshot_momentum_fallback_enabled is True
-    assert equity_us_trend.min_snapshot_momentum_percent == 0.04
-    assert equity_eu_trend.snapshot_momentum_fallback_enabled is True
-    assert equity_eu_trend.min_snapshot_momentum_percent == 0.04
+    assert crypto_trend.snapshot_momentum_window_seconds == 180
+    assert crypto_trend.min_snapshot_momentum_percent == 0.25
+    assert equity_us_trend.snapshot_momentum_window_seconds == 180
+    assert equity_us_trend.min_snapshot_momentum_percent == 0.20
+    assert equity_eu_trend.snapshot_momentum_window_seconds == 180
+    assert equity_eu_trend.min_snapshot_momentum_percent == 0.20
     assert profile.pre_scan_config_for_asset_class(AssetClass.CRYPTO).min_score == 120.0
 
 
@@ -343,12 +443,12 @@ def test_strategy_profile_from_name_resolves_aggressive_profile():
     equity_eu_trend = profile.trend_config_for_asset_class(AssetClass.EQUITY_EU)
 
     assert crypto_trend.min_session_move_percent == 0.20
-    assert crypto_trend.snapshot_momentum_fallback_enabled is True
-    assert crypto_trend.min_snapshot_momentum_percent == 0.04
-    assert equity_us_trend.snapshot_momentum_fallback_enabled is True
-    assert equity_us_trend.min_snapshot_momentum_percent == 0.03
-    assert equity_eu_trend.snapshot_momentum_fallback_enabled is True
-    assert equity_eu_trend.min_snapshot_momentum_percent == 0.03
+    assert crypto_trend.snapshot_momentum_window_seconds == 180
+    assert crypto_trend.min_snapshot_momentum_percent == 0.20
+    assert equity_us_trend.snapshot_momentum_window_seconds == 180
+    assert equity_us_trend.min_snapshot_momentum_percent == 0.15
+    assert equity_eu_trend.snapshot_momentum_window_seconds == 180
+    assert equity_eu_trend.min_snapshot_momentum_percent == 0.15
     assert profile.pre_scan_config_for_asset_class(AssetClass.CRYPTO).min_score == 105.0
 
 
