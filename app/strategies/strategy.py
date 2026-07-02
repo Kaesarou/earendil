@@ -1,5 +1,5 @@
 from collections import deque
-from dataclasses import dataclass
+from datetime import timedelta
 
 from app.market.models import Candle, MarketSnapshot
 from app.strategies.aggressive_strategy import AggressiveStrategyConfig
@@ -7,7 +7,9 @@ from app.strategies.balanced_strategy import BalancedStrategyConfig
 from app.strategies.models import StrategyProfileConfig, TrendStrategyConfig
 from app.strategies.signals import Signal
 
-StrategyMetadata = dict[str, float | str | bool]
+StrategyMetadata = dict[str, float | int | str | bool]
+
+SNAPSHOT_HISTORY_MAXLEN = 512
 
 
 def strategy_profile_from_name(name: str) -> StrategyProfileConfig:
@@ -42,9 +44,7 @@ class TrendStrategy:
             self.config.atr_lookback + 1,
         )
         self.candles: deque[Candle] = deque(maxlen=max_candles)
-
-        snapshot_lookback = max(1, self.config.snapshot_momentum_lookback)
-        self.snapshots: deque[MarketSnapshot] = deque(maxlen=snapshot_lookback + 1)
+        self.snapshots: deque[MarketSnapshot] = deque(maxlen=SNAPSHOT_HISTORY_MAXLEN)
 
     def on_snapshot(self, snapshot: MarketSnapshot) -> None:
         self.snapshots.append(snapshot)
@@ -89,7 +89,6 @@ class TrendStrategy:
             **self._candle_reliability_metadata(current_candle),
         }
         previous_candles = self._previous_range_candles()
-
         range_high = max(previous_candle.high for previous_candle in previous_candles)
 
         if setup_metadata['candle_reliable'] is False:
@@ -112,6 +111,19 @@ class TrendStrategy:
         if rejection_reason is not None:
             return Signal.hold(rejection_reason, metadata=setup_metadata)
 
+        confirmed, reason, snapshot_metadata = self._snapshot_momentum_confirmation(
+            side='long',
+            mode='entry_confirmation',
+        )
+        entry_metadata = {
+            **setup_metadata,
+            **snapshot_metadata,
+            'entry_confirmation_source': 'candle_and_snapshot_momentum',
+        }
+
+        if not confirmed:
+            return Signal.hold(reason, metadata=entry_metadata)
+
         trend_strength_percent = self._trend_strength_percent(fast_ma, slow_ma)
         breakout_percent = ((current_candle.close - range_high) / range_high) * 100
         candle_range_percent = self._candle_range_percent(current_candle)
@@ -123,7 +135,7 @@ class TrendStrategy:
             confidence=0.8,
             reason='trend_bullish_breakout',
             metadata={
-                **setup_metadata,
+                **entry_metadata,
                 'session_move_percent': round(session_move_percent, 4),
                 'trend_strength_percent': round(trend_strength_percent, 4),
                 'breakout_percent': round(breakout_percent, 4),
@@ -152,7 +164,6 @@ class TrendStrategy:
             **self._candle_reliability_metadata(current_candle),
         }
         previous_candles = self._previous_range_candles()
-
         range_low = min(previous_candle.low for previous_candle in previous_candles)
 
         if setup_metadata['candle_reliable'] is False:
@@ -175,6 +186,19 @@ class TrendStrategy:
         if rejection_reason is not None:
             return Signal.hold(rejection_reason, metadata=setup_metadata)
 
+        confirmed, reason, snapshot_metadata = self._snapshot_momentum_confirmation(
+            side='short',
+            mode='entry_confirmation',
+        )
+        entry_metadata = {
+            **setup_metadata,
+            **snapshot_metadata,
+            'entry_confirmation_source': 'candle_and_snapshot_momentum',
+        }
+
+        if not confirmed:
+            return Signal.hold(reason, metadata=entry_metadata)
+
         trend_strength_percent = self._trend_strength_percent(fast_ma, slow_ma)
         breakdown_percent = ((range_low - current_candle.close) / range_low) * 100
         candle_range_percent = self._candle_range_percent(current_candle)
@@ -186,7 +210,7 @@ class TrendStrategy:
             confidence=0.8,
             reason='trend_bearish_breakdown',
             metadata={
-                **setup_metadata,
+                **entry_metadata,
                 'session_move_percent': round(session_move_percent, 4),
                 'trend_strength_percent': round(trend_strength_percent, 4),
                 'breakdown_percent': round(breakdown_percent, 4),
@@ -207,13 +231,10 @@ class TrendStrategy:
         range_high: float,
         setup_metadata: StrategyMetadata,
     ) -> Signal:
-        if not self.config.snapshot_momentum_fallback_enabled:
-            return Signal.hold(
-                str(setup_metadata['candle_unreliable_reason']),
-                metadata=setup_metadata,
-            )
-
-        confirmed, reason, snapshot_metadata = self._snapshot_momentum_confirmation('long')
+        confirmed, reason, snapshot_metadata = self._snapshot_momentum_confirmation(
+            side='long',
+            mode='fallback',
+        )
         fallback_metadata = {
             **setup_metadata,
             **snapshot_metadata,
@@ -239,13 +260,10 @@ class TrendStrategy:
         range_low: float,
         setup_metadata: StrategyMetadata,
     ) -> Signal:
-        if not self.config.snapshot_momentum_fallback_enabled:
-            return Signal.hold(
-                str(setup_metadata['candle_unreliable_reason']),
-                metadata=setup_metadata,
-            )
-
-        confirmed, reason, snapshot_metadata = self._snapshot_momentum_confirmation('short')
+        confirmed, reason, snapshot_metadata = self._snapshot_momentum_confirmation(
+            side='short',
+            mode='fallback',
+        )
         fallback_metadata = {
             **setup_metadata,
             **snapshot_metadata,
@@ -336,34 +354,41 @@ class TrendStrategy:
     def _snapshot_momentum_confirmation(
         self,
         side: str,
+        mode: str = 'fallback',
     ) -> tuple[bool, str, StrategyMetadata]:
-        snapshot_lookback = max(1, self.config.snapshot_momentum_lookback)
-        required_snapshots = snapshot_lookback + 1
+        window_snapshots = self._snapshot_window_snapshots()
+        rejection_reason = self._snapshot_momentum_rejection_reason(side)
 
-        if len(self.snapshots) < required_snapshots:
-            return (
-                False,
-                'snapshot_momentum_not_enough_data',
-                {
-                    'snapshot_momentum_confirmed': False,
-                    'snapshot_count': len(self.snapshots),
-                    'snapshot_required_count': required_snapshots,
-                },
-            )
+        if len(window_snapshots) < 2:
+            current_snapshot = self.snapshots[-1] if self.snapshots else None
+            metadata: StrategyMetadata = {
+                'snapshot_momentum_confirmed': False,
+                'snapshot_momentum_side': side,
+                'snapshot_momentum_window_seconds': self.config.snapshot_momentum_window_seconds,
+                'snapshot_count': len(self.snapshots),
+                'snapshot_momentum_rejection_detail': 'snapshot_momentum_not_enough_time_window',
+            }
 
-        recent_snapshots = list(self.snapshots)[-required_snapshots:]
-        prices = [snapshot.last for snapshot in recent_snapshots]
+            if current_snapshot is not None:
+                metadata['snapshot_current_price'] = round(current_snapshot.last, 5)
+
+            return False, rejection_reason, metadata
+
+        prices = [snapshot.last for snapshot in window_snapshots]
         reference_price = prices[0]
         current_price = prices[-1]
 
         if reference_price <= 0 or current_price <= 0:
             return (
                 False,
-                'snapshot_momentum_invalid_price',
+                rejection_reason,
                 {
                     'snapshot_momentum_confirmed': False,
-                    'snapshot_reference_price': reference_price,
-                    'snapshot_current_price': current_price,
+                    'snapshot_momentum_side': side,
+                    'snapshot_momentum_window_seconds': self.config.snapshot_momentum_window_seconds,
+                    'snapshot_reference_price': round(reference_price, 5),
+                    'snapshot_current_price': round(current_price, 5),
+                    'snapshot_momentum_rejection_detail': 'snapshot_momentum_invalid_price',
                 },
             )
 
@@ -371,11 +396,14 @@ class TrendStrategy:
         if any(price <= 0 for price in previous_prices):
             return (
                 False,
-                'snapshot_momentum_invalid_price',
+                rejection_reason,
                 {
                     'snapshot_momentum_confirmed': False,
-                    'snapshot_reference_price': reference_price,
-                    'snapshot_current_price': current_price,
+                    'snapshot_momentum_side': side,
+                    'snapshot_momentum_window_seconds': self.config.snapshot_momentum_window_seconds,
+                    'snapshot_reference_price': round(reference_price, 5),
+                    'snapshot_current_price': round(current_price, 5),
+                    'snapshot_momentum_rejection_detail': 'snapshot_momentum_invalid_price',
                 },
             )
 
@@ -386,16 +414,18 @@ class TrendStrategy:
         if side == 'long':
             snapshot_range_high = max(previous_prices)
             breakout_percent = ((current_price - snapshot_range_high) / snapshot_range_high) * 100
+            confirmed = momentum_percent >= self.config.min_snapshot_momentum_percent
 
-            confirmed = (
-                momentum_percent >= self.config.min_snapshot_momentum_percent
-                and breakout_percent >= self.config.min_breakout_percent
-            )
+            if mode == 'fallback':
+                confirmed = (
+                    confirmed
+                    and breakout_percent >= self.config.min_breakout_percent
+                )
 
             reason = (
                 'snapshot_momentum_confirmed'
                 if confirmed
-                else 'snapshot_bullish_momentum_not_confirmed'
+                else rejection_reason
             )
 
             return (
@@ -405,28 +435,36 @@ class TrendStrategy:
                     'snapshot_momentum_confirmed': confirmed,
                     'snapshot_momentum_side': side,
                     'snapshot_momentum_percent': round(momentum_percent, 4),
+                    'snapshot_momentum_window_seconds': self.config.snapshot_momentum_window_seconds,
+                    'snapshot_momentum_required_percent': round(
+                        self.config.min_snapshot_momentum_percent,
+                        4,
+                    ),
                     'snapshot_breakout_percent': round(breakout_percent, 4),
                     'snapshot_range_percent': round(snapshot_range_percent, 4),
                     'snapshot_close_position_percent': round(snapshot_close_position_percent, 4),
                     'snapshot_reference_price': round(reference_price, 5),
                     'snapshot_current_price': round(current_price, 5),
                     'snapshot_range_high': round(snapshot_range_high, 5),
+                    'confirmation_source': 'snapshot_momentum',
                 },
             )
 
         if side == 'short':
             snapshot_range_low = min(previous_prices)
             breakdown_percent = ((snapshot_range_low - current_price) / snapshot_range_low) * 100
+            confirmed = momentum_percent <= -self.config.min_snapshot_momentum_percent
 
-            confirmed = (
-                momentum_percent <= -self.config.min_snapshot_momentum_percent
-                and breakdown_percent >= self.config.min_breakout_percent
-            )
+            if mode == 'fallback':
+                confirmed = (
+                    confirmed
+                    and breakdown_percent >= self.config.min_breakout_percent
+                )
 
             reason = (
                 'snapshot_momentum_confirmed'
                 if confirmed
-                else 'snapshot_bearish_momentum_not_confirmed'
+                else rejection_reason
             )
 
             return (
@@ -436,12 +474,18 @@ class TrendStrategy:
                     'snapshot_momentum_confirmed': confirmed,
                     'snapshot_momentum_side': side,
                     'snapshot_momentum_percent': round(momentum_percent, 4),
+                    'snapshot_momentum_window_seconds': self.config.snapshot_momentum_window_seconds,
+                    'snapshot_momentum_required_percent': round(
+                        self.config.min_snapshot_momentum_percent,
+                        4,
+                    ),
                     'snapshot_breakdown_percent': round(breakdown_percent, 4),
                     'snapshot_range_percent': round(snapshot_range_percent, 4),
                     'snapshot_close_position_percent': round(snapshot_close_position_percent, 4),
                     'snapshot_reference_price': round(reference_price, 5),
                     'snapshot_current_price': round(current_price, 5),
                     'snapshot_range_low': round(snapshot_range_low, 5),
+                    'confirmation_source': 'snapshot_momentum',
                 },
             )
 
@@ -451,8 +495,44 @@ class TrendStrategy:
             {
                 'snapshot_momentum_confirmed': False,
                 'snapshot_momentum_side': side,
+                'snapshot_momentum_window_seconds': self.config.snapshot_momentum_window_seconds,
             },
         )
+
+    def _snapshot_window_snapshots(self) -> list[MarketSnapshot]:
+        if not self.snapshots:
+            return []
+
+        snapshots = list(self.snapshots)
+        current_snapshot = snapshots[-1]
+        target_timestamp = current_snapshot.timestamp - timedelta(
+            seconds=self.config.snapshot_momentum_window_seconds,
+        )
+
+        reference_snapshot: MarketSnapshot | None = None
+        for snapshot in snapshots:
+            if snapshot.timestamp <= target_timestamp:
+                reference_snapshot = snapshot
+            else:
+                break
+
+        if reference_snapshot is None:
+            return []
+
+        return [
+            snapshot
+            for snapshot in snapshots
+            if reference_snapshot.timestamp <= snapshot.timestamp <= current_snapshot.timestamp
+        ]
+
+    def _snapshot_momentum_rejection_reason(self, side: str) -> str:
+        if side == 'long':
+            return 'snapshot_bullish_momentum_not_confirmed'
+
+        if side == 'short':
+            return 'snapshot_bearish_momentum_not_confirmed'
+
+        return 'snapshot_momentum_invalid_side'
 
     def _snapshot_range_percent(self, prices: list[float], reference_price: float) -> float:
         if reference_price <= 0:
