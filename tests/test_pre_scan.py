@@ -84,8 +84,39 @@ def test_pre_scan_keeps_only_top_n_candidates():
     assert len(result.rejected_candidates) == 1
     assert result.rejected_candidates[0].reason == 'pre_scan_outside_top_n'
 
+def test_pre_scan_only_rejects_candidates_outside_top_n():
+    candidates = [
+        candidate('BEST', signal(session_move_percent=2.0, trend_strength_percent=0.6)),
+        candidate('SECOND', signal(session_move_percent=1.5, trend_strength_percent=0.4)),
+        candidate('THIRD', signal(session_move_percent=1.0, trend_strength_percent=0.3)),
+        candidate('FOURTH', signal(session_move_percent=0.5, trend_strength_percent=0.1)),
+    ]
 
+    result = pre_scan_candidates(
+        candidates,
+        PreScanConfig(top_n=2),
+    )
 
+    assert len(result.selected_candidates) == 2
+    assert len(result.rejected_candidates) == 2
+
+    assert [candidate.symbol for candidate in result.selected_candidates] == [
+        'BEST',
+        'SECOND',
+    ]
+
+    assert {
+        rejected.candidate.symbol: rejected.reason
+        for rejected in result.rejected_candidates
+    } == {
+        'THIRD': 'pre_scan_outside_top_n',
+        'FOURTH': 'pre_scan_outside_top_n',
+    }
+
+    assert {
+        rejected.reason
+        for rejected in result.rejected_candidates
+    } == {'pre_scan_outside_top_n'}
 
 def test_pre_scan_does_not_reject_high_spread_candidate_before_risk_manager():
     high_spread = candidate(
