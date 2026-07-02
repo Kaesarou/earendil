@@ -1,13 +1,12 @@
 from dataclasses import dataclass
 
-from app.execution.pre_scan import PreScanConfig
 from app.strategies.models import AssetStrategyConfig, StrategyProfileConfig, TrendStrategyConfig
 
 
 @dataclass(frozen=True)
 class AggressiveStrategyConfig(StrategyProfileConfig):
     name: str = 'aggressive'
-    pre_scan_top_n: int = 2
+    candidate_selection_top_n: int = 2
     crypto: AssetStrategyConfig = AssetStrategyConfig(
         trend=TrendStrategyConfig(
             lookback=3,
