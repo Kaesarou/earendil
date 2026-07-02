@@ -135,6 +135,31 @@ def test_risk_manager_rejects_trade_when_dynamic_net_profit_is_too_low():
     assert plan.min_expected_net_profit == 8.0
 
 
+def test_risk_manager_uses_trade_cost_min_profit_when_enabled():
+    profile = risk_profile(
+        asset_class=AssetClass.UNKNOWN,
+        min_expected_net_profit=999.0,
+        trade_cost=TradeCostConfig(
+            enabled=True,
+            open_fee_percent=0.15,
+            close_fee_percent=0.15,
+            include_spread_cost=True,
+            min_expected_net_profit=5.0,
+        ),
+    )
+    risk_manager = build_risk_manager(profile)
+
+    plan = risk_manager.evaluate(
+        signal=buy_signal(),
+        snapshot=snapshot(),
+        account_equity=1000.0,
+    )
+
+    assert plan.approved
+    assert plan.expected_net_profit == 12.0
+    assert plan.min_expected_net_profit == 5.0
+
+
 def test_risk_manager_uses_net_breakeven_buffer_when_configured_buffer_is_positive():
     profile = risk_profile(
         asset_class=AssetClass.UNKNOWN,
