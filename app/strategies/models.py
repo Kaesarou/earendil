@@ -1,6 +1,6 @@
 from dataclasses import dataclass
 
-from app.execution.pre_scan import PreScanConfig
+from app.execution.candidate_selector import CandidateSelectionConfig
 from app.instruments.models import AssetClass
 
 
@@ -35,7 +35,7 @@ class StrategyProfileConfig:
     crypto: AssetStrategyConfig
     equity_us: AssetStrategyConfig
     equity_eu: AssetStrategyConfig
-    pre_scan_top_n: int = 0
+    candidate_selection_top_n: int = 0
 
     def asset_config_for(self, asset_class: AssetClass) -> AssetStrategyConfig:
         if asset_class == AssetClass.CRYPTO:
@@ -49,7 +49,7 @@ class StrategyProfileConfig:
     def trend_config_for_asset_class(self, asset_class: AssetClass) -> TrendStrategyConfig:
         return self.asset_config_for(asset_class).trend
 
-    def pre_scan_config_for_asset_class(self, asset_class: AssetClass) -> PreScanConfig:
-        return PreScanConfig(
-            top_n=self.pre_scan_top_n,
+    def candidate_selection_config_for_asset_class(self, asset_class: AssetClass) -> CandidateSelectionConfig:
+        return CandidateSelectionConfig(
+            top_n=self.candidate_selection_top_n,
         )
