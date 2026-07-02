@@ -50,4 +50,4 @@ class StrategyProfileConfig:
         return self.asset_config_for(asset_class).trend
 
     def pre_scan_config_for_asset_class(self, asset_class: AssetClass) -> PreScanConfig:
-        return self.asset_config_for_asset_class(asset_class).pre_scan
+        return self.asset_config_for(asset_class).pre_scan
