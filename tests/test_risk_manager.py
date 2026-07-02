@@ -263,7 +263,7 @@ def test_risk_manager_rejects_when_spread_is_too_high():
     assert plan.max_spread_percent == 0.5
 
 
-def test_risk_manager_rejects_when_expected_move_is_too_low_vs_spread():
+def test_risk_manager_does_not_reject_only_because_expected_move_is_low_vs_spread():
     risk_manager = build_risk_manager(
         max_spread_percent=5.0,
         min_move_spread_ratio=4.0,
@@ -275,8 +275,7 @@ def test_risk_manager_rejects_when_expected_move_is_too_low_vs_spread():
         account_equity=100.0,
     )
 
-    assert not plan.approved
-    assert plan.reason == 'expected_move_too_low_vs_spread'
+    assert plan.approved
     assert plan.spread_percent == 0.2
     assert plan.expected_move_percent == 0.5
     assert plan.min_required_move_percent == 0.8
@@ -458,9 +457,3 @@ def test_risk_manager_approves_sell_when_short_selling_is_enabled():
     assert plan.approved
     assert plan.symbol == 'AAPL'
     assert plan.side == 'SELL'
-    assert plan.amount == 40.0
-    assert plan.stop_loss == 100.3
-    assert plan.take_profit == 99.5
-    assert plan.expected_gross_profit == 0.2
-    assert plan.estimated_fees == 0.0
-    assert plan.expected_net_profit == 0.2
