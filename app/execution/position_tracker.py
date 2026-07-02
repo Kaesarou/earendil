@@ -18,12 +18,12 @@ class TrackedPosition:
     initial_stop_loss: float | None = None
     highest_price: float | None = None
     lowest_price: float | None = None
-    breakeven_stop_enabled: bool = True # Si on l’active, le bot déplace le stop-loss vers le prix d’entrée quand la position est suffisamment en gain.
-    breakeven_trigger_percent: float = 1.0 # Si breakeven est activé, ce champ veut dire : “déplacer le stop au breakeven seulement quand la position atteint au moins +1,0 % de gain brut”
-    breakeven_buffer_percent: float = 0.0 # Si breakeven est activé, le buffer à 0.0 signifie que le stop est placé exactement au prix d’entrée, pas au-dessus.
-    trailing_stop_enabled: bool = True # Si on l’active, le bot suit le meilleur prix atteint depuis l’ouverture et ajuste le stop dynamiquement.
-    trailing_stop_trigger_percent: float = 1.5 # Si trailing est activé, ce champ veut dire : “ne commencer à suivre le prix qu’une fois que la position gagne au moins +1,5 % brut”.
-    trailing_stop_distance_percent: float = 0.8 # Si trailing est activé, ce champ définit la distance entre le meilleur prix atteint et le stop suiveur.
+    breakeven_stop_enabled: bool = False
+    breakeven_trigger_percent: float = 0.0
+    breakeven_buffer_percent: float = 0.0
+    trailing_stop_enabled: bool = False
+    trailing_stop_trigger_percent: float = 0.0
+    trailing_stop_distance_percent: float = 0.0
 
 
 @dataclass(frozen=True)
