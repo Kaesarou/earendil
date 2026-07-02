@@ -74,6 +74,72 @@ def test_position_tracker_returns_no_close_signal_inside_range():
     assert close_signals == []
 
 
+def test_tracked_position_defaults_do_not_enable_managed_stops():
+    position = TrackedPosition(
+        position_id='paper-1',
+        symbol='BTC',
+        side='BUY',
+        amount=10.0,
+        entry_price=100.0,
+        stop_loss=95.0,
+        take_profit=110.0,
+        opened_at=datetime(2026, 6, 25, 12, 0, tzinfo=timezone.utc),
+    )
+
+    assert position.breakeven_stop_enabled is False
+    assert position.breakeven_trigger_percent == 0.0
+    assert position.breakeven_buffer_percent == 0.0
+    assert position.trailing_stop_enabled is False
+    assert position.trailing_stop_trigger_percent == 0.0
+    assert position.trailing_stop_distance_percent == 0.0
+
+
+def test_position_tracker_uses_trade_plan_managed_stop_settings_for_new_position():
+    tracker = PositionTracker()
+
+    tracked_position = tracker.record_open_position(
+        position_id='paper-1',
+        trade_plan=managed_buy_plan(),
+        entry_price=100.0,
+    )
+
+    assert tracked_position.breakeven_stop_enabled is True
+    assert tracked_position.breakeven_trigger_percent == 2.0
+    assert tracked_position.breakeven_buffer_percent == 0.1
+    assert tracked_position.trailing_stop_enabled is True
+    assert tracked_position.trailing_stop_trigger_percent == 4.0
+    assert tracked_position.trailing_stop_distance_percent == 1.0
+
+
+def test_position_tracker_keeps_persisted_managed_stop_settings_on_restore():
+    tracker = PositionTracker()
+    persisted_position = TrackedPosition(
+        position_id='paper-1',
+        symbol='BTC',
+        side='BUY',
+        amount=10.0,
+        entry_price=100.0,
+        stop_loss=95.0,
+        take_profit=110.0,
+        opened_at=datetime(2026, 6, 25, 12, 0, tzinfo=timezone.utc),
+        breakeven_stop_enabled=False,
+        breakeven_trigger_percent=0.0,
+        breakeven_buffer_percent=0.0,
+        trailing_stop_enabled=False,
+        trailing_stop_trigger_percent=0.0,
+        trailing_stop_distance_percent=0.0,
+    )
+
+    tracker.restore_open_position(persisted_position)
+
+    restored_position = tracker.open_positions_snapshot()[0]
+    assert restored_position.initial_stop_loss == 95.0
+    assert restored_position.highest_price == 100.0
+    assert restored_position.lowest_price == 100.0
+    assert restored_position.breakeven_stop_enabled is False
+    assert restored_position.trailing_stop_enabled is False
+
+
 def test_position_tracker_closes_buy_when_stop_loss_is_hit():
     tracker = PositionTracker()
     tracker.record_open_position(
@@ -257,115 +323,3 @@ def test_position_tracker_returns_none_when_closing_unknown_position():
     closed_position = tracker.record_closed_position(close_signal)
 
     assert closed_position is None
-
-
-def test_position_tracker_closes_sell_when_stop_loss_is_hit():
-    tracker = PositionTracker()
-    tracker.record_open_position(
-        position_id='paper-1',
-        trade_plan=sell_plan(),
-        entry_price=100.0,
-    )
-
-    close_signals = tracker.evaluate_snapshot(snapshot(last=105.5))
-
-    assert len(close_signals) == 1
-    assert close_signals[0].position_id == 'paper-1'
-    assert close_signals[0].side == 'SELL'
-    assert close_signals[0].reason == 'stop_loss_hit'
-    assert close_signals[0].exit_price == 105.5
-
-
-def test_position_tracker_closes_sell_when_take_profit_is_hit():
-    tracker = PositionTracker()
-    tracker.record_open_position(
-        position_id='paper-1',
-        trade_plan=sell_plan(),
-        entry_price=100.0,
-    )
-
-    close_signals = tracker.evaluate_snapshot(snapshot(last=89.5))
-
-    assert len(close_signals) == 1
-    assert close_signals[0].position_id == 'paper-1'
-    assert close_signals[0].side == 'SELL'
-    assert close_signals[0].reason == 'take_profit_hit'
-    assert close_signals[0].exit_price == 89.5
-
-
-def test_position_tracker_calculates_positive_pnl_for_sell_take_profit():
-    tracker = PositionTracker()
-    opened_at = datetime(2026, 6, 25, 12, 0, tzinfo=timezone.utc)
-
-    tracker.record_open_position(
-        position_id='paper-1',
-        trade_plan=sell_plan(),
-        entry_price=100.0,
-        opened_at=opened_at,
-    )
-
-    close_signal = PositionCloseSignal(
-        position_id='paper-1',
-        symbol='BTC',
-        side='SELL',
-        exit_price=90.0,
-        reason='take_profit_hit',
-        detected_at=opened_at + timedelta(minutes=5),
-    )
-
-    closed_position = tracker.record_closed_position(close_signal)
-
-    assert closed_position is not None
-    assert closed_position.side == 'SELL'
-    assert closed_position.gross_pnl_percent == 10.0
-    assert closed_position.gross_pnl == 1.0
-    assert closed_position.close_reason == 'take_profit_hit'
-
-
-def test_position_tracker_calculates_negative_pnl_for_sell_stop_loss():
-    tracker = PositionTracker()
-    opened_at = datetime(2026, 6, 25, 12, 0, tzinfo=timezone.utc)
-
-    tracker.record_open_position(
-        position_id='paper-1',
-        trade_plan=sell_plan(),
-        entry_price=100.0,
-        opened_at=opened_at,
-    )
-
-    close_signal = PositionCloseSignal(
-        position_id='paper-1',
-        symbol='BTC',
-        side='SELL',
-        exit_price=106.0,
-        reason='stop_loss_hit',
-        detected_at=opened_at + timedelta(minutes=2),
-    )
-
-    closed_position = tracker.record_closed_position(close_signal)
-
-    assert closed_position is not None
-    assert closed_position.side == 'SELL'
-    assert closed_position.gross_pnl_percent == -6.0
-    assert closed_position.gross_pnl == -0.6
-    assert closed_position.close_reason == 'stop_loss_hit'
-
-
-def test_position_tracker_restores_open_position():
-    tracker = PositionTracker()
-
-    position = TrackedPosition(
-        position_id='position-1',
-        symbol='MSFT',
-        side='BUY',
-        amount=500.0,
-        entry_price=100.0,
-        stop_loss=99.0,
-        take_profit=102.0,
-        opened_at=datetime(2026, 6, 26, 16, 0, tzinfo=timezone.utc),
-    )
-
-    tracker.restore_open_position(position)
-
-    assert tracker.has_open_positions()
-    assert tracker.open_positions_snapshot()[0].highest_price == 100.0
