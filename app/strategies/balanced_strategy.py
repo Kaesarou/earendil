@@ -7,6 +7,7 @@ from app.strategies.models import AssetStrategyConfig, StrategyProfileConfig, Tr
 @dataclass(frozen=True)
 class BalancedStrategyConfig(StrategyProfileConfig):
     name: str = 'balanced'
+    pre_scan_top_n: int = 2
     crypto: AssetStrategyConfig = AssetStrategyConfig(
         trend=TrendStrategyConfig(
             lookback=3,
@@ -26,10 +27,7 @@ class BalancedStrategyConfig(StrategyProfileConfig):
             snapshot_momentum_window_seconds=180,
             min_snapshot_momentum_percent=0.25,
         ),
-        pre_scan=PreScanConfig(
-            enabled=True,
-            top_n=2,
-        ),
+        pre_scan=PreScanConfig(enabled=True),
     )
     equity_us: AssetStrategyConfig = AssetStrategyConfig(
         trend=TrendStrategyConfig(
@@ -50,10 +48,7 @@ class BalancedStrategyConfig(StrategyProfileConfig):
             snapshot_momentum_window_seconds=180,
             min_snapshot_momentum_percent=0.20,
         ),
-        pre_scan=PreScanConfig(
-            enabled=True,
-            top_n=2,
-        ),
+        pre_scan=PreScanConfig(enabled=True),
     )
     equity_eu: AssetStrategyConfig = AssetStrategyConfig(
         trend=TrendStrategyConfig(
@@ -74,8 +69,5 @@ class BalancedStrategyConfig(StrategyProfileConfig):
             snapshot_momentum_window_seconds=180,
             min_snapshot_momentum_percent=0.20,
         ),
-        pre_scan=PreScanConfig(
-            enabled=True,
-            top_n=2,
-        ),
+        pre_scan=PreScanConfig(enabled=True),
     )
