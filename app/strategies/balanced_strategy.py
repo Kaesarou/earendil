@@ -29,13 +29,6 @@ class BalancedStrategyConfig(StrategyProfileConfig):
         pre_scan=PreScanConfig(
             enabled=True,
             top_n=2,
-            min_score=120.0,
-            allowed_market_regimes=('TRENDING',),
-            min_session_move_percent=0.30,
-            min_trend_strength_percent=0.10,
-            min_atr_percent=0.02,
-            max_atr_percent=0.80,
-            max_noise_ratio=2.0,
         ),
     )
     equity_us: AssetStrategyConfig = AssetStrategyConfig(
@@ -60,13 +53,6 @@ class BalancedStrategyConfig(StrategyProfileConfig):
         pre_scan=PreScanConfig(
             enabled=True,
             top_n=2,
-            min_score=115.0,
-            allowed_market_regimes=('TRENDING',),
-            min_session_move_percent=0.20,
-            min_trend_strength_percent=0.05,
-            min_atr_percent=0.01,
-            max_atr_percent=0.50,
-            max_noise_ratio=2.0,
         ),
     )
     equity_eu: AssetStrategyConfig = AssetStrategyConfig(
@@ -91,12 +77,5 @@ class BalancedStrategyConfig(StrategyProfileConfig):
         pre_scan=PreScanConfig(
             enabled=True,
             top_n=2,
-            min_score=115.0,
-            allowed_market_regimes=('TRENDING',),
-            min_session_move_percent=0.18,
-            min_trend_strength_percent=0.05,
-            min_atr_percent=0.01,
-            max_atr_percent=0.50,
-            max_noise_ratio=2.0,
         ),
     )
