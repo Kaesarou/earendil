@@ -36,6 +36,7 @@ class StrategyProfileConfig:
     crypto: AssetStrategyConfig
     equity_us: AssetStrategyConfig
     equity_eu: AssetStrategyConfig
+    pre_scan_top_n: int = 0
 
     def asset_config_for(self, asset_class: AssetClass) -> AssetStrategyConfig:
         if asset_class == AssetClass.CRYPTO:
