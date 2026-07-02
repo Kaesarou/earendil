@@ -71,8 +71,6 @@ class RiskManager:
             symbol=snapshot.symbol,
             risk_profile=risk_profile,
             spread_percent=spread_percent,
-            expected_move_percent=expected_move_percent,
-            min_required_move_percent=min_required_move_percent,
         )
         if rejection_reason is not None:
             return self._rejected_plan(
@@ -178,8 +176,6 @@ class RiskManager:
         symbol: str,
         risk_profile: RiskProfile,
         spread_percent: float | None,
-        expected_move_percent: float,
-        min_required_move_percent: float | None,
     ) -> str | None:
         if signal.action == 'HOLD':
             return signal.reason
@@ -214,13 +210,6 @@ class RiskManager:
             and spread_percent > risk_profile.max_spread_percent
         ):
             return 'spread_too_high'
-
-        if (
-            min_required_move_percent is not None
-            and risk_profile.min_move_spread_ratio > 0
-            and expected_move_percent < min_required_move_percent
-        ):
-            return 'expected_move_too_low_vs_spread'
 
         return None
 
