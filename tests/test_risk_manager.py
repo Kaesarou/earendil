@@ -61,7 +61,6 @@ def build_risk_manager(
     max_stop_loss_percent: float = 0.0,
     min_take_profit_percent: float = 0.0,
     max_take_profit_percent: float = 0.0,
-    short_selling_enabled: bool = False,
     crypto_symbols: str = '',
     crypto_max_position_size_percent: float = 0.75,
     crypto_stop_loss_percent: float = 1.5,
@@ -446,7 +445,7 @@ def test_risk_manager_approves_when_expected_net_profit_matches_minimum():
 
 
 def test_risk_manager_approves_sell_when_short_selling_is_enabled():
-    risk_manager = build_risk_manager(short_selling_enabled=True)
+    risk_manager = build_risk_manager()
 
     plan = risk_manager.evaluate(
         signal=sell_signal(),
