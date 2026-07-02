@@ -20,9 +20,8 @@ class TrendStrategyConfig:
     market_regime_min_atr_percent: float
     market_regime_max_atr_percent: float
     market_regime_max_noise_ratio: float
-    snapshot_momentum_fallback_enabled: bool = False
-    snapshot_momentum_lookback: int = 3
-    min_snapshot_momentum_percent: float = 0.05
+    snapshot_momentum_window_seconds: int = 180
+    min_snapshot_momentum_percent: float = 0.20
 
 
 @dataclass(frozen=True)
@@ -51,4 +50,4 @@ class StrategyProfileConfig:
         return self.asset_config_for(asset_class).trend
 
     def pre_scan_config_for_asset_class(self, asset_class: AssetClass) -> PreScanConfig:
-        return self.asset_config_for(asset_class).pre_scan
+        return self.asset_config_for_asset_class(asset_class).pre_scan
