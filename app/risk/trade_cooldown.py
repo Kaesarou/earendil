@@ -58,6 +58,9 @@ MANUAL_CLOSE_REASONS = {
 
 STOP_LOSS_CLOSE_REASONS = {
     'stop_loss_hit',
+}
+
+PROTECTED_EXIT_REASONS = {
     'trailing_stop_hit',
     'break_even_stop_hit',
 }
@@ -86,11 +89,20 @@ def close_reason_for_closed_trade(
     raw_reason: str | None,
     gross_pnl: float | None = None,
 ) -> CloseReason:
+    normalized_reason = (raw_reason or '').strip().lower()
+
+    if normalized_reason in PROTECTED_EXIT_REASONS:
+        return close_reason_from_pnl(gross_pnl)
+
     close_reason = close_reason_from_raw(raw_reason)
 
     if close_reason != CloseReason.UNKNOWN:
         return close_reason
 
+    return close_reason_from_pnl(gross_pnl)
+
+
+def close_reason_from_pnl(gross_pnl: float | None) -> CloseReason:
     if gross_pnl is None:
         return CloseReason.UNKNOWN
 
