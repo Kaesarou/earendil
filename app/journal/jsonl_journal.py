@@ -7,6 +7,10 @@ from typing import Any
 
 logger = logging.getLogger(__name__)
 
+EVENT_TYPE_ALIASES = {
+    'pre_scan': 'candidate_selection',
+}
+
 
 class JsonlJournal:
     def __init__(self, path: str):
@@ -14,10 +18,12 @@ class JsonlJournal:
         self.path.parent.mkdir(parents=True, exist_ok=True)
 
     def write(self, event_type: str, payload: dict[str, Any]) -> None:
+        normalized_event_type = EVENT_TYPE_ALIASES.get(event_type, event_type)
+
         try:
             record = {
                 'timestamp': datetime.now(timezone.utc).isoformat(),
-                'event_type': event_type,
+                'event_type': normalized_event_type,
                 'payload': self._serialize(payload),
             }
             with self.path.open('a', encoding='utf-8') as file:
@@ -27,7 +33,7 @@ class JsonlJournal:
             logger.exception(
                 'Journal write failed | path=%s | event_type=%s | error=%s',
                 self.path,
-                event_type,
+                normalized_event_type,
                 exc,
             )
 
