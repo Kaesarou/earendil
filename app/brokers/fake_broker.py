@@ -21,6 +21,12 @@ class FakeBrokerClient(BrokerClient):
         spread = 4.0
         return MarketSnapshot.now(symbol=symbol, bid=last - spread / 2, ask=last + spread / 2, last=last)
 
+    def get_market_snapshots(self, symbols: list[str]) -> dict[str, MarketSnapshot]:
+        result: dict[str, MarketSnapshot] = {}
+        for symbol in symbols:
+            result[symbol] = self.get_market_snapshot(symbol)
+        return result
+
     def get_account_equity(self) -> float:
         return self.equity
 
