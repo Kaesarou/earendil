@@ -54,5 +54,3 @@ class StrategyProfileConfig:
             top_n=self.candidate_selection_top_n,
         )
 
-    def pre_scan_config_for_asset_class(self, asset_class: AssetClass) -> CandidateSelectionConfig:
-        return self.candidate_selection_config_for_asset_class(asset_class)

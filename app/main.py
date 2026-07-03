@@ -6,10 +6,10 @@ from app.brokers.base import BrokerClient
 from app.config.settings import Settings, get_settings
 from app.execution.candidate_ranking import build_trade_candidate, rank_trade_candidates
 from app.execution.position_tracker import ClosedPosition, PositionTracker, TrackedPosition
-from app.execution.pre_scan import (
-    PreScanResult,
-    RejectedPreScanCandidate,
-    pre_scan_candidates,
+from app.execution.candidate_selector import (
+    CandidateSelectionResult,
+    RejectedCandidateSelection,
+    select_trade_candidates,
 )
 from app.execution.trade_candidate import TradeCandidate
 from app.execution.trade_executor import TradeExecutor
@@ -529,25 +529,25 @@ def process_symbol(
     return candidate
 
 
-def pre_scan_candidates_with_strategy_profile(
+def select_trade_candidates_with_strategy_profile(
     candidates: list[TradeCandidate],
     risk_manager: RiskManager,
     strategy_profile: StrategyProfileConfig,
-) -> PreScanResult:
+) -> CandidateSelectionResult:
     selected_candidates: list[TradeCandidate] = []
-    rejected_candidates: list[RejectedPreScanCandidate] = []
+    rejected_candidates: list[RejectedCandidateSelection] = []
     top_n_limits: list[int] = []
 
     for candidate in rank_trade_candidates(candidates):
         asset_class = risk_manager.instrument_profile_for(candidate.symbol).asset_class
-        pre_scan_config = strategy_profile.pre_scan_config_for_asset_class(asset_class)
-        top_n_limits.append(pre_scan_config.top_n)
+        candidate_selection_config = strategy_profile.candidate_selection_config_for_asset_class(asset_class)
+        top_n_limits.append(candidate_selection_config.top_n)
 
-        pre_scan_result = pre_scan_candidates([candidate], pre_scan_config)
-        if pre_scan_result.selected_candidates:
+        candidate_selection_result = select_trade_candidates([candidate], candidate_selection_config)
+        if candidate_selection_result.selected_candidates:
             selected_candidates.append(candidate)
         else:
-            rejected_candidates.extend(pre_scan_result.rejected_candidates)
+            rejected_candidates.extend(candidate_selection_result.rejected_candidates)
 
     positive_top_n_limits = [limit for limit in top_n_limits if limit > 0]
     top_n = min(positive_top_n_limits) if positive_top_n_limits else 0
@@ -556,15 +556,15 @@ def pre_scan_candidates_with_strategy_profile(
         kept_candidates = selected_candidates[:top_n]
         overflow_candidates = selected_candidates[top_n:]
         rejected_candidates.extend(
-            RejectedPreScanCandidate(
+            RejectedCandidateSelection(
                 candidate=candidate,
-                reason='pre_scan_outside_top_n',
+                reason='candidate_selection_outside_top_n',
             )
             for candidate in overflow_candidates
         )
         selected_candidates = kept_candidates
 
-    return PreScanResult(
+    return CandidateSelectionResult(
         selected_candidates=selected_candidates,
         rejected_candidates=rejected_candidates,
     )
@@ -658,36 +658,36 @@ def execute_ranked_candidates(
 
     if strategy_profile is None:
         ranked_candidates = rank_trade_candidates(candidates)
-        pre_scan_result = PreScanResult(
+        candidate_selection_result = CandidateSelectionResult(
             selected_candidates=ranked_candidates,
             rejected_candidates=[],
         )
     else:
-        pre_scan_result = pre_scan_candidates_with_strategy_profile(
+        candidate_selection_result = select_trade_candidates_with_strategy_profile(
             candidates=candidates,
             risk_manager=risk_manager,
             strategy_profile=strategy_profile,
         )
-        ranked_candidates = pre_scan_result.selected_candidates
+        ranked_candidates = candidate_selection_result.selected_candidates
 
     trade_journal.write(
-        'pre_scan',
+        'candidate_selection',
         {
             'strategy_profile': strategy_profile.name if strategy_profile else None,
-            'selected_candidates': pre_scan_result.selected_candidates,
-            'rejected_candidates': pre_scan_result.rejected_candidates,
+            'selected_candidates': candidate_selection_result.selected_candidates,
+            'rejected_candidates': candidate_selection_result.rejected_candidates,
         },
     )
     logger.info(
-        'Pre-scan | profile=%s | selected=%s | rejected=%s',
+        'Candidate selection | profile=%s | selected=%s | rejected=%s',
         strategy_profile.name if strategy_profile else None,
-        [candidate.symbol for candidate in pre_scan_result.selected_candidates],
+        [candidate.symbol for candidate in candidate_selection_result.selected_candidates],
         [
             {
                 'symbol': rejected.candidate.symbol,
                 'reason': rejected.reason,
             }
-            for rejected in pre_scan_result.rejected_candidates
+            for rejected in candidate_selection_result.rejected_candidates
         ],
     )
 

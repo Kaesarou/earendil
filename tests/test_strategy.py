@@ -368,7 +368,7 @@ def test_strategy_profile_from_name_resolves_balanced_profile():
     crypto_trend = profile.trend_config_for_asset_class(AssetClass.CRYPTO)
     equity_us_trend = profile.trend_config_for_asset_class(AssetClass.EQUITY_US)
     equity_eu_trend = profile.trend_config_for_asset_class(AssetClass.EQUITY_EU)
-    crypto_pre_scan = profile.pre_scan_config_for_asset_class(AssetClass.CRYPTO)
+    crypto_candidate_selection = profile.candidate_selection_config_for_asset_class(AssetClass.CRYPTO)
 
     assert crypto_trend.min_session_move_percent == 0.30
     assert crypto_trend.snapshot_momentum_window_seconds == 180
@@ -377,7 +377,7 @@ def test_strategy_profile_from_name_resolves_balanced_profile():
     assert equity_us_trend.min_snapshot_momentum_percent == 0.20
     assert equity_eu_trend.snapshot_momentum_window_seconds == 180
     assert equity_eu_trend.min_snapshot_momentum_percent == 0.20
-    assert crypto_pre_scan.top_n == 2
+    assert crypto_candidate_selection.top_n == 2
 
 
 def test_strategy_profile_from_name_resolves_aggressive_profile():
@@ -389,7 +389,7 @@ def test_strategy_profile_from_name_resolves_aggressive_profile():
     crypto_trend = profile.trend_config_for_asset_class(AssetClass.CRYPTO)
     equity_us_trend = profile.trend_config_for_asset_class(AssetClass.EQUITY_US)
     equity_eu_trend = profile.trend_config_for_asset_class(AssetClass.EQUITY_EU)
-    crypto_pre_scan = profile.pre_scan_config_for_asset_class(AssetClass.CRYPTO)
+    crypto_candidate_selection = profile.candidate_selection_config_for_asset_class(AssetClass.CRYPTO)
 
     assert crypto_trend.min_session_move_percent == 0.20
     assert crypto_trend.snapshot_momentum_window_seconds == 180
@@ -398,7 +398,7 @@ def test_strategy_profile_from_name_resolves_aggressive_profile():
     assert equity_us_trend.min_snapshot_momentum_percent == 0.15
     assert equity_eu_trend.snapshot_momentum_window_seconds == 180
     assert equity_eu_trend.min_snapshot_momentum_percent == 0.15
-    assert crypto_pre_scan.top_n == 2
+    assert crypto_candidate_selection.top_n == 2
 
 
 def test_strategy_profile_from_name_rejects_unknown_profile():
