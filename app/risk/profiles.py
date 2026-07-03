@@ -1,11 +1,8 @@
 from dataclasses import replace
 
-from app.instruments.crypto_config import CryptoConfig
-from app.instruments.equity_eu_config import EquityEuConfig
-from app.instruments.equity_us_config import EquityUsConfig
+from app.instruments.base_configs import CRYPTO_CONFIG, EQUITY_EU_CONFIG, EQUITY_US_CONFIG
 from app.instruments.models import AssetClass, RiskProfile
 from app.risk.trade_cooldown import TradeCooldownConfig
-from app.risk.trade_cost_model import TradeCostConfig
 
 
 BALANCED_TRADE_COOLDOWN = TradeCooldownConfig(
@@ -22,20 +19,21 @@ AGGRESSIVE_TRADE_COOLDOWN = TradeCooldownConfig(
     after_unknown_close_minutes=10,
 )
 
+
 def _risk_profiles_with_cooldown(
     trade_cooldown: TradeCooldownConfig,
 ) -> dict[AssetClass, RiskProfile]:
     return {
         AssetClass.CRYPTO: replace(
-            CryptoConfig().risk,
+            CRYPTO_CONFIG.risk,
             trade_cooldown=trade_cooldown,
         ),
         AssetClass.EQUITY_US: replace(
-            EquityUsConfig().risk,
+            EQUITY_US_CONFIG.risk,
             trade_cooldown=trade_cooldown,
         ),
         AssetClass.EQUITY_EU: replace(
-            EquityEuConfig().risk,
+            EQUITY_EU_CONFIG.risk,
             trade_cooldown=trade_cooldown,
         ),
     }
