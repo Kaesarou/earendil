@@ -1,4 +1,3 @@
-
 from dataclasses import dataclass
 
 from app.instruments.models import AssetClass, InstrumentConfig, RiskProfile, TrendStrategyConfig
@@ -9,8 +8,8 @@ from app.risk.trade_cost_model import TradeCostConfig
 class CryptoConfig(InstrumentConfig):
     trend: TrendStrategyConfig = TrendStrategyConfig(
         lookback=3,
-        fast_lookback = 5,
-        slow_lookback = 15,
+        fast_lookback=5,
+        slow_lookback=15,
         session_lookback=30,
         min_session_move_percent=0.30,
         min_breakout_percent=0.05,
@@ -25,7 +24,7 @@ class CryptoConfig(InstrumentConfig):
         snapshot_momentum_window_seconds=180,
         min_snapshot_momentum_percent=0.25,
     )
-    risk:RiskProfile =RiskProfile(
+    risk: RiskProfile = RiskProfile(
         asset_class=AssetClass.CRYPTO,
         max_position_size_percent=0.75,
         stop_loss_percent=1.50,
