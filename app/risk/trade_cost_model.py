@@ -33,8 +33,6 @@ class TradeCostModel:
         expected_move_percent: float,
         spread_percent: float | None,
         config: TradeCostConfig,
-        legacy_estimated_round_trip_fees: float = 0.0,
-        legacy_min_expected_net_profit: float = 0.0,
     ) -> TradeCostEstimate:
         if position_value <= 0:
             return TradeCostEstimate(

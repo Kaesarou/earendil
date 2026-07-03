@@ -29,8 +29,6 @@ def risk_profile(
         max_position_size_percent=max_position_size_percent,
         stop_loss_percent=stop_loss_percent,
         take_profit_percent=take_profit_percent,
-        estimated_round_trip_fees=estimated_round_trip_fees,
-        min_expected_net_profit=min_expected_net_profit,
         force_close_enabled=False,
         force_close_hour=23,
         force_close_minute=59,

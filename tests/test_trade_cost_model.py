@@ -52,8 +52,6 @@ def test_trade_cost_model_uses_legacy_fixed_fees_when_disabled():
         expected_move_percent=1.6,
         spread_percent=0.10,
         config=TradeCostConfig(),
-        legacy_estimated_round_trip_fees=2.5,
-        legacy_min_expected_net_profit=5.0,
     )
 
     assert estimate.expected_gross_profit == 16.0
