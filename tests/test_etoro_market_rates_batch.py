@@ -1,4 +1,4 @@
-from app.brokers.etoro_client import EtoroClient
+from app.brokers.etoro.etoro_client import EtoroClient
 from app.config.settings import Settings
 
 

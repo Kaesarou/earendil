@@ -1,7 +1,7 @@
 from app.brokers.base import BrokerClient
 from app.brokers.cached_broker import CachedBrokerClient
-from app.brokers.etoro_client import EtoroClient
-from app.brokers.fake_broker import FakeBrokerClient
+from app.brokers.etoro.etoro_client import EtoroClient
+from app.brokers.fake.fake_broker import FakeBrokerClient
 from app.config.settings import Settings
 
 
