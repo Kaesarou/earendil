@@ -1,8 +1,9 @@
 from collections.abc import Mapping
+from dataclasses import replace
 
 from app.config.settings import Settings
-from app.instruments.models import AssetClass, InstrumentProfile, RiskProfile
-from app.risk.profiles import DEFAULT_RISK_PROFILES
+from app.instruments.base_configs import BASE_INSTRUMENT_CONFIGS
+from app.instruments.models import AssetClass, InstrumentConfig, InstrumentProfile, RiskProfile
 from app.utils.commons import normalize_symbol
 
 
@@ -10,10 +11,14 @@ class InstrumentRegistry:
     def __init__(
         self,
         settings: Settings,
+        instrument_configs: Mapping[AssetClass, InstrumentConfig] | None = None,
         risk_profiles: Mapping[AssetClass, RiskProfile] | None = None,
     ):
         self.settings = settings
-        self.risk_profiles = risk_profiles or DEFAULT_RISK_PROFILES
+        self.instrument_configs = dict(instrument_configs or BASE_INSTRUMENT_CONFIGS)
+        if risk_profiles is not None:
+            self.instrument_configs = self._instrument_configs_with_risk_profiles(risk_profiles)
+
         self.crypto_symbols = self._parse_symbols(settings.crypto_symbols)
         self.equity_us_symbols = self._parse_symbols(settings.equity_us_symbols)
         self.equity_eu_symbols = self._parse_symbols(settings.equity_eu_symbols)
@@ -43,16 +48,19 @@ class InstrumentRegistry:
             'CRYPTO_SYMBOLS, EQUITY_US_SYMBOLS or EQUITY_EU_SYMBOLS.'
         )
 
-    def risk_profile_for(self, symbol: str) -> RiskProfile:
+    def config_for(self, symbol: str) -> InstrumentConfig:
         instrument_profile = self.resolve(symbol)
 
         try:
-            return self.risk_profiles[instrument_profile.asset_class]
+            return self.instrument_configs[instrument_profile.asset_class]
         except KeyError as exc:
             raise ValueError(
-                f"No risk profile configured for asset class '{instrument_profile.asset_class}' "
+                f"No instrument config configured for asset class '{instrument_profile.asset_class}' "
                 f"used by symbol '{instrument_profile.symbol}'."
             ) from exc
+
+    def risk_profile_for(self, symbol: str) -> RiskProfile:
+        return self.config_for(symbol).risk
 
     def validate_supported_symbols(self, symbols: list[str]) -> None:
         invalid_symbols: list[str] = []
@@ -82,6 +90,24 @@ class InstrumentRegistry:
             asset_classes.append(AssetClass.EQUITY_EU)
 
         return asset_classes
+
+    def _instrument_configs_with_risk_profiles(
+        self,
+        risk_profiles: Mapping[AssetClass, RiskProfile],
+    ) -> dict[AssetClass, InstrumentConfig]:
+        instrument_configs = dict(self.instrument_configs)
+
+        for asset_class, risk_profile in risk_profiles.items():
+            try:
+                base_config = instrument_configs[asset_class]
+            except KeyError as exc:
+                raise ValueError(
+                    f"No base instrument config configured for asset class '{asset_class}'."
+                ) from exc
+
+            instrument_configs[asset_class] = replace(base_config, risk=risk_profile)
+
+        return instrument_configs
 
     def _parse_symbols(self, raw_symbols: str) -> set[str]:
         return {
