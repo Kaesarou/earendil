@@ -7,7 +7,6 @@ def test_equity_profiles_use_dynamic_equity_trade_costs():
 
     trade_cost = profiles[AssetClass.EQUITY_US].trade_cost
 
-    assert trade_cost.enabled
     assert trade_cost.open_fee_percent == 0.15
     assert trade_cost.close_fee_percent == 0.15
     assert trade_cost.include_spread_cost
@@ -19,7 +18,6 @@ def test_crypto_profile_uses_dynamic_crypto_trade_costs():
 
     trade_cost = profiles[AssetClass.CRYPTO].trade_cost
 
-    assert trade_cost.enabled
     assert trade_cost.open_fee_percent == 1.0
     assert trade_cost.close_fee_percent == 1.0
     assert trade_cost.include_spread_cost

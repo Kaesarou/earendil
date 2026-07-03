@@ -3,7 +3,6 @@ from dataclasses import dataclass
 
 @dataclass(frozen=True)
 class TradeCostConfig:
-    enabled: bool = False
     open_fee_percent: float = 0.0
     close_fee_percent: float = 0.0
     fixed_open_fee: float = 0.0
@@ -48,27 +47,10 @@ class TradeCostModel:
                 total_estimated_cost=0.0,
                 total_estimated_cost_percent=0.0,
                 expected_net_profit=0.0,
-                min_expected_net_profit=(
-                    config.min_expected_net_profit
-                    if config.enabled
-                    else legacy_min_expected_net_profit
-                ),
+                min_expected_net_profit=config.min_expected_net_profit,
             )
 
         expected_gross_profit = position_value * (expected_move_percent / 100)
-
-        if not config.enabled:
-            total_estimated_cost = legacy_estimated_round_trip_fees
-            return self._build_estimate(
-                position_value=position_value,
-                expected_gross_profit=expected_gross_profit,
-                open_fee=0.0,
-                close_fee=0.0,
-                fixed_fees=total_estimated_cost,
-                spread_cost=0.0,
-                total_estimated_cost=total_estimated_cost,
-                min_expected_net_profit=legacy_min_expected_net_profit,
-            )
 
         open_fee = position_value * (config.open_fee_percent / 100)
         close_fee = position_value * (config.close_fee_percent / 100)

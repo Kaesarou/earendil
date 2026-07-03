@@ -7,7 +7,6 @@ def test_trade_cost_model_estimates_crypto_costs():
         expected_move_percent=3.0,
         spread_percent=None,
         config=TradeCostConfig(
-            enabled=True,
             open_fee_percent=1.0,
             close_fee_percent=1.0,
             min_expected_net_profit=8.0,
@@ -30,7 +29,6 @@ def test_trade_cost_model_estimates_equity_cfd_costs_with_spread():
         expected_move_percent=1.6,
         spread_percent=0.10,
         config=TradeCostConfig(
-            enabled=True,
             open_fee_percent=0.15,
             close_fee_percent=0.15,
             include_spread_cost=True,
@@ -53,7 +51,7 @@ def test_trade_cost_model_uses_legacy_fixed_fees_when_disabled():
         position_value=1000.0,
         expected_move_percent=1.6,
         spread_percent=0.10,
-        config=TradeCostConfig(enabled=False),
+        config=TradeCostConfig(),
         legacy_estimated_round_trip_fees=2.5,
         legacy_min_expected_net_profit=5.0,
     )

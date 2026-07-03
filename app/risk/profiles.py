@@ -19,10 +19,9 @@ AGGRESSIVE_TRADE_COOLDOWN = TradeCooldownConfig(
     after_unknown_close_minutes=10,
 )
 
-UNKNOWN_TRADE_COST = TradeCostConfig(enabled=False)
+UNKNOWN_TRADE_COST = TradeCostConfig()
 
 EQUITY_CFD_TRADE_COST = TradeCostConfig(
-    enabled=True,
     open_fee_percent=0.15,
     close_fee_percent=0.15,
     fixed_open_fee=0.0,
@@ -32,7 +31,6 @@ EQUITY_CFD_TRADE_COST = TradeCostConfig(
 )
 
 CRYPTO_TRADE_COST = TradeCostConfig(
-    enabled=True,
     open_fee_percent=1.00,
     close_fee_percent=1.00,
     fixed_open_fee=0.0,
@@ -46,8 +44,6 @@ UNKNOWN_RISK_PROFILE = RiskProfile(
     max_position_size_percent=20.0,
     stop_loss_percent=0.8,
     take_profit_percent=1.2,
-    estimated_round_trip_fees=0.0,
-    min_expected_net_profit=0.0,
     force_close_enabled=True,
     force_close_hour=21,
     force_close_minute=55,
@@ -74,8 +70,6 @@ CRYPTO_RISK_PROFILE = RiskProfile(
     max_position_size_percent=0.75,
     stop_loss_percent=1.50,
     take_profit_percent=3.00,
-    estimated_round_trip_fees=3.00,
-    min_expected_net_profit=8.00,
     force_close_enabled=False,
     force_close_hour=23,
     force_close_minute=59,
@@ -102,8 +96,6 @@ EQUITY_US_RISK_PROFILE = RiskProfile(
     max_position_size_percent=0.75,
     stop_loss_percent=0.90,
     take_profit_percent=1.60,
-    estimated_round_trip_fees=2.50,
-    min_expected_net_profit=5.00,
     force_close_enabled=True,
     force_close_hour=21,
     force_close_minute=55,
@@ -130,8 +122,6 @@ EQUITY_EU_RISK_PROFILE = RiskProfile(
     max_position_size_percent=0.75,
     stop_loss_percent=0.80,
     take_profit_percent=1.40,
-    estimated_round_trip_fees=2.50,
-    min_expected_net_profit=5.00,
     force_close_enabled=True,
     force_close_hour=17,
     force_close_minute=25,

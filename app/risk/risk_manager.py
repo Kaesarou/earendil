@@ -106,8 +106,6 @@ class RiskManager:
             expected_move_percent=expected_move_percent,
             spread_percent=spread_percent,
             config=risk_profile.trade_cost,
-            legacy_estimated_round_trip_fees=risk_profile.estimated_round_trip_fees,
-            legacy_min_expected_net_profit=risk_profile.min_expected_net_profit,
         )
 
         if trade_cost_estimate.expected_net_profit < trade_cost_estimate.min_expected_net_profit:

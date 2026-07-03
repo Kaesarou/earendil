@@ -24,8 +24,6 @@ def risk_profile(
         max_position_size_percent=max_position_size_percent,
         stop_loss_percent=0.9,
         take_profit_percent=take_profit_percent,
-        estimated_round_trip_fees=0.0,
-        min_expected_net_profit=min_expected_net_profit,
         force_close_enabled=False,
         force_close_hour=23,
         force_close_minute=59,
@@ -72,7 +70,6 @@ def test_risk_manager_uses_dynamic_equity_trade_costs_and_net_breakeven():
     profile = risk_profile(
         asset_class=AssetClass.UNKNOWN,
         trade_cost=TradeCostConfig(
-            enabled=True,
             open_fee_percent=0.15,
             close_fee_percent=0.15,
             include_spread_cost=True,
@@ -112,7 +109,6 @@ def test_risk_manager_rejects_trade_when_dynamic_net_profit_is_too_low():
         asset_class=AssetClass.UNKNOWN,
         take_profit_percent=3.0,
         trade_cost=TradeCostConfig(
-            enabled=True,
             open_fee_percent=1.0,
             close_fee_percent=1.0,
             include_spread_cost=False,
@@ -140,7 +136,6 @@ def test_risk_manager_uses_trade_cost_min_profit_when_enabled():
         asset_class=AssetClass.UNKNOWN,
         min_expected_net_profit=999.0,
         trade_cost=TradeCostConfig(
-            enabled=True,
             open_fee_percent=0.15,
             close_fee_percent=0.15,
             include_spread_cost=True,
@@ -164,7 +159,6 @@ def test_risk_manager_uses_net_breakeven_buffer_when_configured_buffer_is_positi
     profile = risk_profile(
         asset_class=AssetClass.UNKNOWN,
         trade_cost=TradeCostConfig(
-            enabled=True,
             open_fee_percent=0.15,
             close_fee_percent=0.15,
             include_spread_cost=False,
