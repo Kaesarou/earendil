@@ -13,7 +13,6 @@ def risk_profile(
     asset_class: AssetClass,
     max_position_size_percent: float = 100.0,
     take_profit_percent: float = 1.6,
-    min_expected_net_profit: float = 5.0,
     trade_cost: TradeCostConfig,
     breakeven_stop_enabled: bool = False,
     breakeven_trigger_percent: float = 1.0,
@@ -44,7 +43,7 @@ def risk_profile(
 
 
 def build_risk_manager(profile: RiskProfile) -> RiskManager:
-    settings = Settings()
+    settings = Settings(EQUITY_US_SYMBOLS='AAPL')
     return RiskManager(
         settings=settings,
         position_sizing_strategy=FixedPercentPositionSizing(),
@@ -67,7 +66,7 @@ def buy_signal() -> Signal:
 
 def test_risk_manager_uses_dynamic_equity_trade_costs_and_net_breakeven():
     profile = risk_profile(
-        asset_class=AssetClass.CRYPTO,
+        asset_class=AssetClass.EQUITY_US,
         trade_cost=TradeCostConfig(
             open_fee_percent=0.15,
             close_fee_percent=0.15,
@@ -105,7 +104,7 @@ def test_risk_manager_uses_dynamic_equity_trade_costs_and_net_breakeven():
 
 def test_risk_manager_rejects_trade_when_dynamic_net_profit_is_too_low():
     profile = risk_profile(
-        asset_class=AssetClass.CRYPTO,
+        asset_class=AssetClass.EQUITY_US,
         take_profit_percent=3.0,
         trade_cost=TradeCostConfig(
             open_fee_percent=1.0,
@@ -130,10 +129,9 @@ def test_risk_manager_rejects_trade_when_dynamic_net_profit_is_too_low():
     assert plan.min_expected_net_profit == 8.0
 
 
-def test_risk_manager_uses_trade_cost_min_profit_when_enabled():
+def test_risk_manager_uses_trade_cost_min_profit():
     profile = risk_profile(
-        asset_class=AssetClass.CRYPTO,
-        min_expected_net_profit=999.0,
+        asset_class=AssetClass.EQUITY_US,
         trade_cost=TradeCostConfig(
             open_fee_percent=0.15,
             close_fee_percent=0.15,
@@ -156,7 +154,7 @@ def test_risk_manager_uses_trade_cost_min_profit_when_enabled():
 
 def test_risk_manager_uses_net_breakeven_buffer_when_configured_buffer_is_positive():
     profile = risk_profile(
-        asset_class=AssetClass.CRYPTO,
+        asset_class=AssetClass.EQUITY_US,
         trade_cost=TradeCostConfig(
             open_fee_percent=0.15,
             close_fee_percent=0.15,
