@@ -1,10 +1,11 @@
 from collections import deque
 from datetime import timedelta
 
+from app.instruments.models import TrendStrategyConfig
 from app.market.models import Candle, MarketSnapshot
-from app.strategies.aggressive_strategy import AggressiveStrategyConfig
-from app.strategies.balanced_strategy import BalancedStrategyConfig
-from app.strategies.models import StrategyProfileConfig, TrendStrategyConfig
+from app.strategies.aggressive_strategy_config import AggressiveStrategyConfig
+from app.strategies.balanced_strategy_config import BalancedStrategyConfig
+from app.strategies.models import StrategyProfileConfig
 from app.strategies.signals import Signal
 
 StrategyMetadata = dict[str, float | int | str | bool]

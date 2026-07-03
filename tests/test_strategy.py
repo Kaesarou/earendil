@@ -4,9 +4,10 @@ import pytest
 
 from app.instruments.models import AssetClass
 from app.market.models import Candle, MarketSnapshot
-from app.strategies.aggressive_strategy import AggressiveStrategyConfig
-from app.strategies.balanced_strategy import BalancedStrategyConfig
+from app.strategies.aggressive_strategy_config import AggressiveStrategyConfig
+from app.strategies.balanced_strategy_config import BalancedStrategyConfig
 from app.strategies.models import TrendStrategyConfig
+from app.strategies.signals import Signal
 from app.strategies.strategy import TrendStrategy, strategy_profile_from_name
 
 
@@ -64,7 +65,7 @@ def snapshot(last: float, seconds: int = 0) -> MarketSnapshot:
     )
 
 
-def feed_prices(strategy: TrendStrategy, prices: list[float]):
+def feed_prices(strategy: TrendStrategy, prices: list[float]) -> Signal | None:
     signal = None
     for price in prices:
         signal = strategy.on_candle(candle(price))
@@ -157,7 +158,7 @@ def test_strategy_emits_sell_on_bearish_breakdown():
 def test_strategy_holds_when_session_move_is_too_small():
     strategy = TrendStrategy(config(min_session_move_percent=1.0))
 
-    signal = feed_prices(strategy, [100, 100.1, 100.2, 100.3, 100.4])
+    signal: Signal = feed_prices(strategy, [100, 100.1, 100.2, 100.3, 100.4])
 
     assert signal.action == 'HOLD'
     assert signal.reason == 'session_trend_neutral'

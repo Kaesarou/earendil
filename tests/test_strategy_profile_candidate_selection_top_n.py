@@ -1,5 +1,5 @@
 from app.instruments.models import AssetClass
-from app.strategies.balanced_strategy import BalancedStrategyConfig
+from app.strategies.balanced_strategy_config import BalancedStrategyConfig
 
 
 def test_strategy_profile_resolves_global_candidate_selection_top_n_for_every_asset_class():
