@@ -1,6 +1,7 @@
 import pytest
 
 from app.config.settings import Settings
+from app.instruments.base_configs import CRYPTO_CONFIG
 from app.instruments.instrument_registry import InstrumentRegistry
 from app.instruments.models import AssetClass, RiskProfile
 
@@ -74,12 +75,15 @@ def test_instrument_registry_accepts_supported_watchlist_symbols():
     registry.validate_supported_symbols(settings.watchlist_symbols())
 
 
-def test_instrument_registry_returns_default_crypto_risk_profile():
+def test_instrument_registry_returns_default_crypto_config_and_risk_profile():
     settings = Settings(CRYPTO_SYMBOLS='DOGE')
     registry = InstrumentRegistry(settings)
 
+    instrument_config = registry.config_for('DOGE')
     risk_profile = registry.risk_profile_for('DOGE')
 
+    assert instrument_config == CRYPTO_CONFIG
+    assert risk_profile == instrument_config.risk
     assert risk_profile.asset_class == AssetClass.CRYPTO
     assert risk_profile.stop_loss_percent == 1.5
     assert risk_profile.take_profit_percent == 3.0
@@ -114,8 +118,10 @@ def test_instrument_registry_can_receive_custom_risk_profiles_for_tests_or_futur
         },
     )
 
+    instrument_config = registry.config_for('DOGE')
     risk_profile = registry.risk_profile_for('DOGE')
 
+    assert instrument_config.risk == custom_crypto_profile
     assert risk_profile.asset_class == AssetClass.CRYPTO
     assert risk_profile.max_position_size_percent == 1.0
     assert risk_profile.stop_loss_percent == 2.0
