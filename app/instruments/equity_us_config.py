@@ -6,10 +6,10 @@ from app.risk.trade_cost_model import TradeCostConfig
 
 @dataclass(frozen=True)
 class EquityUsConfig(InstrumentConfig):
-    trend: TrendStrategyConfig =TrendStrategyConfig(
+    trend: TrendStrategyConfig = TrendStrategyConfig(
         lookback=3,
-        fast_lookback = 5,
-        slow_lookback = 15,
+        fast_lookback=5,
+        slow_lookback=15,
         session_lookback=30,
         min_session_move_percent=0.20,
         min_breakout_percent=0.04,
@@ -24,7 +24,7 @@ class EquityUsConfig(InstrumentConfig):
         snapshot_momentum_window_seconds=180,
         min_snapshot_momentum_percent=0.20,
     )
-    risk: RiskProfile =RiskProfile(
+    risk: RiskProfile = RiskProfile(
         asset_class=AssetClass.EQUITY_US,
         max_position_size_percent=0.75,
         stop_loss_percent=0.90,
