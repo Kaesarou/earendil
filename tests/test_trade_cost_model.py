@@ -46,12 +46,17 @@ def test_trade_cost_model_estimates_equity_cfd_costs_with_spread():
     assert estimate.min_expected_net_profit == 5.0
 
 
-def test_trade_cost_model_uses_legacy_fixed_fees_when_disabled():
+def test_trade_cost_model_uses_fixed_fees_from_config():
     estimate = TradeCostModel().estimate(
         position_value=1000.0,
         expected_move_percent=1.6,
         spread_percent=0.10,
-        config=TradeCostConfig(),
+        config=TradeCostConfig(
+            fixed_open_fee=1.0,
+            fixed_close_fee=1.5,
+            include_spread_cost=False,
+            min_expected_net_profit=5.0,
+        ),
     )
 
     assert estimate.expected_gross_profit == 16.0
