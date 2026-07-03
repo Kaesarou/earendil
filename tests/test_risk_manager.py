@@ -72,10 +72,24 @@ def build_risk_manager(
         MAX_OPEN_POSITIONS=max_open_positions,
         MAX_OPEN_POSITIONS_PER_SYMBOL=max_open_positions_per_symbol,
         MAX_TRADES_PER_DAY=max_trades_per_day,
+        EQUITY_US_SYMBOLS='AAPL,MSFT',
         CRYPTO_SYMBOLS=crypto_symbols,
     )
 
     risk_profiles = {
+        AssetClass.EQUITY_US: risk_profile(
+            asset_class=AssetClass.EQUITY_US,
+            trade_cost=trade_cost,
+            max_spread_percent=max_spread_percent,
+            min_move_spread_ratio=min_move_spread_ratio,
+            dynamic_sl_tp_enabled=dynamic_sl_tp_enabled,
+            stop_loss_atr_multiplier=stop_loss_atr_multiplier,
+            take_profit_atr_multiplier=take_profit_atr_multiplier,
+            min_stop_loss_percent=min_stop_loss_percent,
+            max_stop_loss_percent=max_stop_loss_percent,
+            min_take_profit_percent=min_take_profit_percent,
+            max_take_profit_percent=max_take_profit_percent,
+        ),
         AssetClass.CRYPTO: risk_profile(
             asset_class=AssetClass.CRYPTO,
             max_position_size_percent=crypto_max_position_size_percent,
