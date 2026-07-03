@@ -70,6 +70,7 @@ AGGRESSIVE_EQUITY_EU_CONFIG = with_overrides(
 class AggressiveStrategyConfig(StrategyProfileConfig):
     name: str = 'aggressive'
     candidate_selection_top_n: int = 2
+    candidate_selection_min_score: float = 105.0
     crypto: InstrumentConfig = AGGRESSIVE_CRYPTO_CONFIG
     equity_us: InstrumentConfig = AGGRESSIVE_EQUITY_US_CONFIG
     equity_eu: InstrumentConfig = AGGRESSIVE_EQUITY_EU_CONFIG

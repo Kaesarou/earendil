@@ -2,6 +2,7 @@ from datetime import datetime, timezone
 
 from app.execution.candidate_ranking import build_trade_candidate
 from app.execution.candidate_selector import CandidateSelectionConfig, select_trade_candidates
+from app.execution.trade_candidate import TradeCandidate
 from app.market.models import Candle, MarketSnapshot
 from app.strategies.signals import Signal
 
@@ -77,7 +78,7 @@ def test_candidate_selector_keeps_only_top_n_candidates():
 
     result = select_trade_candidates(
         candidates,
-        CandidateSelectionConfig(top_n=2),
+        CandidateSelectionConfig(top_n=2, min_score=0.0),
     )
 
     assert len(result.selected_candidates) == 2
@@ -95,7 +96,7 @@ def test_candidate_selector_only_rejects_candidates_outside_top_n():
 
     result = select_trade_candidates(
         candidates,
-        CandidateSelectionConfig(top_n=2),
+        CandidateSelectionConfig(top_n=2, min_score=0.0),
     )
 
     assert len(result.selected_candidates) == 2
@@ -128,8 +129,100 @@ def test_candidate_selector_does_not_reject_high_spread_candidate_before_risk_ma
 
     result = select_trade_candidates(
         [high_spread],
-        CandidateSelectionConfig(),
+        CandidateSelectionConfig(top_n=0, min_score=0.0),
     )
 
     assert result.selected_candidates == [high_spread]
     assert result.rejected_candidates == []
+
+def test_rejects_candidate_below_min_score():
+    low_score_candidate = make_candidate(score=114.99)
+
+    result = select_trade_candidates(
+        [low_score_candidate],
+        CandidateSelectionConfig(top_n=0, min_score=115.0),
+    )
+
+    assert result.selected_candidates == []
+    assert len(result.rejected_candidates) == 1
+    assert result.rejected_candidates[0].reason == 'candidate_selection_score_too_low'
+
+def test_keeps_candidate_at_min_score():
+    candidate = make_candidate(score=115.0)
+
+    result = select_trade_candidates(
+        [candidate],
+        CandidateSelectionConfig(top_n=0, min_score=115.0),
+    )
+
+    assert result.selected_candidates == [candidate]
+    assert result.rejected_candidates == []
+
+def test_applies_top_n_after_min_score_filter():
+    candidate_130 = make_candidate(score=130)
+    candidate_120 = make_candidate(score=120)
+    candidate_110 = make_candidate(score=110)
+
+    result = select_trade_candidates(
+        [candidate_110, candidate_130, candidate_120],
+        CandidateSelectionConfig(top_n=1, min_score=115.0),
+    )
+
+    assert result.selected_candidates == [candidate_130]
+
+    rejected_reasons = [rejected.reason for rejected in result.rejected_candidates]
+    assert 'candidate_selection_score_too_low' in rejected_reasons
+    assert 'candidate_selection_outside_top_n' in rejected_reasons
+
+def make_candidate(
+    *,
+    symbol: str = "AAPL",
+    action: str = "BUY",
+    score: float = 120.0,
+    confidence: float = 0.8,
+    reason: str = "test_signal",
+) -> TradeCandidate:
+    now = datetime.now(timezone.utc)
+
+    snapshot = MarketSnapshot(
+        symbol=symbol,
+        bid=99.95,
+        ask=100.05,
+        last=100.0,
+        timestamp=now,
+    )
+
+    candle = Candle(
+        symbol=symbol,
+        timeframe_seconds=60,
+        open=99.5,
+        high=100.2,
+        low=99.4,
+        close=100.0,
+        volume=None,
+        opened_at=now,
+        closed_at=now,
+    )
+
+    signal = Signal(
+        action=action,
+        confidence=confidence,
+        reason=reason,
+        metadata={
+            "session_move_percent": 1.0,
+            "trend_strength_percent": 0.2,
+            "breakout_percent": 0.1 if action == "BUY" else 0.0,
+            "breakdown_percent": 0.1 if action == "SELL" else 0.0,
+            "candle_range_percent": 0.8,
+            "close_position_percent": 85.0 if action == "BUY" else 15.0,
+        },
+    )
+
+    return TradeCandidate(
+        symbol=symbol,
+        snapshot=snapshot,
+        candle=candle,
+        signal=signal,
+        score=score,
+        rank_reason=f"test_score={score}",
+    )

@@ -31,6 +31,7 @@ BALANCED_EQUITY_EU_CONFIG = with_risk_overrides(
 class BalancedStrategyConfig(StrategyProfileConfig):
     name: str = 'balanced'
     candidate_selection_top_n: int = 2
+    candidate_selection_min_score: float = 115.0
     crypto: InstrumentConfig = BALANCED_CRYPTO_CONFIG
     equity_us: InstrumentConfig = BALANCED_EQUITY_US_CONFIG
     equity_eu: InstrumentConfig = BALANCED_EQUITY_EU_CONFIG

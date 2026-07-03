@@ -10,7 +10,8 @@ class StrategyProfileConfig:
     crypto: InstrumentConfig
     equity_us: InstrumentConfig
     equity_eu: InstrumentConfig
-    candidate_selection_top_n: int = 0
+    candidate_selection_top_n: int
+    candidate_selection_min_score: float
 
     @property
     def instrument_configs(self) -> dict[AssetClass, InstrumentConfig]:
@@ -42,4 +43,5 @@ class StrategyProfileConfig:
         self.instrument_config_for_asset_class(asset_class)
         return CandidateSelectionConfig(
             top_n=self.candidate_selection_top_n,
+            min_score=self.candidate_selection_min_score
         )
