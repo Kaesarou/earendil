@@ -21,7 +21,6 @@ from app.persistence.position_store import PositionStore
 from app.persistence.trade_cooldown_store import TradeCooldownStore
 from app.risk.models import TradePlan
 from app.risk.position_sizing import FixedPercentPositionSizing
-from app.risk.profiles import risk_profiles_for_aggressiveness
 from app.risk.risk_manager import RiskManager
 from app.risk.trade_cooldown import build_trade_cooldown_entry
 from app.risk.trade_cooldown_guard import TradeCooldownGuard
@@ -70,14 +69,9 @@ def build_strategy_profile(settings: Settings) -> StrategyProfileConfig:
 def build_strategies(
     symbols: list[str],
     instrument_registry: InstrumentRegistry,
-    strategy_profile: StrategyProfileConfig,
 ) -> dict[str, TrendStrategy]:
     return {
-        symbol: TrendStrategy(
-            strategy_profile.trend_config_for_asset_class(
-                instrument_registry.resolve(symbol).asset_class,
-            )
-        )
+        symbol: TrendStrategy(instrument_registry.config_for(symbol).trend)
         for symbol in symbols
     }
 
@@ -806,9 +800,13 @@ def main() -> None:
     configure_logging(level=settings.log_level, log_file_path=settings.app_log_path)
 
     symbols = settings.watchlist_symbols()
+
     strategy_profile = build_strategy_profile(settings)
-    risk_profiles = risk_profiles_for_aggressiveness(settings.strategy_aggressiveness)
-    instrument_registry = InstrumentRegistry(settings, risk_profiles=risk_profiles)
+    instrument_registry = InstrumentRegistry(
+        settings,
+        instrument_configs=strategy_profile.instrument_configs,
+    )
+
     instrument_registry.validate_supported_symbols(symbols)
 
     logger.info(
@@ -822,7 +820,6 @@ def main() -> None:
     strategies = build_strategies(
         symbols=symbols,
         instrument_registry=instrument_registry,
-        strategy_profile=strategy_profile,
     )
     candle_builders = build_candle_builders(settings, symbols)
     risk_manager = build_risk_manager(settings=settings, instrument_registry=instrument_registry)
