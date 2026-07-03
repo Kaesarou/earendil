@@ -809,6 +809,7 @@ def main() -> None:
     strategy_profile = build_strategy_profile(settings)
     risk_profiles = risk_profiles_for_aggressiveness(settings.strategy_aggressiveness)
     instrument_registry = InstrumentRegistry(settings, risk_profiles=risk_profiles)
+    instrument_registry.validate_supported_symbols(symbols)
 
     logger.info(
         'Starting Eärendil | broker=%s | strategy_profile=%s | watchlist=%s',

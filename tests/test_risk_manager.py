@@ -76,19 +76,6 @@ def build_risk_manager(
     )
 
     risk_profiles = {
-        AssetClass.UNKNOWN: risk_profile(
-            asset_class=AssetClass.UNKNOWN,
-            trade_cost=trade_cost,
-            max_spread_percent=max_spread_percent,
-            min_move_spread_ratio=min_move_spread_ratio,
-            dynamic_sl_tp_enabled=dynamic_sl_tp_enabled,
-            stop_loss_atr_multiplier=stop_loss_atr_multiplier,
-            take_profit_atr_multiplier=take_profit_atr_multiplier,
-            min_stop_loss_percent=min_stop_loss_percent,
-            max_stop_loss_percent=max_stop_loss_percent,
-            min_take_profit_percent=min_take_profit_percent,
-            max_take_profit_percent=max_take_profit_percent,
-        ),
         AssetClass.CRYPTO: risk_profile(
             asset_class=AssetClass.CRYPTO,
             max_position_size_percent=crypto_max_position_size_percent,

@@ -52,7 +52,6 @@ def build_risk_manager(profile: RiskProfile) -> RiskManager:
             settings,
             risk_profiles={
                 profile.asset_class: profile,
-                AssetClass.UNKNOWN: profile,
             },
         ),
     )
@@ -68,7 +67,7 @@ def buy_signal() -> Signal:
 
 def test_risk_manager_uses_dynamic_equity_trade_costs_and_net_breakeven():
     profile = risk_profile(
-        asset_class=AssetClass.UNKNOWN,
+        asset_class=AssetClass.CRYPTO,
         trade_cost=TradeCostConfig(
             open_fee_percent=0.15,
             close_fee_percent=0.15,
@@ -106,7 +105,7 @@ def test_risk_manager_uses_dynamic_equity_trade_costs_and_net_breakeven():
 
 def test_risk_manager_rejects_trade_when_dynamic_net_profit_is_too_low():
     profile = risk_profile(
-        asset_class=AssetClass.UNKNOWN,
+        asset_class=AssetClass.CRYPTO,
         take_profit_percent=3.0,
         trade_cost=TradeCostConfig(
             open_fee_percent=1.0,
@@ -133,7 +132,7 @@ def test_risk_manager_rejects_trade_when_dynamic_net_profit_is_too_low():
 
 def test_risk_manager_uses_trade_cost_min_profit_when_enabled():
     profile = risk_profile(
-        asset_class=AssetClass.UNKNOWN,
+        asset_class=AssetClass.CRYPTO,
         min_expected_net_profit=999.0,
         trade_cost=TradeCostConfig(
             open_fee_percent=0.15,
@@ -157,7 +156,7 @@ def test_risk_manager_uses_trade_cost_min_profit_when_enabled():
 
 def test_risk_manager_uses_net_breakeven_buffer_when_configured_buffer_is_positive():
     profile = risk_profile(
-        asset_class=AssetClass.UNKNOWN,
+        asset_class=AssetClass.CRYPTO,
         trade_cost=TradeCostConfig(
             open_fee_percent=0.15,
             close_fee_percent=0.15,

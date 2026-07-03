@@ -19,8 +19,6 @@ AGGRESSIVE_TRADE_COOLDOWN = TradeCooldownConfig(
     after_unknown_close_minutes=10,
 )
 
-UNKNOWN_TRADE_COST = TradeCostConfig()
-
 EQUITY_CFD_TRADE_COST = TradeCostConfig(
     open_fee_percent=0.15,
     close_fee_percent=0.15,
@@ -37,32 +35,6 @@ CRYPTO_TRADE_COST = TradeCostConfig(
     fixed_close_fee=0.0,
     include_spread_cost=True,
     min_expected_net_profit=8.00,
-)
-
-UNKNOWN_RISK_PROFILE = RiskProfile(
-    asset_class=AssetClass.UNKNOWN,
-    max_position_size_percent=20.0,
-    stop_loss_percent=0.8,
-    take_profit_percent=1.2,
-    force_close_enabled=True,
-    force_close_hour=21,
-    force_close_minute=55,
-    max_spread_percent=0.0,
-    min_move_spread_ratio=0.0,
-    dynamic_sl_tp_enabled=False,
-    stop_loss_atr_multiplier=1.5,
-    take_profit_atr_multiplier=2.5,
-    min_stop_loss_percent=0.0,
-    max_stop_loss_percent=0.0,
-    min_take_profit_percent=0.0,
-    max_take_profit_percent=0.0,
-    breakeven_stop_enabled=True,
-    breakeven_trigger_percent=1.0,
-    breakeven_buffer_percent=0.0,
-    trailing_stop_enabled=True,
-    trailing_stop_trigger_percent=1.5,
-    trailing_stop_distance_percent=0.8,
-    trade_cost=UNKNOWN_TRADE_COST,
 )
 
 CRYPTO_RISK_PROFILE = RiskProfile(
@@ -148,10 +120,6 @@ def _risk_profiles_with_cooldown(
     trade_cooldown: TradeCooldownConfig,
 ) -> dict[AssetClass, RiskProfile]:
     return {
-        AssetClass.UNKNOWN: replace(
-            UNKNOWN_RISK_PROFILE,
-            trade_cooldown=trade_cooldown,
-        ),
         AssetClass.CRYPTO: replace(
             CRYPTO_RISK_PROFILE,
             trade_cooldown=trade_cooldown,

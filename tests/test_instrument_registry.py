@@ -14,7 +14,6 @@ def test_instrument_registry_resolves_asset_classes_from_settings():
     assert registry.resolve('doge').asset_class == AssetClass.CRYPTO
     assert registry.resolve('MSFT').asset_class == AssetClass.EQUITY_US
     assert registry.resolve('air.pa').asset_class == AssetClass.EQUITY_EU
-    assert registry.resolve('UNKNOWN').asset_class == AssetClass.UNKNOWN
 
 
 def test_instrument_registry_returns_default_crypto_risk_profile():
@@ -27,26 +26,6 @@ def test_instrument_registry_returns_default_crypto_risk_profile():
     assert risk_profile.stop_loss_percent == 1.5
     assert risk_profile.take_profit_percent == 3.0
     assert risk_profile.force_close_enabled is False
-
-
-def test_instrument_registry_falls_back_to_default_unknown_risk_profile():
-    settings = Settings(
-        CRYPTO_SYMBOLS='',
-        EQUITY_US_SYMBOLS='',
-        EQUITY_EU_SYMBOLS='',
-    )
-    registry = InstrumentRegistry(settings)
-
-    risk_profile = registry.risk_profile_for('AAPL')
-
-    assert risk_profile.asset_class == AssetClass.UNKNOWN
-    assert risk_profile.max_position_size_percent == 20.0
-    assert risk_profile.stop_loss_percent == 0.8
-    assert risk_profile.take_profit_percent == 1.2
-    assert risk_profile.force_close_enabled is True
-    assert risk_profile.force_close_hour == 21
-    assert risk_profile.force_close_minute == 55
-
 
 def test_instrument_registry_can_receive_custom_risk_profiles_for_tests_or_future_profiles():
     settings = Settings(CRYPTO_SYMBOLS='DOGE')
@@ -72,7 +51,6 @@ def test_instrument_registry_can_receive_custom_risk_profiles_for_tests_or_futur
     registry = InstrumentRegistry(
         settings,
         risk_profiles={
-            AssetClass.UNKNOWN: custom_crypto_profile,
             AssetClass.CRYPTO: custom_crypto_profile,
         },
     )

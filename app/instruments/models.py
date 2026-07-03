@@ -9,7 +9,6 @@ class AssetClass(StrEnum):
     CRYPTO = 'CRYPTO'
     EQUITY_US = 'EQUITY_US'
     EQUITY_EU = 'EQUITY_EU'
-    UNKNOWN = 'UNKNOWN'
 
 
 @dataclass(frozen=True)
