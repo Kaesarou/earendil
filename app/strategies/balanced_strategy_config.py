@@ -1,8 +1,6 @@
 from dataclasses import dataclass
 
-from app.instruments.crypto_config import CryptoConfig
-from app.instruments.equity_eu_config import EquityEuConfig
-from app.instruments.equity_us_config import EquityUsConfig
+from app.instruments.base_configs import CRYPTO_CONFIG, EQUITY_EU_CONFIG, EQUITY_US_CONFIG
 from app.instruments.models import TrendStrategyConfig
 from app.strategies.models import StrategyProfileConfig
 
@@ -11,7 +9,6 @@ from app.strategies.models import StrategyProfileConfig
 class BalancedStrategyConfig(StrategyProfileConfig):
     name: str = 'balanced'
     candidate_selection_top_n: int = 2
-    crypto: TrendStrategyConfig =CryptoConfig().trend
-    equity_us: TrendStrategyConfig =EquityUsConfig().trend
-    equity_eu: TrendStrategyConfig =EquityEuConfig().trend
-    
+    crypto: TrendStrategyConfig = CRYPTO_CONFIG.trend
+    equity_us: TrendStrategyConfig = EQUITY_US_CONFIG.trend
+    equity_eu: TrendStrategyConfig = EQUITY_EU_CONFIG.trend
