@@ -4,6 +4,7 @@ from app.instruments.models import AssetClass, RiskProfile
 from app.market.models import MarketSnapshot
 from app.risk.position_sizing import FixedPercentPositionSizing
 from app.risk.risk_manager import RiskManager
+from app.risk.trade_cost_model import TradeCostConfig
 from app.strategies.signals import Signal
 
 
@@ -12,8 +13,6 @@ def risk_profile(
     max_position_size_percent: float = 40.0,
     stop_loss_percent: float = 0.3,
     take_profit_percent: float = 0.5,
-    estimated_round_trip_fees: float = 0.0,
-    min_expected_net_profit: float = 0.0,
     max_spread_percent: float = 0.0,
     min_move_spread_ratio: float = 0.0,
     dynamic_sl_tp_enabled: bool = False,
@@ -23,6 +22,7 @@ def risk_profile(
     max_stop_loss_percent: float = 0.0,
     min_take_profit_percent: float = 0.0,
     max_take_profit_percent: float = 0.0,
+    trade_cost: TradeCostConfig | None = None,
 ) -> RiskProfile:
     return RiskProfile(
         asset_class=asset_class,
@@ -41,6 +41,7 @@ def risk_profile(
         max_stop_loss_percent=max_stop_loss_percent,
         min_take_profit_percent=min_take_profit_percent,
         max_take_profit_percent=max_take_profit_percent,
+        trade_cost=trade_cost or TradeCostConfig(include_spread_cost=False),
     )
 
 
@@ -48,8 +49,7 @@ def build_risk_manager(
     max_open_positions: int = 2,
     max_open_positions_per_symbol: int = 1,
     max_trades_per_day: int = 10,
-    estimated_round_trip_fees: float = 0.0,
-    min_expected_net_profit: float = 0.0,
+    trade_cost: TradeCostConfig | None = None,
     max_spread_percent: float = 0.0,
     min_move_spread_ratio: float = 0.0,
     dynamic_sl_tp_enabled: bool = False,
@@ -63,8 +63,7 @@ def build_risk_manager(
     crypto_max_position_size_percent: float = 0.75,
     crypto_stop_loss_percent: float = 1.5,
     crypto_take_profit_percent: float = 3.0,
-    crypto_estimated_round_trip_fees: float = 3.0,
-    crypto_min_expected_net_profit: float = 8.0,
+    crypto_trade_cost: TradeCostConfig | None = None,
     crypto_force_close_enabled: bool = False,
     crypto_max_spread_percent: float = 0.0,
     crypto_min_move_spread_ratio: float = 0.0,
@@ -79,8 +78,7 @@ def build_risk_manager(
     risk_profiles = {
         AssetClass.UNKNOWN: risk_profile(
             asset_class=AssetClass.UNKNOWN,
-            estimated_round_trip_fees=estimated_round_trip_fees,
-            min_expected_net_profit=min_expected_net_profit,
+            trade_cost=trade_cost,
             max_spread_percent=max_spread_percent,
             min_move_spread_ratio=min_move_spread_ratio,
             dynamic_sl_tp_enabled=dynamic_sl_tp_enabled,
@@ -96,8 +94,7 @@ def build_risk_manager(
             max_position_size_percent=crypto_max_position_size_percent,
             stop_loss_percent=crypto_stop_loss_percent,
             take_profit_percent=crypto_take_profit_percent,
-            estimated_round_trip_fees=crypto_estimated_round_trip_fees,
-            min_expected_net_profit=crypto_min_expected_net_profit,
+            trade_cost=crypto_trade_cost,
             max_spread_percent=crypto_max_spread_percent,
             min_move_spread_ratio=crypto_min_move_spread_ratio,
         ),
@@ -171,8 +168,10 @@ def test_risk_manager_uses_crypto_risk_profile_for_crypto_symbol():
         crypto_max_position_size_percent=1.0,
         crypto_stop_loss_percent=1.5,
         crypto_take_profit_percent=3.0,
-        crypto_estimated_round_trip_fees=0.05,
-        crypto_min_expected_net_profit=0.0,
+        crypto_trade_cost=TradeCostConfig(
+            fixed_open_fee=0.05,
+            include_spread_cost=False,
+        ),
     )
 
     plan = risk_manager.evaluate(
@@ -387,8 +386,10 @@ def test_risk_manager_rejects_when_max_trades_per_day_is_reached():
 
 def test_risk_manager_rejects_when_expected_profit_does_not_cover_fees():
     risk_manager = build_risk_manager(
-        estimated_round_trip_fees=0.25,
-        min_expected_net_profit=0.0,
+        trade_cost=TradeCostConfig(
+            fixed_open_fee=0.25,
+            include_spread_cost=False,
+        ),
     )
 
     plan = risk_manager.evaluate(
@@ -407,8 +408,11 @@ def test_risk_manager_rejects_when_expected_profit_does_not_cover_fees():
 
 def test_risk_manager_rejects_when_expected_net_profit_is_below_minimum():
     risk_manager = build_risk_manager(
-        estimated_round_trip_fees=0.05,
-        min_expected_net_profit=0.2,
+        trade_cost=TradeCostConfig(
+            fixed_open_fee=0.05,
+            include_spread_cost=False,
+            min_expected_net_profit=0.2,
+        ),
     )
 
     plan = risk_manager.evaluate(
@@ -426,8 +430,11 @@ def test_risk_manager_rejects_when_expected_net_profit_is_below_minimum():
 
 def test_risk_manager_approves_when_expected_net_profit_matches_minimum():
     risk_manager = build_risk_manager(
-        estimated_round_trip_fees=0.05,
-        min_expected_net_profit=0.15,
+        trade_cost=TradeCostConfig(
+            fixed_open_fee=0.05,
+            include_spread_cost=False,
+            min_expected_net_profit=0.15,
+        ),
     )
 
     plan = risk_manager.evaluate(
