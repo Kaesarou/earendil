@@ -6,11 +6,21 @@ from app.brokers.base import BrokerClient
 from app.config.settings import Settings, get_settings
 from app.execution.candidate_ranking import build_trade_candidate, rank_trade_candidates
 from app.execution.position_tracker import ClosedPosition, PositionTracker, TrackedPosition
+from app.execution.candidate_economics import (
+    CandidateEconomicsEstimator,
+    EvaluatedTradeCandidate,
+)
+from app.execution.candidate_ranking import build_trade_candidate, rank_trade_candidates
 from app.execution.candidate_selector import (
     CandidateSelectionResult,
+    EvaluatedCandidateSelectionResult,
     RejectedCandidateSelection,
+    RejectedEvaluatedCandidateSelection,
+    rank_evaluated_trade_candidates,
+    select_evaluated_trade_candidates,
     select_trade_candidates,
 )
+from app.execution.position_tracker import ClosedPosition, PositionTracker, TrackedPosition
 from app.execution.trade_candidate import TradeCandidate
 from app.execution.trade_executor import TradeExecutor
 from app.instruments.instrument_registry import InstrumentRegistry
@@ -51,6 +61,13 @@ def build_risk_manager(
         instrument_registry=instrument_registry,
     )
 
+def build_candidate_economics_estimator(
+    instrument_registry: InstrumentRegistry,
+) -> CandidateEconomicsEstimator:
+    return CandidateEconomicsEstimator(
+        position_sizing_strategy=FixedPercentPositionSizing(),
+        instrument_registry=instrument_registry,
+    )
 
 def build_candle_builders(
     settings: Settings,
@@ -563,6 +580,67 @@ def select_trade_candidates_with_strategy_profile(
         rejected_candidates=rejected_candidates,
     )
 
+def select_evaluated_trade_candidates_with_strategy_profile(
+    evaluated_candidates: list[EvaluatedTradeCandidate],
+    risk_manager: RiskManager,
+    strategy_profile: StrategyProfileConfig,
+) -> EvaluatedCandidateSelectionResult:
+    selected_candidates: list[EvaluatedTradeCandidate] = []
+    rejected_candidates: list[RejectedEvaluatedCandidateSelection] = []
+    top_n_limits: list[int] = []
+
+    for evaluated_candidate in rank_evaluated_trade_candidates(evaluated_candidates):
+        candidate = evaluated_candidate.candidate
+        asset_class = risk_manager.instrument_profile_for(candidate.symbol).asset_class
+        candidate_selection_config = strategy_profile.candidate_selection_config_for_asset_class(asset_class)
+        top_n_limits.append(candidate_selection_config.top_n)
+
+        candidate_selection_result = select_evaluated_trade_candidates(
+            [evaluated_candidate],
+            candidate_selection_config,
+        )
+
+        if candidate_selection_result.selected_candidates:
+            selected_candidates.append(evaluated_candidate)
+        else:
+            rejected_candidates.extend(candidate_selection_result.rejected_candidates)
+
+    positive_top_n_limits = [limit for limit in top_n_limits if limit > 0]
+    top_n = min(positive_top_n_limits) if positive_top_n_limits else 0
+
+    if top_n > 0 and len(selected_candidates) > top_n:
+        kept_candidates = selected_candidates[:top_n]
+        overflow_candidates = selected_candidates[top_n:]
+        rejected_candidates.extend(
+            RejectedEvaluatedCandidateSelection(
+                evaluated_candidate=evaluated_candidate,
+                reason='candidate_selection_outside_top_n',
+            )
+            for evaluated_candidate in overflow_candidates
+        )
+        selected_candidates = kept_candidates
+
+    return EvaluatedCandidateSelectionResult(
+        selected_candidates=selected_candidates,
+        rejected_candidates=rejected_candidates,
+    )
+
+def _legacy_selection_result_from_evaluated(
+    selection_result: EvaluatedCandidateSelectionResult,
+) -> CandidateSelectionResult:
+    return CandidateSelectionResult(
+        selected_candidates=[
+            evaluated_candidate.candidate
+            for evaluated_candidate in selection_result.selected_candidates
+        ],
+        rejected_candidates=[
+            RejectedCandidateSelection(
+                candidate=rejected.evaluated_candidate.candidate,
+                reason=rejected.reason,
+            )
+            for rejected in selection_result.rejected_candidates
+        ],
+    )
 
 def apply_trade_cooldown_guard(
     *,
@@ -636,6 +714,7 @@ def execute_ranked_candidates(
     position_store: PositionStore | None = None,
     strategy_profile: StrategyProfileConfig | None = None,
     cooldown_guard: TradeCooldownGuard | None = None,
+    candidate_economics_estimator: CandidateEconomicsEstimator | None = None,
 ) -> None:
     if not candidates:
         return
@@ -650,28 +729,73 @@ def execute_ranked_candidates(
         if not candidates:
             return
 
-    if strategy_profile is None:
-        ranked_candidates = rank_trade_candidates(candidates)
-        candidate_selection_result = CandidateSelectionResult(
-            selected_candidates=ranked_candidates,
-            rejected_candidates=[],
-        )
+        selected_evaluated_candidates: list[EvaluatedTradeCandidate] | None = None
+    rejected_evaluated_candidates: list[RejectedEvaluatedCandidateSelection] | None = None
+
+    if candidate_economics_estimator is None:
+        if strategy_profile is None:
+            ranked_candidates = rank_trade_candidates(candidates)
+            candidate_selection_result = CandidateSelectionResult(
+                selected_candidates=ranked_candidates,
+                rejected_candidates=[],
+            )
+        else:
+            candidate_selection_result = select_trade_candidates_with_strategy_profile(
+                candidates=candidates,
+                risk_manager=risk_manager,
+                strategy_profile=strategy_profile,
+            )
+            ranked_candidates = candidate_selection_result.selected_candidates
+
     else:
-        candidate_selection_result = select_trade_candidates_with_strategy_profile(
-            candidates=candidates,
-            risk_manager=risk_manager,
-            strategy_profile=strategy_profile,
+        equity_for_candidate_selection = execution_broker.get_account_equity()
+
+        evaluated_candidates = [
+            candidate_economics_estimator.evaluate(
+                candidate=candidate,
+                account_equity=equity_for_candidate_selection,
+            )
+            for candidate in candidates
+        ]
+
+        trade_journal.write(
+            'candidate_economics',
+            {
+                'equity': equity_for_candidate_selection,
+                'evaluated_candidates': evaluated_candidates,
+            },
+        )
+
+        if strategy_profile is None:
+            evaluated_selection_result = EvaluatedCandidateSelectionResult(
+                selected_candidates=rank_evaluated_trade_candidates(evaluated_candidates),
+                rejected_candidates=[],
+            )
+        else:
+            evaluated_selection_result = select_evaluated_trade_candidates_with_strategy_profile(
+                evaluated_candidates=evaluated_candidates,
+                risk_manager=risk_manager,
+                strategy_profile=strategy_profile,
+            )
+
+        selected_evaluated_candidates = evaluated_selection_result.selected_candidates
+        rejected_evaluated_candidates = evaluated_selection_result.rejected_candidates
+
+        candidate_selection_result = _legacy_selection_result_from_evaluated(
+            evaluated_selection_result
         )
         ranked_candidates = candidate_selection_result.selected_candidates
 
-    trade_journal.write(
-        'candidate_selection',
-        {
-            'strategy_profile': strategy_profile.name if strategy_profile else None,
-            'selected_candidates': candidate_selection_result.selected_candidates,
-            'rejected_candidates': candidate_selection_result.rejected_candidates,
-        },
-    )
+        trade_journal.write(
+            'candidate_selection',
+            {
+                'strategy_profile': strategy_profile.name if strategy_profile else None,
+                'selected_candidates': candidate_selection_result.selected_candidates,
+                'rejected_candidates': candidate_selection_result.rejected_candidates,
+                'selected_evaluated_candidates': selected_evaluated_candidates,
+                'rejected_evaluated_candidates': rejected_evaluated_candidates,
+            },
+        )
     logger.info(
         'Candidate selection | profile=%s | selected=%s | rejected=%s',
         strategy_profile.name if strategy_profile else None,
@@ -687,8 +811,19 @@ def execute_ranked_candidates(
 
     if not ranked_candidates:
         return
+    
+    candidate_economics_by_id = {
+        id(evaluated_candidate.candidate): evaluated_candidate.economics
+        for evaluated_candidate in selected_evaluated_candidates or []
+    }
 
-    trade_journal.write('candidate_ranking', {'candidates': ranked_candidates})
+    trade_journal.write(
+        'candidate_ranking',
+        {
+            'candidates': ranked_candidates,
+            'evaluated_candidates': selected_evaluated_candidates,
+        },
+    )
 
     logger.info(
         'Candidate ranking | candidates=%s',
@@ -697,6 +832,16 @@ def execute_ranked_candidates(
                 'symbol': candidate.symbol,
                 'action': candidate.signal.action,
                 'score': candidate.score,
+                'expected_net_profit': (
+                    round(candidate_economics_by_id[id(candidate)].expected_net_profit, 4)
+                    if id(candidate) in candidate_economics_by_id
+                    else None
+                ),
+                'expected_net_profit_percent': (
+                    round(candidate_economics_by_id[id(candidate)].expected_net_profit_percent, 4)
+                    if id(candidate) in candidate_economics_by_id
+                    else None
+                ),
                 'reason': candidate.rank_reason,
             }
             for candidate in ranked_candidates
@@ -713,6 +858,7 @@ def execute_ranked_candidates(
             )
             instrument_profile = risk_manager.instrument_profile_for(candidate.symbol)
             risk_profile = risk_manager.risk_profile_for(candidate.symbol)
+            candidate_economics = candidate_economics_by_id.get(id(candidate))
 
             trade_journal.write(
                 'decision',
@@ -722,6 +868,7 @@ def execute_ranked_candidates(
                     'candle': candidate.candle,
                     'signal': candidate.signal,
                     'candidate': candidate,
+                    'candidate_economics': candidate_economics,
                     'equity': equity,
                     'trade_plan': plan,
                     'instrument_profile': instrument_profile,
@@ -767,6 +914,7 @@ def execute_ranked_candidates(
                     'position_id': position_id,
                     'position': tracked_position,
                     'candidate': candidate,
+                    'candidate_economics': candidate_economics,
                     'trade_plan': plan,
                     'instrument_profile': instrument_profile,
                     'risk_profile': risk_profile,
@@ -823,6 +971,9 @@ def main() -> None:
     )
     candle_builders = build_candle_builders(settings, symbols)
     risk_manager = build_risk_manager(settings=settings, instrument_registry=instrument_registry)
+    candidate_economics_estimator = build_candidate_economics_estimator(
+        instrument_registry=instrument_registry,
+    )
     executor = TradeExecutor(broker)
     position_tracker = PositionTracker()
     position_store = PositionStore(settings.position_store_path)
@@ -900,6 +1051,7 @@ def main() -> None:
                 position_store=position_store,
                 strategy_profile=strategy_profile,
                 cooldown_guard=cooldown_guard,
+                candidate_economics_estimator=candidate_economics_estimator,
             )
 
         except KeyboardInterrupt:
