@@ -27,8 +27,10 @@ class FakeResponse:
 def build_uninitialized_client() -> EtoroClient:
     client = object.__new__(EtoroClient)
     client.etoro_api_base_url = 'https://example.test'
-    client.headers = {}
-    client.settings = SimpleNamespace()
+    client.settings = SimpleNamespace(
+        etoro_api_key='api-key',
+        etoro_user_key='user-key',
+    )
     return client
 
 
