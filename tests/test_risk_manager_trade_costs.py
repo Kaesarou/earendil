@@ -43,7 +43,10 @@ def risk_profile(
 
 
 def build_risk_manager(profile: RiskProfile) -> RiskManager:
-    settings = Settings(EQUITY_US_SYMBOLS='AAPL')
+    settings = Settings(
+        EQUITY_US_SYMBOLS='AAPL',
+        CRYPTO_SYMBOLS='BTC',
+    )
     return RiskManager(
         settings=settings,
         position_sizing_strategy=FixedPercentPositionSizing(),
