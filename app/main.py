@@ -22,8 +22,8 @@ from app.risk.trade_cooldown_guard import TradeCooldownGuard
 from app.runtime.candidate_flow import execute_ranked_candidates
 from app.runtime.factories import build_broker
 from app.runtime.position_lifecycle import (
+    close_positions_triggered_by_snapshot,
     reconcile_externally_closed_positions,
-    register_trade_cooldown_for_closed_position,
     restore_persisted_positions,
 )
 from app.strategies.strategy import (
@@ -105,67 +105,17 @@ def process_symbol(
     market_journal.write('market_snapshot', {'symbol': symbol, 'snapshot': snapshot})
     strategy.on_snapshot(snapshot)
 
-    close_signals = position_tracker.evaluate_snapshot(snapshot)
-    for close_signal in close_signals:
-        try:
-            executor.close(close_signal.position_id)
-            closed_position = position_tracker.record_closed_position(close_signal)
-            risk_manager.record_close_position(close_signal.symbol)
-
-            if position_store is not None:
-                try:
-                    position_store.delete_open_position(close_signal.position_id)
-                except Exception as exc:
-                    logger.exception(
-                        'Position persistence delete error | position_id=%s | error=%s',
-                        close_signal.position_id,
-                        exc,
-                    )
-                    trade_journal.write(
-                        'position_persistence_error',
-                        {
-                            'symbol': symbol,
-                            'position_id': close_signal.position_id,
-                            'message': str(exc),
-                        },
-                    )
-
-            if cooldown_store is not None:
-                register_trade_cooldown_for_closed_position(
-                    closed_position=closed_position,
-                    risk_manager=risk_manager,
-                    cooldown_store=cooldown_store,
-                    trade_journal=trade_journal,
-                )
-
-            trade_journal.write(
-                'position_closed',
-                {
-                    'symbol': symbol,
-                    'close_signal': close_signal,
-                    'closed_position': closed_position,
-                },
-            )
-
-        except Exception as exc:
-            if is_broker_authorization_error(exc):
-                raise
-
-            logger.exception(
-                'Position close error | symbol=%s | position_id=%s | reason=%s | error=%s',
-                symbol,
-                close_signal.position_id,
-                close_signal.reason,
-                exc,
-            )
-            trade_journal.write(
-                'position_close_error',
-                {
-                    'symbol': symbol,
-                    'close_signal': close_signal,
-                    'message': str(exc),
-                },
-            )
+    close_positions_triggered_by_snapshot(
+        symbol=symbol,
+        snapshot=snapshot,
+        executor=executor,
+        position_tracker=position_tracker,
+        risk_manager=risk_manager,
+        trade_journal=trade_journal,
+        position_store=position_store,
+        cooldown_store=cooldown_store,
+        is_broker_authorization_error=is_broker_authorization_error,
+    )
 
     closed_candle = candle_builder.on_snapshot(snapshot)
     if closed_candle is None:
