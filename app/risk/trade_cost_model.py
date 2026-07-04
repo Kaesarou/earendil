@@ -8,7 +8,7 @@ class TradeCostConfig:
     fixed_open_fee: float = 0.0
     fixed_close_fee: float = 0.0
     include_spread_cost: bool = True
-    min_expected_net_profit: float = 0.0
+    min_expected_net_profit_percent: float = 0.0
 
 
 @dataclass(frozen=True)
@@ -22,7 +22,9 @@ class TradeCostEstimate:
     total_estimated_cost: float
     total_estimated_cost_percent: float
     expected_net_profit: float
-    min_expected_net_profit: float
+    expected_net_profit_percent: float
+    min_expected_net_profit_percent: float
+    required_min_expected_net_profit_amount: float
 
 
 class TradeCostModel:
@@ -45,7 +47,9 @@ class TradeCostModel:
                 total_estimated_cost=0.0,
                 total_estimated_cost_percent=0.0,
                 expected_net_profit=0.0,
-                min_expected_net_profit=config.min_expected_net_profit,
+                expected_net_profit_percent=0.0,
+                min_expected_net_profit_percent=config.min_expected_net_profit_percent,
+                required_min_expected_net_profit_amount=0.0,
             )
 
         expected_gross_profit = position_value * (expected_move_percent / 100)
@@ -67,7 +71,7 @@ class TradeCostModel:
             fixed_fees=fixed_fees,
             spread_cost=spread_cost,
             total_estimated_cost=total_estimated_cost,
-            min_expected_net_profit=config.min_expected_net_profit,
+            min_expected_net_profit_percent=config.min_expected_net_profit_percent,
         )
 
     def _build_estimate(
@@ -80,8 +84,10 @@ class TradeCostModel:
         fixed_fees: float,
         spread_cost: float,
         total_estimated_cost: float,
-        min_expected_net_profit: float,
+        min_expected_net_profit_percent: float,
     ) -> TradeCostEstimate:
+        expected_net_profit = expected_gross_profit - total_estimated_cost
+
         return TradeCostEstimate(
             position_value=position_value,
             expected_gross_profit=expected_gross_profit,
@@ -91,6 +97,10 @@ class TradeCostModel:
             spread_cost=spread_cost,
             total_estimated_cost=total_estimated_cost,
             total_estimated_cost_percent=(total_estimated_cost / position_value) * 100,
-            expected_net_profit=expected_gross_profit - total_estimated_cost,
-            min_expected_net_profit=min_expected_net_profit,
+            expected_net_profit=expected_net_profit,
+            expected_net_profit_percent=(expected_net_profit / position_value) * 100,
+            min_expected_net_profit_percent=min_expected_net_profit_percent,
+            required_min_expected_net_profit_amount=(
+                position_value * min_expected_net_profit_percent / 100
+            ),
         )
