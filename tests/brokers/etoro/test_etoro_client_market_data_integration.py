@@ -15,6 +15,12 @@ def snapshot_values(snapshots: dict) -> dict:
     }
 
 
+def assert_snapshots_are_timestamped(snapshots: dict) -> None:
+    for snapshot in snapshots.values():
+        assert snapshot.timestamp is not None
+        assert snapshot.timestamp.tzinfo is not None
+
+
 def test_etoro_client_market_data_mapping_matches_extracted_mapper():
     rates_payload = {
         'rates': [
@@ -51,3 +57,5 @@ def test_etoro_client_market_data_mapping_matches_extracted_mapper():
     )
 
     assert snapshot_values(client_snapshots) == snapshot_values(mapper_snapshots)
+    assert_snapshots_are_timestamped(client_snapshots)
+    assert_snapshots_are_timestamped(mapper_snapshots)
