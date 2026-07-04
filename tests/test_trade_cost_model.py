@@ -9,7 +9,7 @@ def test_trade_cost_model_estimates_crypto_costs():
         config=TradeCostConfig(
             open_fee_percent=1.0,
             close_fee_percent=1.0,
-            min_expected_net_profit=8.0,
+            min_expected_net_profit_percent=0.10,
         ),
     )
 
@@ -20,7 +20,9 @@ def test_trade_cost_model_estimates_crypto_costs():
     assert estimate.total_estimated_cost == 20.0
     assert estimate.total_estimated_cost_percent == 2.0
     assert estimate.expected_net_profit == 10.0
-    assert estimate.min_expected_net_profit == 8.0
+    assert estimate.expected_net_profit_percent == 1.0
+    assert estimate.min_expected_net_profit_percent == 0.10
+    assert estimate.required_min_expected_net_profit_amount == 1.0
 
 
 def test_trade_cost_model_estimates_equity_cfd_costs_with_spread():
@@ -32,7 +34,7 @@ def test_trade_cost_model_estimates_equity_cfd_costs_with_spread():
             open_fee_percent=0.15,
             close_fee_percent=0.15,
             include_spread_cost=True,
-            min_expected_net_profit=5.0,
+            min_expected_net_profit_percent=0.10,
         ),
     )
 
@@ -43,7 +45,9 @@ def test_trade_cost_model_estimates_equity_cfd_costs_with_spread():
     assert estimate.total_estimated_cost == 4.0
     assert estimate.total_estimated_cost_percent == 0.4
     assert estimate.expected_net_profit == 12.0
-    assert estimate.min_expected_net_profit == 5.0
+    assert estimate.expected_net_profit_percent == 1.2
+    assert estimate.min_expected_net_profit_percent == 0.10
+    assert estimate.required_min_expected_net_profit_amount == 1.0
 
 
 def test_trade_cost_model_uses_fixed_fees_from_config():
@@ -55,7 +59,7 @@ def test_trade_cost_model_uses_fixed_fees_from_config():
             fixed_open_fee=1.0,
             fixed_close_fee=1.5,
             include_spread_cost=False,
-            min_expected_net_profit=5.0,
+            min_expected_net_profit_percent=0.10,
         ),
     )
 
@@ -67,4 +71,31 @@ def test_trade_cost_model_uses_fixed_fees_from_config():
     assert estimate.total_estimated_cost == 2.5
     assert estimate.total_estimated_cost_percent == 0.25
     assert estimate.expected_net_profit == 13.5
-    assert estimate.min_expected_net_profit == 5.0
+    assert estimate.expected_net_profit_percent == 1.35
+    assert estimate.min_expected_net_profit_percent == 0.10
+    assert estimate.required_min_expected_net_profit_amount == 1.0
+
+
+def test_trade_cost_model_scales_required_min_profit_with_position_value():
+    config = TradeCostConfig(
+        open_fee_percent=1.0,
+        close_fee_percent=1.0,
+        min_expected_net_profit_percent=0.10,
+    )
+
+    small = TradeCostModel().estimate(
+        position_value=500.0,
+        expected_move_percent=3.0,
+        spread_percent=None,
+        config=config,
+    )
+    large = TradeCostModel().estimate(
+        position_value=1000.0,
+        expected_move_percent=3.0,
+        spread_percent=None,
+        config=config,
+    )
+
+    assert small.expected_net_profit_percent == large.expected_net_profit_percent
+    assert small.required_min_expected_net_profit_amount == 0.5
+    assert large.required_min_expected_net_profit_amount == 1.0
