@@ -24,15 +24,17 @@ class EffectiveRisk:
 @dataclass(frozen=True)
 class TradeCostPlanFields:
     expected_gross_profit: float | None = None
-    estimated_fees: float | None = None
     expected_net_profit: float | None = None
+    expected_net_profit_percent: float | None = None
+    required_min_expected_net_profit_amount: float | None = None
+    min_expected_net_profit_percent: float | None = None
+    estimated_fees: float | None = None
     estimated_open_fee: float | None = None
     estimated_close_fee: float | None = None
     estimated_fixed_fees: float | None = None
     estimated_spread_cost: float | None = None
     estimated_total_cost: float | None = None
     estimated_total_cost_percent: float | None = None
-    min_expected_net_profit: float | None = None
 
 
 class RiskManager:
@@ -108,7 +110,10 @@ class RiskManager:
             config=risk_profile.trade_cost,
         )
 
-        if trade_cost_estimate.expected_net_profit < trade_cost_estimate.min_expected_net_profit:
+        if (
+            trade_cost_estimate.expected_net_profit_percent
+            < trade_cost_estimate.min_expected_net_profit_percent
+        ):
             return self._rejected_plan(
                 reason='expected_profit_too_low_after_fees',
                 signal=signal,
@@ -233,15 +238,19 @@ class RiskManager:
             side=signal.action,
             amount=self._round_optional(amount),
             expected_gross_profit=trade_cost_fields.expected_gross_profit,
-            estimated_fees=trade_cost_fields.estimated_fees,
             expected_net_profit=trade_cost_fields.expected_net_profit,
+            expected_net_profit_percent=trade_cost_fields.expected_net_profit_percent,
+            required_min_expected_net_profit_amount=(
+                trade_cost_fields.required_min_expected_net_profit_amount
+            ),
+            min_expected_net_profit_percent=trade_cost_fields.min_expected_net_profit_percent,
+            estimated_fees=trade_cost_fields.estimated_fees,
             estimated_open_fee=trade_cost_fields.estimated_open_fee,
             estimated_close_fee=trade_cost_fields.estimated_close_fee,
             estimated_fixed_fees=trade_cost_fields.estimated_fixed_fees,
             estimated_spread_cost=trade_cost_fields.estimated_spread_cost,
             estimated_total_cost=trade_cost_fields.estimated_total_cost,
             estimated_total_cost_percent=trade_cost_fields.estimated_total_cost_percent,
-            min_expected_net_profit=trade_cost_fields.min_expected_net_profit,
             spread_percent=self._round_optional(spread_percent),
             max_spread_percent=risk_profile.max_spread_percent,
             expected_move_percent=round(expected_move_percent, 4),
@@ -294,15 +303,19 @@ class RiskManager:
             stop_loss=round(stop_loss, 5),
             take_profit=round(take_profit, 5),
             expected_gross_profit=trade_cost_fields.expected_gross_profit,
-            estimated_fees=trade_cost_fields.estimated_fees,
             expected_net_profit=trade_cost_fields.expected_net_profit,
+            expected_net_profit_percent=trade_cost_fields.expected_net_profit_percent,
+            required_min_expected_net_profit_amount=(
+                trade_cost_fields.required_min_expected_net_profit_amount
+            ),
+            min_expected_net_profit_percent=trade_cost_fields.min_expected_net_profit_percent,
+            estimated_fees=trade_cost_fields.estimated_fees,
             estimated_open_fee=trade_cost_fields.estimated_open_fee,
             estimated_close_fee=trade_cost_fields.estimated_close_fee,
             estimated_fixed_fees=trade_cost_fields.estimated_fixed_fees,
             estimated_spread_cost=trade_cost_fields.estimated_spread_cost,
             estimated_total_cost=trade_cost_fields.estimated_total_cost,
             estimated_total_cost_percent=trade_cost_fields.estimated_total_cost_percent,
-            min_expected_net_profit=trade_cost_fields.min_expected_net_profit,
             spread_percent=self._round_optional(spread_percent),
             max_spread_percent=risk_profile.max_spread_percent,
             expected_move_percent=round(expected_move_percent, 4),
@@ -331,8 +344,20 @@ class RiskManager:
 
         return TradeCostPlanFields(
             expected_gross_profit=round(trade_cost_estimate.expected_gross_profit, 4),
-            estimated_fees=round(trade_cost_estimate.total_estimated_cost, 4),
             expected_net_profit=round(trade_cost_estimate.expected_net_profit, 4),
+            expected_net_profit_percent=round(
+                trade_cost_estimate.expected_net_profit_percent,
+                4,
+            ),
+            required_min_expected_net_profit_amount=round(
+                trade_cost_estimate.required_min_expected_net_profit_amount,
+                4,
+            ),
+            min_expected_net_profit_percent=round(
+                trade_cost_estimate.min_expected_net_profit_percent,
+                4,
+            ),
+            estimated_fees=round(trade_cost_estimate.total_estimated_cost, 4),
             estimated_open_fee=round(trade_cost_estimate.open_fee, 4),
             estimated_close_fee=round(trade_cost_estimate.close_fee, 4),
             estimated_fixed_fees=round(trade_cost_estimate.fixed_fees, 4),
@@ -342,7 +367,6 @@ class RiskManager:
                 trade_cost_estimate.total_estimated_cost_percent,
                 4,
             ),
-            min_expected_net_profit=round(trade_cost_estimate.min_expected_net_profit, 4),
         )
 
     def _effective_risk(
