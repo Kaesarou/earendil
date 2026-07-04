@@ -71,7 +71,7 @@ def test_risk_manager_uses_dynamic_equity_trade_costs_and_net_breakeven():
             open_fee_percent=0.15,
             close_fee_percent=0.15,
             include_spread_cost=True,
-            min_expected_net_profit=5.0,
+            min_expected_net_profit_percent=0.10,
         ),
         breakeven_stop_enabled=True,
         breakeven_trigger_percent=1.0,
@@ -88,21 +88,23 @@ def test_risk_manager_uses_dynamic_equity_trade_costs_and_net_breakeven():
     assert plan.approved
     assert plan.amount == 1000.0
     assert plan.expected_gross_profit == 16.0
+    assert plan.expected_net_profit == 12.0
+    assert plan.expected_net_profit_percent == 1.2
+    assert plan.required_min_expected_net_profit_amount == 1.0
+    assert plan.min_expected_net_profit_percent == 0.1
     assert plan.estimated_open_fee == 1.5
     assert plan.estimated_close_fee == 1.5
     assert plan.estimated_spread_cost == 1.0
     assert plan.estimated_total_cost == 4.0
     assert plan.estimated_fees == 4.0
     assert plan.estimated_total_cost_percent == 0.4
-    assert plan.expected_net_profit == 12.0
-    assert plan.min_expected_net_profit == 5.0
     assert plan.configured_breakeven_trigger_percent == 1.0
     assert plan.configured_breakeven_buffer_percent == 0.0
     assert plan.breakeven_trigger_percent == 1.4
     assert plan.breakeven_buffer_percent == 0.4
 
 
-def test_risk_manager_rejects_trade_when_dynamic_net_profit_is_too_low():
+def test_risk_manager_rejects_trade_when_net_profit_percent_is_too_low():
     profile = risk_profile(
         asset_class=AssetClass.EQUITY_US,
         take_profit_percent=3.0,
@@ -110,7 +112,7 @@ def test_risk_manager_rejects_trade_when_dynamic_net_profit_is_too_low():
             open_fee_percent=1.0,
             close_fee_percent=1.0,
             include_spread_cost=False,
-            min_expected_net_profit=8.0,
+            min_expected_net_profit_percent=1.20,
         ),
     )
     risk_manager = build_risk_manager(profile)
@@ -126,17 +128,49 @@ def test_risk_manager_rejects_trade_when_dynamic_net_profit_is_too_low():
     assert plan.expected_gross_profit == 15.0
     assert plan.estimated_total_cost == 10.0
     assert plan.expected_net_profit == 5.0
-    assert plan.min_expected_net_profit == 8.0
+    assert plan.expected_net_profit_percent == 1.0
+    assert plan.required_min_expected_net_profit_amount == 6.0
+    assert plan.min_expected_net_profit_percent == 1.2
 
 
-def test_risk_manager_uses_trade_cost_min_profit():
+def test_risk_manager_accepts_crypto_trade_when_net_percent_is_positive_even_if_fixed_8_dollars_would_fail():
+    profile = risk_profile(
+        asset_class=AssetClass.CRYPTO,
+        max_position_size_percent=100.0,
+        take_profit_percent=3.0,
+        trade_cost=TradeCostConfig(
+            open_fee_percent=1.0,
+            close_fee_percent=1.0,
+            include_spread_cost=False,
+            min_expected_net_profit_percent=0.10,
+        ),
+    )
+    risk_manager = build_risk_manager(profile)
+
+    plan = risk_manager.evaluate(
+        signal=buy_signal(),
+        snapshot=snapshot(symbol='BTC', bid=100.0, ask=100.0),
+        account_equity=747.0,
+    )
+
+    assert plan.approved
+    assert plan.amount == 747.0
+    assert plan.expected_gross_profit == 22.41
+    assert plan.estimated_total_cost == 14.94
+    assert plan.expected_net_profit == 7.47
+    assert plan.expected_net_profit_percent == 1.0
+    assert plan.required_min_expected_net_profit_amount == 0.747
+    assert plan.min_expected_net_profit_percent == 0.1
+
+
+def test_risk_manager_uses_trade_cost_min_profit_percent():
     profile = risk_profile(
         asset_class=AssetClass.EQUITY_US,
         trade_cost=TradeCostConfig(
             open_fee_percent=0.15,
             close_fee_percent=0.15,
             include_spread_cost=True,
-            min_expected_net_profit=5.0,
+            min_expected_net_profit_percent=0.10,
         ),
     )
     risk_manager = build_risk_manager(profile)
@@ -149,7 +183,9 @@ def test_risk_manager_uses_trade_cost_min_profit():
 
     assert plan.approved
     assert plan.expected_net_profit == 12.0
-    assert plan.min_expected_net_profit == 5.0
+    assert plan.expected_net_profit_percent == 1.2
+    assert plan.required_min_expected_net_profit_amount == 1.0
+    assert plan.min_expected_net_profit_percent == 0.1
 
 
 def test_risk_manager_uses_net_breakeven_buffer_when_configured_buffer_is_positive():
@@ -159,7 +195,7 @@ def test_risk_manager_uses_net_breakeven_buffer_when_configured_buffer_is_positi
             open_fee_percent=0.15,
             close_fee_percent=0.15,
             include_spread_cost=False,
-            min_expected_net_profit=0.0,
+            min_expected_net_profit_percent=0.0,
         ),
         breakeven_stop_enabled=True,
         breakeven_trigger_percent=1.0,
