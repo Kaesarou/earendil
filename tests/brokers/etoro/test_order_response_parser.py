@@ -232,6 +232,23 @@ def test_is_close_response_accepted_when_position_matches_and_status_is_one():
     )
 
 
+def test_is_close_response_accepted_with_camel_case_position_and_status_id():
+    assert is_close_response_accepted(
+        {
+            'orderForClose': {
+                'PositionId': '3549893989',
+                'orderID': 362453867,
+                'statusId': 1,
+            }
+        },
+        3549893989,
+    )
+
+
+def test_is_close_response_not_accepted_when_order_for_close_is_missing():
+    assert not is_close_response_accepted({}, '3549893989')
+
+
 def test_is_close_response_not_accepted_when_position_does_not_match():
     assert not is_close_response_accepted(
         {
