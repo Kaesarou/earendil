@@ -1,3 +1,4 @@
+from dataclasses import replace
 from datetime import datetime, timezone
 
 import pytest
@@ -5,7 +6,9 @@ import pytest
 from app.config.settings import Settings
 from app.execution.candidate_economics import CandidateEconomicsEstimator
 from app.execution.trade_candidate import TradeCandidate
+from app.instruments.base_configs import EQUITY_US_CONFIG
 from app.instruments.instrument_registry import InstrumentRegistry
+from app.instruments.models import AssetClass
 from app.market.models import Candle, MarketSnapshot
 from app.risk.position_sizing import FixedPercentPositionSizing
 from app.risk.risk_manager import RiskManager
@@ -48,10 +51,22 @@ def make_candidate(action: str) -> TradeCandidate:
     )
 
 
+def build_instrument_registry() -> InstrumentRegistry:
+    settings = Settings(EQUITY_US_SYMBOLS='AAPL')
+    risk_profile = replace(
+        EQUITY_US_CONFIG.risk,
+        force_close_enabled=False,
+    )
+    return InstrumentRegistry(
+        settings,
+        risk_profiles={AssetClass.EQUITY_US: risk_profile},
+    )
+
+
 @pytest.mark.parametrize('action', ['BUY', 'SELL'])
 def test_candidate_economics_matches_risk_manager_trade_costs(action: str):
     settings = Settings(EQUITY_US_SYMBOLS='AAPL')
-    instrument_registry = InstrumentRegistry(settings)
+    instrument_registry = build_instrument_registry()
     position_sizing_strategy = FixedPercentPositionSizing()
     estimator = CandidateEconomicsEstimator(
         position_sizing_strategy=position_sizing_strategy,
@@ -102,7 +117,7 @@ def test_candidate_economics_matches_risk_manager_trade_costs(action: str):
 
 def test_risk_manager_builds_sell_trade_plan_with_short_side_price_levels():
     settings = Settings(EQUITY_US_SYMBOLS='AAPL')
-    instrument_registry = InstrumentRegistry(settings)
+    instrument_registry = build_instrument_registry()
     risk_manager = RiskManager(
         settings=settings,
         position_sizing_strategy=FixedPercentPositionSizing(),
