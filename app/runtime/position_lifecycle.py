@@ -4,7 +4,9 @@ from datetime import datetime, timezone
 
 from app.brokers.base import BrokerClient
 from app.execution.position_tracker import ClosedPosition, PositionTracker, TrackedPosition
+from app.execution.trade_executor import TradeExecutor
 from app.journal.jsonl_journal import JsonlJournal
+from app.market.models import MarketSnapshot
 from app.persistence.position_store import PositionStore
 from app.persistence.trade_cooldown_store import TradeCooldownStore
 from app.risk.risk_manager import RiskManager
@@ -95,6 +97,81 @@ def register_trade_cooldown_for_missing_position(
         saved_entry.close_reason.value,
         saved_entry.expires_at.isoformat(),
     )
+
+
+def close_positions_triggered_by_snapshot(
+    *,
+    symbol: str,
+    snapshot: MarketSnapshot,
+    executor: TradeExecutor,
+    position_tracker: PositionTracker,
+    risk_manager: RiskManager,
+    trade_journal: JsonlJournal,
+    is_broker_authorization_error: BrokerAuthorizationErrorChecker,
+    position_store: PositionStore | None = None,
+    cooldown_store: TradeCooldownStore | None = None,
+) -> None:
+    close_signals = position_tracker.evaluate_snapshot(snapshot)
+    for close_signal in close_signals:
+        try:
+            executor.close(close_signal.position_id)
+            closed_position = position_tracker.record_closed_position(close_signal)
+            risk_manager.record_close_position(close_signal.symbol)
+
+            if position_store is not None:
+                try:
+                    position_store.delete_open_position(close_signal.position_id)
+                except Exception as exc:
+                    logger.exception(
+                        'Position persistence delete error | position_id=%s | error=%s',
+                        close_signal.position_id,
+                        exc,
+                    )
+                    trade_journal.write(
+                        'position_persistence_error',
+                        {
+                            'symbol': symbol,
+                            'position_id': close_signal.position_id,
+                            'message': str(exc),
+                        },
+                    )
+
+            if cooldown_store is not None:
+                register_trade_cooldown_for_closed_position(
+                    closed_position=closed_position,
+                    risk_manager=risk_manager,
+                    cooldown_store=cooldown_store,
+                    trade_journal=trade_journal,
+                )
+
+            trade_journal.write(
+                'position_closed',
+                {
+                    'symbol': symbol,
+                    'close_signal': close_signal,
+                    'closed_position': closed_position,
+                },
+            )
+
+        except Exception as exc:
+            if is_broker_authorization_error(exc):
+                raise
+
+            logger.exception(
+                'Position close error | symbol=%s | position_id=%s | reason=%s | error=%s',
+                symbol,
+                close_signal.position_id,
+                close_signal.reason,
+                exc,
+            )
+            trade_journal.write(
+                'position_close_error',
+                {
+                    'symbol': symbol,
+                    'close_signal': close_signal,
+                    'message': str(exc),
+                },
+            )
 
 
 def reconcile_externally_closed_positions(
