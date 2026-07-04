@@ -50,3 +50,21 @@ def test_etoro_client_post_json_content_matches_response_payload_helper(monkeypa
     monkeypatch.setattr(requests, 'post', lambda *args, **kwargs: response)
 
     assert client._post('/path', {}) == response_payload(response)
+
+
+def test_etoro_client_get_empty_content_matches_response_payload_helper(monkeypatch):
+    client = build_uninitialized_client()
+    response = FakeResponse(content=b'', payload={'ignored': True})
+
+    monkeypatch.setattr(requests, 'get', lambda *args, **kwargs: response)
+
+    assert client._get('/path') == response_payload(response)
+
+
+def test_etoro_client_get_json_content_matches_response_payload_helper(monkeypatch):
+    client = build_uninitialized_client()
+    response = FakeResponse(content=b'{}', payload={'ok': True})
+
+    monkeypatch.setattr(requests, 'get', lambda *args, **kwargs: response)
+
+    assert client._get('/path') == response_payload(response)
