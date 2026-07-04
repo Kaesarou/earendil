@@ -2,6 +2,8 @@ from app.brokers.etoro.endpoint_paths import (
     close_position_path,
     demo_order_details_path,
     demo_portfolio_path,
+    instrument_rates_path,
+    instrument_search_path,
     open_order_path,
     real_order_lookup_path,
     real_portfolio_path,
@@ -42,3 +44,17 @@ def test_demo_portfolio_path():
 
 def test_real_portfolio_path():
     assert real_portfolio_path() == '/api/v1/trading/info/portfolio'
+
+
+def test_instrument_search_path():
+    assert instrument_search_path() == '/api/v1/market-data/search'
+
+
+def test_instrument_rates_path_joins_instrument_ids():
+    assert instrument_rates_path([1001, 1002, 1003]) == (
+        '/api/v1/market-data/instruments/rates?instrumentIds=1001,1002,1003'
+    )
+
+
+def test_instrument_rates_path_accepts_empty_list():
+    assert instrument_rates_path([]) == '/api/v1/market-data/instruments/rates?instrumentIds='
