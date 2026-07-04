@@ -1,4 +1,7 @@
-def extract_items(payload: dict) -> list[dict]:
+def extract_items(payload: dict | list) -> list[dict]:
+    if isinstance(payload, list):
+        return [item for item in payload if isinstance(item, dict)]
+
     for key in ('items', 'data', 'Data', 'Items', 'instruments', 'rates'):
         value = payload.get(key)
 
@@ -8,13 +11,10 @@ def extract_items(payload: dict) -> list[dict]:
         if isinstance(value, dict):
             return [value]
 
-    if isinstance(payload, list):
-        return [item for item in payload if isinstance(item, dict)]
-
     return []
 
 
-def resolve_exact_instrument_id(symbol: str, payload: dict) -> int:
+def resolve_exact_instrument_id(symbol: str, payload: dict | list) -> int:
     normalized_symbol = symbol.upper()
     items = extract_items(payload)
 
@@ -43,18 +43,18 @@ def resolve_exact_instrument_id(symbol: str, payload: dict) -> int:
 
 
 def extract_instrument_id(instrument: dict) -> int | None:
-    instrument_id = (
-        instrument.get('internalInstrumentId')
-        or instrument.get('instrumentId')
-        or instrument.get('InstrumentID')
-        or instrument.get('instrumentID')
-        or instrument.get('id')
-    )
+    for key in (
+        'internalInstrumentId',
+        'instrumentId',
+        'InstrumentID',
+        'instrumentID',
+        'id',
+    ):
+        instrument_id = instrument.get(key)
+        if instrument_id is not None:
+            return int(instrument_id)
 
-    if instrument_id is None:
-        return None
-
-    return int(instrument_id)
+    return None
 
 
 def candidate_summaries(items: list[dict]) -> list[dict]:
@@ -62,7 +62,7 @@ def candidate_summaries(items: list[dict]) -> list[dict]:
         {
             'internalSymbolFull': item.get('internalSymbolFull'),
             'displayName': item.get('internalInstrumentDisplayName'),
-            'instrumentId': item.get('internalInstrumentId') or item.get('instrumentId'),
+            'instrumentId': extract_instrument_id(item),
             'currentRate': item.get('currentRate'),
         }
         for item in items[:10]
