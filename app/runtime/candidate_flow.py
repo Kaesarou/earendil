@@ -1,6 +1,7 @@
 import logging
 from collections.abc import Callable
 from datetime import datetime, timezone
+from typing import TypeVar
 
 from app.brokers.base import BrokerClient
 from app.execution.candidate_economics import (
@@ -30,6 +31,30 @@ from app.strategies.strategy import StrategyProfileConfig
 logger = logging.getLogger(__name__)
 
 BrokerAuthorizationErrorChecker = Callable[[Exception], bool]
+SelectedItem = TypeVar('SelectedItem')
+RejectedItem = TypeVar('RejectedItem')
+
+
+def _smallest_positive_top_n(top_n_limits: list[int]) -> int:
+    positive_top_n_limits = [limit for limit in top_n_limits if limit > 0]
+    return min(positive_top_n_limits) if positive_top_n_limits else 0
+
+
+def _apply_top_n_limit(
+    *,
+    selected_items: list[SelectedItem],
+    rejected_items: list[RejectedItem],
+    top_n_limits: list[int],
+    build_rejection: Callable[[SelectedItem], RejectedItem],
+) -> tuple[list[SelectedItem], list[RejectedItem]]:
+    top_n = _smallest_positive_top_n(top_n_limits)
+    if top_n <= 0 or len(selected_items) <= top_n:
+        return selected_items, rejected_items
+
+    kept_items = selected_items[:top_n]
+    overflow_items = selected_items[top_n:]
+    rejected_items.extend(build_rejection(item) for item in overflow_items)
+    return kept_items, rejected_items
 
 
 def select_trade_candidates_with_strategy_profile(
@@ -52,20 +77,15 @@ def select_trade_candidates_with_strategy_profile(
         else:
             rejected_candidates.extend(candidate_selection_result.rejected_candidates)
 
-    positive_top_n_limits = [limit for limit in top_n_limits if limit > 0]
-    top_n = min(positive_top_n_limits) if positive_top_n_limits else 0
-
-    if top_n > 0 and len(selected_candidates) > top_n:
-        kept_candidates = selected_candidates[:top_n]
-        overflow_candidates = selected_candidates[top_n:]
-        rejected_candidates.extend(
-            RejectedCandidateSelection(
-                candidate=candidate,
-                reason='candidate_selection_outside_top_n',
-            )
-            for candidate in overflow_candidates
-        )
-        selected_candidates = kept_candidates
+    selected_candidates, rejected_candidates = _apply_top_n_limit(
+        selected_items=selected_candidates,
+        rejected_items=rejected_candidates,
+        top_n_limits=top_n_limits,
+        build_rejection=lambda candidate: RejectedCandidateSelection(
+            candidate=candidate,
+            reason='candidate_selection_outside_top_n',
+        ),
+    )
 
     return CandidateSelectionResult(
         selected_candidates=selected_candidates,
@@ -98,20 +118,15 @@ def select_evaluated_trade_candidates_with_strategy_profile(
         else:
             rejected_candidates.extend(candidate_selection_result.rejected_candidates)
 
-    positive_top_n_limits = [limit for limit in top_n_limits if limit > 0]
-    top_n = min(positive_top_n_limits) if positive_top_n_limits else 0
-
-    if top_n > 0 and len(selected_candidates) > top_n:
-        kept_candidates = selected_candidates[:top_n]
-        overflow_candidates = selected_candidates[top_n:]
-        rejected_candidates.extend(
-            RejectedEvaluatedCandidateSelection(
-                evaluated_candidate=evaluated_candidate,
-                reason='candidate_selection_outside_top_n',
-            )
-            for evaluated_candidate in overflow_candidates
-        )
-        selected_candidates = kept_candidates
+    selected_candidates, rejected_candidates = _apply_top_n_limit(
+        selected_items=selected_candidates,
+        rejected_items=rejected_candidates,
+        top_n_limits=top_n_limits,
+        build_rejection=lambda evaluated_candidate: RejectedEvaluatedCandidateSelection(
+            evaluated_candidate=evaluated_candidate,
+            reason='candidate_selection_outside_top_n',
+        ),
+    )
 
     return EvaluatedCandidateSelectionResult(
         selected_candidates=selected_candidates,
