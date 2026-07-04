@@ -26,3 +26,16 @@ def demo_portfolio_path() -> str:
 
 def real_portfolio_path() -> str:
     return '/api/v1/trading/info/portfolio'
+
+
+def instrument_search_path() -> str:
+    return '/api/v1/market-data/search'
+
+
+def instrument_rates_path(instrument_ids: list[int]) -> str:
+    joined_instrument_ids = ','.join(
+        str(instrument_id)
+        for instrument_id in instrument_ids
+    )
+
+    return f'/api/v1/market-data/instruments/rates?instrumentIds={joined_instrument_ids}'
