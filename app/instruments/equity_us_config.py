@@ -53,6 +53,6 @@ class EquityUsConfig(InstrumentConfig):
             fixed_open_fee=0.0,
             fixed_close_fee=0.0,
             include_spread_cost=True,
-            min_expected_net_profit=5.00,
+            min_expected_net_profit_percent=0.10,
         ),
     )
