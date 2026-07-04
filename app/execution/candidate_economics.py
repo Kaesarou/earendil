@@ -1,0 +1,71 @@
+from dataclasses import dataclass
+
+from app.execution.trade_candidate import TradeCandidate
+from app.instruments.instrument_registry import InstrumentRegistry
+from app.risk.position_sizing import PositionSizingStrategy
+from app.risk.trade_cost_model import TradeCostModel
+from app.utils.commons import spread_percent
+
+
+@dataclass(frozen=True)
+class CandidateEconomics:
+    position_value: float
+    expected_gross_profit: float
+    expected_net_profit: float
+    expected_net_profit_percent: float
+    estimated_total_cost: float
+    estimated_total_cost_percent: float
+    min_expected_net_profit_percent: float
+    required_min_expected_net_profit_amount: float
+
+
+@dataclass(frozen=True)
+class EvaluatedTradeCandidate:
+    candidate: TradeCandidate
+    economics: CandidateEconomics
+
+
+class CandidateEconomicsEstimator:
+    def __init__(
+        self,
+        position_sizing_strategy: PositionSizingStrategy,
+        instrument_registry: InstrumentRegistry,
+        trade_cost_model: TradeCostModel | None = None,
+    ):
+        self.position_sizing_strategy = position_sizing_strategy
+        self.instrument_registry = instrument_registry
+        self.trade_cost_model = trade_cost_model or TradeCostModel()
+
+    def evaluate(
+        self,
+        candidate: TradeCandidate,
+        account_equity: float,
+    ) -> EvaluatedTradeCandidate:
+        risk_profile = self.instrument_registry.risk_profile_for(candidate.symbol)
+        position_value = self.position_sizing_strategy.calculate_amount(
+            account_equity=account_equity,
+            risk_profile=risk_profile,
+        )
+
+        estimate = self.trade_cost_model.estimate(
+            position_value=position_value,
+            expected_move_percent=risk_profile.take_profit_percent,
+            spread_percent=spread_percent(candidate.snapshot),
+            config=risk_profile.trade_cost,
+        )
+
+        return EvaluatedTradeCandidate(
+            candidate=candidate,
+            economics=CandidateEconomics(
+                position_value=estimate.position_value,
+                expected_gross_profit=estimate.expected_gross_profit,
+                expected_net_profit=estimate.expected_net_profit,
+                expected_net_profit_percent=estimate.expected_net_profit_percent,
+                estimated_total_cost=estimate.total_estimated_cost,
+                estimated_total_cost_percent=estimate.total_estimated_cost_percent,
+                min_expected_net_profit_percent=estimate.min_expected_net_profit_percent,
+                required_min_expected_net_profit_amount=(
+                    estimate.required_min_expected_net_profit_amount
+                ),
+            ),
+        )
