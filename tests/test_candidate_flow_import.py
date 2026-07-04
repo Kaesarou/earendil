@@ -18,8 +18,14 @@ def test_position_lifecycle_runtime_module_imports():
     assert callable(restore_persisted_positions)
 
 
+def test_symbol_flow_runtime_module_imports():
+    from app.runtime.symbol_flow import process_closed_candle, process_symbol
+
+    assert callable(process_closed_candle)
+    assert callable(process_symbol)
+
+
 def test_main_imports_after_runtime_extractions():
     import app.main
 
-    assert callable(app.main.process_symbol)
     assert callable(app.main.main)
