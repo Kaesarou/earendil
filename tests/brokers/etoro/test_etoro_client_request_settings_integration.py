@@ -44,3 +44,17 @@ def test_etoro_client_get_timeout_matches_request_settings(monkeypatch):
 
     assert client._get('/path') == {'ok': True}
     assert captured['timeout'] == default_request_timeout_seconds()
+
+
+def test_etoro_client_post_timeout_matches_request_settings(monkeypatch):
+    client = build_uninitialized_client()
+    captured = {}
+
+    def fake_post(url, **kwargs):
+        captured['timeout'] = kwargs['timeout']
+        return FakeResponse()
+
+    monkeypatch.setattr(requests, 'post', fake_post)
+
+    assert client._post('/path', {}) == {'ok': True}
+    assert captured['timeout'] == default_request_timeout_seconds()
