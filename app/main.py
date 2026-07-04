@@ -2,7 +2,6 @@ import logging
 import time
 from datetime import datetime, timezone
 
-from app.brokers.base import BrokerClient
 from app.config.settings import Settings, get_settings
 from app.execution.candidate_economics import CandidateEconomicsEstimator
 from app.execution.position_tracker import PositionTracker
@@ -11,7 +10,6 @@ from app.execution.trade_executor import TradeExecutor
 from app.instruments.instrument_registry import InstrumentRegistry
 from app.journal.jsonl_journal import JsonlJournal
 from app.market.candle_builder import CandleBuilder
-from app.market.models import MarketSnapshot
 from app.persistence.position_store import PositionStore
 from app.persistence.trade_cooldown_store import TradeCooldownStore
 from app.risk.position_sizing import FixedPercentPositionSizing
@@ -20,11 +18,10 @@ from app.risk.trade_cooldown_guard import TradeCooldownGuard
 from app.runtime.candidate_flow import execute_ranked_candidates
 from app.runtime.factories import build_broker
 from app.runtime.position_lifecycle import (
-    close_positions_triggered_by_snapshot,
     reconcile_externally_closed_positions,
     restore_persisted_positions,
 )
-from app.runtime.symbol_flow import process_closed_candle
+from app.runtime.symbol_flow import process_symbol
 from app.strategies.strategy import (
     StrategyProfileConfig,
     TrendStrategy,
@@ -83,52 +80,6 @@ def build_strategies(
         symbol: TrendStrategy(instrument_registry.config_for(symbol).trend)
         for symbol in symbols
     }
-
-
-def process_symbol(
-    symbol: str,
-    broker: BrokerClient,
-    strategy: TrendStrategy,
-    risk_manager: RiskManager,
-    executor: TradeExecutor,
-    position_tracker: PositionTracker,
-    candle_builder: CandleBuilder,
-    trade_journal: JsonlJournal,
-    market_journal: JsonlJournal,
-    candle_journal: JsonlJournal,
-    position_store: PositionStore | None = None,
-    cooldown_store: TradeCooldownStore | None = None,
-    snapshot: MarketSnapshot | None = None,
-) -> TradeCandidate | None:
-    snapshot = snapshot or broker.get_market_snapshot(symbol)
-    market_journal.write('market_snapshot', {'symbol': symbol, 'snapshot': snapshot})
-    strategy.on_snapshot(snapshot)
-
-    close_positions_triggered_by_snapshot(
-        symbol=symbol,
-        snapshot=snapshot,
-        executor=executor,
-        position_tracker=position_tracker,
-        risk_manager=risk_manager,
-        trade_journal=trade_journal,
-        position_store=position_store,
-        cooldown_store=cooldown_store,
-        is_broker_authorization_error=is_broker_authorization_error,
-    )
-
-    closed_candle = candle_builder.on_snapshot(snapshot)
-    if closed_candle is None:
-        return None
-
-    return process_closed_candle(
-        symbol=symbol,
-        snapshot=snapshot,
-        closed_candle=closed_candle,
-        strategy=strategy,
-        risk_manager=risk_manager,
-        trade_journal=trade_journal,
-        candle_journal=candle_journal,
-    )
 
 
 def main() -> None:
@@ -217,6 +168,7 @@ def main() -> None:
                         trade_journal=trade_journal,
                         market_journal=market_journal,
                         candle_journal=candle_journal,
+                        is_broker_authorization_error=is_broker_authorization_error,
                         position_store=position_store,
                         cooldown_store=cooldown_store,
                         snapshot=snapshots[symbol],
