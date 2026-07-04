@@ -6,11 +6,13 @@ def test_candidate_flow_runtime_module_imports():
 
 def test_position_lifecycle_runtime_module_imports():
     from app.runtime.position_lifecycle import (
+        close_positions_triggered_by_snapshot,
         reconcile_externally_closed_positions,
         register_trade_cooldown_for_closed_position,
         restore_persisted_positions,
     )
 
+    assert callable(close_positions_triggered_by_snapshot)
     assert callable(reconcile_externally_closed_positions)
     assert callable(register_trade_cooldown_for_closed_position)
     assert callable(restore_persisted_positions)
