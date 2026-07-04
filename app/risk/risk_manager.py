@@ -10,7 +10,7 @@ from app.risk.models import TradePlan
 from app.risk.position_sizing import PositionSizingStrategy
 from app.risk.trade_cost_model import TradeCostEstimate, TradeCostModel
 from app.strategies.signals import Signal
-from app.utils.commons import normalize_symbol
+from app.utils.commons import normalize_symbol, spread_percent as calculate_spread_percent
 
 
 @dataclass(frozen=True)
@@ -432,15 +432,8 @@ class RiskManager:
 
         return value
 
-    def _calculate_spread_percent(self, snapshot: MarketSnapshot) -> float | None:
-        if snapshot.bid <= 0 or snapshot.ask <= 0 or snapshot.last <= 0:
-            return None
-
-        spread = snapshot.ask - snapshot.bid
-        if spread < 0:
-            return None
-
-        return (spread / snapshot.last) * 100
+    def _calculate_spread_percent(self, snapshot: MarketSnapshot) -> float:
+        return calculate_spread_percent(snapshot)
 
     def _calculate_min_required_move_percent(
         self,
