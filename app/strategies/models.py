@@ -43,5 +43,5 @@ class StrategyProfileConfig:
         self.instrument_config_for_asset_class(asset_class)
         return CandidateSelectionConfig(
             top_n=self.candidate_selection_top_n,
-            min_score=self.candidate_selection_min_score
+            min_score=self.candidate_selection_min_score,
         )
