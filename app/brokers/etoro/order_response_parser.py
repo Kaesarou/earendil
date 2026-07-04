@@ -1,0 +1,178 @@
+def extract_order_id(payload: dict) -> str:
+    for key in ('orderId', 'OrderId', 'orderID', 'OrderID'):
+        value = payload.get(key)
+        if value is not None:
+            return str(value)
+
+    for key in (
+        'orderForClose',
+        'OrderForClose',
+        'data',
+        'Data',
+        'order',
+        'Order',
+    ):
+        value = payload.get(key)
+        if isinstance(value, dict):
+            try:
+                return extract_order_id(value)
+            except ValueError:
+                pass
+
+    raise ValueError(f'Unable to extract order id from eToro response: {payload}')
+
+
+def extract_reference_id(payload: dict) -> str | None:
+    for key in ('referenceId', 'ReferenceId', 'referenceID', 'ReferenceID'):
+        value = payload.get(key)
+        if value is not None:
+            return str(value)
+
+    return None
+
+
+def extract_position_id_from_order_details(payload: dict) -> str | None:
+    direct_position_id = (
+        payload.get('positionId')
+        or payload.get('PositionId')
+        or payload.get('positionID')
+        or payload.get('PositionID')
+    )
+
+    if direct_position_id is not None:
+        return str(direct_position_id)
+
+    position_executions = payload.get('positionExecutions')
+    if isinstance(position_executions, list):
+        for execution in position_executions:
+            if not isinstance(execution, dict):
+                continue
+
+            position_id = (
+                execution.get('positionId')
+                or execution.get('PositionId')
+                or execution.get('positionID')
+                or execution.get('PositionID')
+            )
+
+            if position_id is not None:
+                return str(position_id)
+
+    positions = payload.get('positions')
+    if isinstance(positions, list):
+        for position in positions:
+            if not isinstance(position, dict):
+                continue
+
+            position_id = (
+                position.get('positionId')
+                or position.get('PositionId')
+                or position.get('positionID')
+                or position.get('PositionID')
+            )
+
+            if position_id is not None:
+                return str(position_id)
+
+    for key in ('position', 'Position', 'data', 'Data', 'order', 'Order'):
+        value = payload.get(key)
+        if isinstance(value, dict):
+            position_id = extract_position_id_from_order_details(value)
+            if position_id is not None:
+                return position_id
+
+    return None
+
+
+def extract_order_error_code(payload: dict) -> int | None:
+    error_code = payload.get('errorCode')
+
+    if error_code is not None:
+        return int(error_code)
+
+    status = payload.get('status')
+    if isinstance(status, dict):
+        status_error_code = status.get('errorCode')
+        if status_error_code is not None:
+            return int(status_error_code)
+
+    return None
+
+
+def extract_order_error_message(payload: dict) -> str | None:
+    error_message = payload.get('errorMessage')
+
+    if error_message:
+        return str(error_message)
+
+    status = payload.get('status')
+    if isinstance(status, dict):
+        status_error_message = status.get('errorMessage')
+        if status_error_message:
+            return str(status_error_message)
+
+    return None
+
+
+def is_order_executed(payload: dict) -> bool:
+    status = payload.get('status')
+
+    if isinstance(status, dict):
+        status_name = str(status.get('name', '')).lower()
+        status_id = status.get('id')
+        status_error_code = status.get('errorCode')
+
+        if status_error_code not in (None, 0):
+            return False
+
+        if status_name == 'executed' or status_id == 1:
+            return True
+
+    error_code = payload.get('errorCode')
+    if error_code not in (None, 0):
+        return False
+
+    status_id = payload.get('statusID')
+    if status_id in (1, 3):
+        return True
+
+    return extract_position_id_from_order_details(payload) is not None
+
+
+def is_order_rejected(payload: dict) -> bool:
+    error_code = extract_order_error_code(payload)
+    if error_code not in (None, 0):
+        return True
+
+    status = payload.get('status')
+    if isinstance(status, dict):
+        status_error_code = status.get('errorCode')
+        if status_error_code not in (None, 0):
+            return True
+
+        status_name = str(status.get('name', '')).lower()
+        if status_name in ('rejected', 'failed', 'cancelled', 'canceled', 'error'):
+            return True
+
+    return False
+
+
+def is_close_response_accepted(payload: dict, position_id: str) -> bool:
+    order_for_close = payload.get('orderForClose')
+
+    if not isinstance(order_for_close, dict):
+        return False
+
+    response_position_id = (
+        order_for_close.get('positionID')
+        or order_for_close.get('positionId')
+        or order_for_close.get('PositionID')
+        or order_for_close.get('PositionId')
+    )
+
+    if str(response_position_id) != str(position_id):
+        return False
+
+    status_id = order_for_close.get('statusID') or order_for_close.get('statusId')
+
+    return status_id == 1
