@@ -5,7 +5,6 @@ from datetime import datetime, timezone
 from app.brokers.base import BrokerClient
 from app.config.settings import Settings, get_settings
 from app.execution.candidate_economics import CandidateEconomicsEstimator
-from app.execution.candidate_ranking import build_trade_candidate
 from app.execution.position_tracker import PositionTracker
 from app.execution.trade_candidate import TradeCandidate
 from app.execution.trade_executor import TradeExecutor
@@ -15,7 +14,6 @@ from app.market.candle_builder import CandleBuilder
 from app.market.models import MarketSnapshot
 from app.persistence.position_store import PositionStore
 from app.persistence.trade_cooldown_store import TradeCooldownStore
-from app.risk.models import TradePlan
 from app.risk.position_sizing import FixedPercentPositionSizing
 from app.risk.risk_manager import RiskManager
 from app.risk.trade_cooldown_guard import TradeCooldownGuard
@@ -26,6 +24,7 @@ from app.runtime.position_lifecycle import (
     reconcile_externally_closed_positions,
     restore_persisted_positions,
 )
+from app.runtime.symbol_flow import process_closed_candle
 from app.strategies.strategy import (
     StrategyProfileConfig,
     TrendStrategy,
@@ -121,81 +120,15 @@ def process_symbol(
     if closed_candle is None:
         return None
 
-    candle_journal.write('candle_closed', {'symbol': symbol, 'candle': closed_candle})
-
-    logger.info(
-        'Candle closed | symbol=%s | open=%s | high=%s | low=%s | close=%s | opened_at=%s | closed_at=%s',
-        closed_candle.symbol,
-        closed_candle.open,
-        closed_candle.high,
-        closed_candle.low,
-        closed_candle.close,
-        closed_candle.opened_at.isoformat(),
-        closed_candle.closed_at.isoformat(),
-    )
-
-    signal = strategy.on_candle(closed_candle)
-    logger.info(
-        'Strategy signal | symbol=%s | action=%s | confidence=%s | reason=%s | candle_close=%s',
-        symbol,
-        signal.action,
-        signal.confidence,
-        signal.reason,
-        closed_candle.close,
-    )
-
-    if signal.action == 'HOLD':
-        plan = TradePlan(
-            approved=False,
-            reason=signal.reason,
-            symbol=symbol,
-            side=signal.action,
-        )
-        trade_journal.write(
-            'decision',
-            {
-                'symbol': symbol,
-                'snapshot': snapshot,
-                'candle': closed_candle,
-                'signal': signal,
-                'equity': None,
-                'trade_plan': plan,
-                'instrument_profile': risk_manager.instrument_profile_for(symbol),
-                'risk_profile': risk_manager.risk_profile_for(symbol),
-            },
-        )
-        logger.info('Trade rejected: %s', plan.reason)
-        return None
-
-    candidate = build_trade_candidate(
+    return process_closed_candle(
         symbol=symbol,
         snapshot=snapshot,
-        candle=closed_candle,
-        signal=signal,
+        closed_candle=closed_candle,
+        strategy=strategy,
+        risk_manager=risk_manager,
+        trade_journal=trade_journal,
+        candle_journal=candle_journal,
     )
-
-    trade_journal.write(
-        'candidate_detected',
-        {
-            'symbol': symbol,
-            'snapshot': snapshot,
-            'candle': closed_candle,
-            'signal': signal,
-            'candidate': candidate,
-            'instrument_profile': risk_manager.instrument_profile_for(symbol),
-            'risk_profile': risk_manager.risk_profile_for(symbol),
-        },
-    )
-
-    logger.info(
-        'Trade candidate detected | symbol=%s | action=%s | score=%s | reason=%s',
-        symbol,
-        signal.action,
-        candidate.score,
-        candidate.rank_reason,
-    )
-
-    return candidate
 
 
 def main() -> None:
