@@ -65,6 +65,30 @@ def test_extract_open_positions_from_nested_data_payload():
     ]
 
 
+def test_extract_open_positions_ignores_non_dict_positions():
+    payload = {
+        'positions': [
+            'ignored',
+            123,
+            {
+                'positionID': 3549893989,
+                'instrumentID': 1001,
+            },
+        ]
+    }
+
+    assert extract_open_positions(payload) == [
+        {
+            'positionID': 3549893989,
+            'instrumentID': 1001,
+        }
+    ]
+
+
+def test_extract_open_positions_returns_empty_list_when_positions_is_not_a_list():
+    assert extract_open_positions({'positions': {'positionID': 3549893989}}) == []
+
+
 def test_extract_open_positions_returns_empty_list_when_missing():
     assert extract_open_positions({'clientPortfolio': {'orders': []}}) == []
 
@@ -96,6 +120,20 @@ def test_contains_open_position_accepts_position_id_key_variants():
             ]
         },
         '3549893989',
+    )
+
+
+def test_contains_open_position_accepts_int_position_id_argument():
+    assert contains_open_position(
+        {
+            'positions': [
+                {
+                    'PositionId': '3549893989',
+                    'instrumentID': 1001,
+                }
+            ]
+        },
+        3549893989,
     )
 
 
