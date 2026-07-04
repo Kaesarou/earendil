@@ -1,3 +1,4 @@
+import pytest
 from datetime import datetime, timezone
 
 from app.config.settings import Settings
@@ -37,8 +38,8 @@ def test_candidate_economics_estimator_estimates_equity_candidate_costs():
     evaluated = estimator.evaluate(candidate=make_candidate('AAPL'), account_equity=100000.0)
 
     assert evaluated.economics.position_value == 750.0
-    assert evaluated.economics.expected_gross_profit == 12.0
-    assert evaluated.economics.estimated_total_cost == 3.0
-    assert evaluated.economics.expected_net_profit == 9.0
-    assert evaluated.economics.expected_net_profit_percent == 1.2
-    assert evaluated.economics.required_min_expected_net_profit_amount == 0.75
+    assert evaluated.economics.expected_gross_profit == pytest.approx(12.0)
+    assert evaluated.economics.estimated_total_cost == pytest.approx(3.0)
+    assert evaluated.economics.expected_net_profit == pytest.approx(9.0)
+    assert evaluated.economics.expected_net_profit_percent == pytest.approx(1.2)
+    assert evaluated.economics.required_min_expected_net_profit_amount == pytest.approx(0.75)
