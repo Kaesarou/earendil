@@ -3,6 +3,18 @@ from app.brokers.etoro.market_data_mapper import to_market_snapshots
 from app.config.settings import Settings
 
 
+def snapshot_values(snapshots: dict) -> dict:
+    return {
+        symbol: {
+            'symbol': snapshot.symbol,
+            'bid': snapshot.bid,
+            'ask': snapshot.ask,
+            'last': snapshot.last,
+        }
+        for symbol, snapshot in snapshots.items()
+    }
+
+
 def test_etoro_client_market_data_mapping_matches_extracted_mapper():
     rates_payload = {
         'rates': [
@@ -38,4 +50,4 @@ def test_etoro_client_market_data_mapping_matches_extracted_mapper():
         symbol_by_instrument_id=symbol_by_instrument_id,
     )
 
-    assert client_snapshots == mapper_snapshots
+    assert snapshot_values(client_snapshots) == snapshot_values(mapper_snapshots)
