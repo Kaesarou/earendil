@@ -5,6 +5,11 @@ from uuid import uuid4
 import requests
 
 from app.brokers.base import BrokerClient
+from app.brokers.etoro.order_payload_builder import (
+    build_open_order_payload,
+    leverage_for_side,
+    open_transaction_for_side,
+)
 from app.config.settings import Settings
 from app.market.models import MarketSnapshot
 
@@ -38,7 +43,7 @@ class EtoroClient(BrokerClient):
             symbol,
             rates_payload=rates_payload,
         )
-    
+     
     #Pour l'instant on est limité à 100 symbols
     def get_market_snapshots(self, symbols: list[str]) -> dict[str, MarketSnapshot]:
         instruments_ids = self._find_instruments_ids(symbols)
@@ -192,7 +197,7 @@ class EtoroClient(BrokerClient):
     def is_position_open(self, position_id: str) -> bool:
         portfolio = self.get_portfolio()
         return self._contains_open_position(portfolio, position_id)
-    
+     
     def remember_position_instrument(self, position_id: str, symbol: str) -> None:
         instrument_id = self._find_instrument_id(symbol)
         self.position_instruments[position_id] = instrument_id
@@ -361,35 +366,21 @@ class EtoroClient(BrokerClient):
         stop_loss: float,
         take_profit: float,
     ) -> dict:
-        transaction = self._open_transaction_for_side(side)
-
-        payload = {
-            'action': 'open',
-            'transaction': transaction,
-            'InstrumentID': instrument_id,
-            'orderType': 'mkt',
-            'leverage': self._leverage_for_side(side),
-            'amount': amount,
-            'orderCurrency': self.settings.base_currency.lower(),
-        }
-
-        if side == 'SELL':
-            payload['settlementType'] = 'cfd'
-            payload['StopLossRate'] = stop_loss
-
-        return payload
+        return build_open_order_payload(
+            instrument_id=instrument_id,
+            side=side,
+            amount=amount,
+            stop_loss=stop_loss,
+            take_profit=take_profit,
+            order_currency=self.settings.base_currency,
+        )
 
     def _open_transaction_for_side(self, side: str) -> str:
-        if side == 'BUY':
-            return 'buy'
-
-        if side == 'SELL':
-            return 'sellShort'
-
-        raise ValueError(f'Unsupported side for eToro transaction: {side}')
+        return open_transaction_for_side(side)
 
     def _leverage_for_side(self, side: str) -> int:
-        return 1
+        return leverage_for_side(side)
+
     # -------------------------------------------------------------------------
     # Endpoint paths
     # -------------------------------------------------------------------------
@@ -500,7 +491,7 @@ class EtoroClient(BrokerClient):
         return self._get(
             f'/api/v1/market-data/instruments/rates?instrumentIds={joined_instrument_ids}',
         )
-    
+     
     def _to_market_snapshot(self, symbol: str, rates_payload: dict) -> MarketSnapshot:
         return self._to_market_snapshots(rates_payload)[symbol]
 
@@ -799,7 +790,7 @@ class EtoroClient(BrokerClient):
                 return float(value)
 
         return None
-    
+     
     def _extract_int(self, payload: dict, keys: tuple[str, ...]) -> int:
         value = self._extract_optional_int(payload, keys)
 
@@ -807,7 +798,7 @@ class EtoroClient(BrokerClient):
             raise ValueError(f'Unable to extract required int keys={keys}. Payload={payload}')
 
         return value
-    
+     
     def _extract_optional_int(self, payload: dict, keys: tuple[str, ...]) -> int | None:
         for key in keys:
             value = payload.get(key)
@@ -815,7 +806,7 @@ class EtoroClient(BrokerClient):
                 return int(value)
 
         return None
-    
+     
     def _extract_account_equity(self, payload: dict) -> float:
         equity = self._extract_optional_account_equity(payload)
 
@@ -852,7 +843,7 @@ class EtoroClient(BrokerClient):
             value = payload.get(key)
             if value is not None:
                 return float(value)
-    
+     
         for key in (
             'clientPortfolio',
             'ClientPortfolio',
@@ -866,12 +857,12 @@ class EtoroClient(BrokerClient):
             'Data',
         ):
             value = payload.get(key)
-    
+     
             if isinstance(value, dict):
                 nested_equity = self._extract_optional_account_equity(value)
                 if nested_equity is not None:
                     return nested_equity
-    
+     
         return None
 
     def _extract_order_id(self, payload: dict) -> str:
