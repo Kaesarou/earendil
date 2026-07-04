@@ -1,14 +1,71 @@
 import logging
 
+from app.brokers.base import BrokerClient
 from app.execution.candidate_ranking import build_trade_candidate
+from app.execution.position_tracker import PositionTracker
 from app.execution.trade_candidate import TradeCandidate
+from app.execution.trade_executor import TradeExecutor
 from app.journal.jsonl_journal import JsonlJournal
+from app.market.candle_builder import CandleBuilder
 from app.market.models import Candle, MarketSnapshot
+from app.persistence.position_store import PositionStore
+from app.persistence.trade_cooldown_store import TradeCooldownStore
 from app.risk.models import TradePlan
 from app.risk.risk_manager import RiskManager
+from app.runtime.position_lifecycle import (
+    BrokerAuthorizationErrorChecker,
+    close_positions_triggered_by_snapshot,
+)
 from app.strategies.strategy import TrendStrategy
 
 logger = logging.getLogger(__name__)
+
+
+def process_symbol(
+    symbol: str,
+    broker: BrokerClient,
+    strategy: TrendStrategy,
+    risk_manager: RiskManager,
+    executor: TradeExecutor,
+    position_tracker: PositionTracker,
+    candle_builder: CandleBuilder,
+    trade_journal: JsonlJournal,
+    market_journal: JsonlJournal,
+    candle_journal: JsonlJournal,
+    is_broker_authorization_error: BrokerAuthorizationErrorChecker,
+    position_store: PositionStore | None = None,
+    cooldown_store: TradeCooldownStore | None = None,
+    snapshot: MarketSnapshot | None = None,
+) -> TradeCandidate | None:
+    snapshot = snapshot or broker.get_market_snapshot(symbol)
+    market_journal.write('market_snapshot', {'symbol': symbol, 'snapshot': snapshot})
+    strategy.on_snapshot(snapshot)
+
+    close_positions_triggered_by_snapshot(
+        symbol=symbol,
+        snapshot=snapshot,
+        executor=executor,
+        position_tracker=position_tracker,
+        risk_manager=risk_manager,
+        trade_journal=trade_journal,
+        position_store=position_store,
+        cooldown_store=cooldown_store,
+        is_broker_authorization_error=is_broker_authorization_error,
+    )
+
+    closed_candle = candle_builder.on_snapshot(snapshot)
+    if closed_candle is None:
+        return None
+
+    return process_closed_candle(
+        symbol=symbol,
+        snapshot=snapshot,
+        closed_candle=closed_candle,
+        strategy=strategy,
+        risk_manager=risk_manager,
+        trade_journal=trade_journal,
+        candle_journal=candle_journal,
+    )
 
 
 def process_closed_candle(
