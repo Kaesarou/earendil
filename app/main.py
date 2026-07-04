@@ -4,8 +4,6 @@ from datetime import datetime, timezone
 
 from app.brokers.base import BrokerClient
 from app.config.settings import Settings, get_settings
-from app.execution.candidate_ranking import build_trade_candidate, rank_trade_candidates
-from app.execution.position_tracker import ClosedPosition, PositionTracker, TrackedPosition
 from app.execution.candidate_economics import (
     CandidateEconomicsEstimator,
     EvaluatedTradeCandidate,
@@ -729,7 +727,7 @@ def execute_ranked_candidates(
         if not candidates:
             return
 
-        selected_evaluated_candidates: list[EvaluatedTradeCandidate] | None = None
+    selected_evaluated_candidates: list[EvaluatedTradeCandidate] | None = None
     rejected_evaluated_candidates: list[RejectedEvaluatedCandidateSelection] | None = None
 
     if candidate_economics_estimator is None:
@@ -786,16 +784,16 @@ def execute_ranked_candidates(
         )
         ranked_candidates = candidate_selection_result.selected_candidates
 
-        trade_journal.write(
-            'candidate_selection',
-            {
-                'strategy_profile': strategy_profile.name if strategy_profile else None,
-                'selected_candidates': candidate_selection_result.selected_candidates,
-                'rejected_candidates': candidate_selection_result.rejected_candidates,
-                'selected_evaluated_candidates': selected_evaluated_candidates,
-                'rejected_evaluated_candidates': rejected_evaluated_candidates,
-            },
-        )
+    trade_journal.write(
+        'candidate_selection',
+        {
+            'strategy_profile': strategy_profile.name if strategy_profile else None,
+            'selected_candidates': candidate_selection_result.selected_candidates,
+            'rejected_candidates': candidate_selection_result.rejected_candidates,
+            'selected_evaluated_candidates': selected_evaluated_candidates,
+            'rejected_evaluated_candidates': rejected_evaluated_candidates,
+        },
+    )
     logger.info(
         'Candidate selection | profile=%s | selected=%s | rejected=%s',
         strategy_profile.name if strategy_profile else None,
