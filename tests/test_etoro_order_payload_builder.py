@@ -1,29 +1,19 @@
 import pytest
 
-from app.brokers.etoro.etoro_client import EtoroClient
-from app.config.settings import Settings
-
-
-def build_client(base_currency: str = 'USD') -> EtoroClient:
-    return EtoroClient(
-        settings=Settings(
-            BROKER='etoro_demo',
-            BASE_CURRENCY=base_currency,
-            ETORO_API_KEY='api-key',
-            ETORO_USER_KEY='user-key',
-        ),
-    )
+from app.brokers.etoro.order_payload_builder import (
+    build_open_order_payload,
+    open_transaction_for_side,
+)
 
 
 def test_etoro_buy_open_order_payload_uses_market_buy_without_protection_rates():
-    client = build_client(base_currency='EUR')
-
-    payload = client._build_open_order_payload(
+    payload = build_open_order_payload(
         instrument_id=1234,
         side='BUY',
         amount=500.0,
         stop_loss=99.0,
         take_profit=101.0,
+        order_currency='EUR',
     )
 
     assert payload == {
@@ -38,14 +28,13 @@ def test_etoro_buy_open_order_payload_uses_market_buy_without_protection_rates()
 
 
 def test_etoro_sell_open_order_payload_uses_short_cfd_and_stop_loss_rate():
-    client = build_client(base_currency='USD')
-
-    payload = client._build_open_order_payload(
+    payload = build_open_order_payload(
         instrument_id=1261,
         side='SELL',
         amount=497.26,
         stop_loss=337.4092,
         take_profit=334.8862,
+        order_currency='USD',
     )
 
     assert payload == {
@@ -62,14 +51,13 @@ def test_etoro_sell_open_order_payload_uses_short_cfd_and_stop_loss_rate():
 
 
 def test_etoro_open_order_payload_currently_does_not_send_take_profit_rate():
-    client = build_client()
-
-    payload = client._build_open_order_payload(
+    payload = build_open_order_payload(
         instrument_id=1261,
         side='SELL',
         amount=497.26,
         stop_loss=337.4092,
         take_profit=334.8862,
+        order_currency='USD',
     )
 
     assert 'TakeProfitRate' not in payload
@@ -85,13 +73,9 @@ def test_etoro_open_order_payload_currently_does_not_send_take_profit_rate():
     ],
 )
 def test_etoro_open_transaction_for_supported_sides(side: str, transaction: str):
-    client = build_client()
-
-    assert client._open_transaction_for_side(side) == transaction
+    assert open_transaction_for_side(side) == transaction
 
 
 def test_etoro_open_transaction_rejects_unsupported_side():
-    client = build_client()
-
     with pytest.raises(ValueError, match='Unsupported side for eToro transaction'):
-        client._open_transaction_for_side('HOLD')
+        open_transaction_for_side('HOLD')
