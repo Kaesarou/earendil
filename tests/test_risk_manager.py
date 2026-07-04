@@ -158,8 +158,11 @@ def test_risk_manager_approves_buy_when_no_position_is_open():
     assert plan.stop_loss == 99.7
     assert plan.take_profit == 100.5
     assert plan.expected_gross_profit == 0.2
-    assert plan.estimated_fees == 0.0
     assert plan.expected_net_profit == 0.2
+    assert plan.expected_net_profit_percent == 0.5
+    assert plan.required_min_expected_net_profit_amount == 0.0
+    assert plan.min_expected_net_profit_percent == 0.0
+    assert plan.estimated_fees == 0.0
     assert plan.dynamic_sl_tp_enabled is False
 
 
@@ -187,8 +190,9 @@ def test_risk_manager_uses_crypto_risk_profile_for_crypto_symbol():
     assert plan.stop_loss == 98.5
     assert plan.take_profit == 103.0
     assert plan.expected_gross_profit == 0.3
-    assert plan.estimated_fees == 0.05
     assert plan.expected_net_profit == 0.25
+    assert plan.expected_net_profit_percent == 2.5
+    assert plan.estimated_fees == 0.05
 
 
 def test_risk_manager_uses_atr_dynamic_stop_loss_and_take_profit():
@@ -213,6 +217,7 @@ def test_risk_manager_uses_atr_dynamic_stop_loss_and_take_profit():
     assert plan.take_profit == 102.0
     assert plan.expected_gross_profit == 0.8
     assert plan.expected_net_profit == 0.8
+    assert plan.expected_net_profit_percent == 2.0
     assert plan.atr_percent == 0.8
     assert plan.dynamic_sl_tp_enabled is True
     assert plan.effective_stop_loss_percent == 1.2
@@ -405,14 +410,15 @@ def test_risk_manager_rejects_when_expected_profit_does_not_cover_fees():
     assert plan.expected_gross_profit == 0.2
     assert plan.estimated_fees == 0.25
     assert plan.expected_net_profit == -0.05
+    assert plan.expected_net_profit_percent == -0.125
 
 
-def test_risk_manager_rejects_when_expected_net_profit_is_below_minimum():
+def test_risk_manager_rejects_when_expected_net_profit_percent_is_below_minimum():
     risk_manager = build_risk_manager(
         trade_cost=TradeCostConfig(
             fixed_open_fee=0.05,
             include_spread_cost=False,
-            min_expected_net_profit=0.2,
+            min_expected_net_profit_percent=0.4,
         ),
     )
 
@@ -427,14 +433,17 @@ def test_risk_manager_rejects_when_expected_net_profit_is_below_minimum():
     assert plan.expected_gross_profit == 0.2
     assert plan.estimated_fees == 0.05
     assert plan.expected_net_profit == 0.15
+    assert plan.expected_net_profit_percent == 0.375
+    assert plan.required_min_expected_net_profit_amount == 0.16
+    assert plan.min_expected_net_profit_percent == 0.4
 
 
-def test_risk_manager_approves_when_expected_net_profit_matches_minimum():
+def test_risk_manager_approves_when_expected_net_profit_percent_matches_minimum():
     risk_manager = build_risk_manager(
         trade_cost=TradeCostConfig(
             fixed_open_fee=0.05,
             include_spread_cost=False,
-            min_expected_net_profit=0.15,
+            min_expected_net_profit_percent=0.375,
         ),
     )
 
@@ -448,6 +457,9 @@ def test_risk_manager_approves_when_expected_net_profit_matches_minimum():
     assert plan.expected_gross_profit == 0.2
     assert plan.estimated_fees == 0.05
     assert plan.expected_net_profit == 0.15
+    assert plan.expected_net_profit_percent == 0.375
+    assert plan.required_min_expected_net_profit_amount == 0.15
+    assert plan.min_expected_net_profit_percent == 0.375
 
 
 def test_risk_manager_approves_sell_when_short_selling_is_enabled():
