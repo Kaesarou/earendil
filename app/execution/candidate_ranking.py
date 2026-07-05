@@ -4,14 +4,10 @@ from app.execution.scoring.signal_scorer import (
     directional_score_breakdown,
     float_metadata,
 )
-from app.execution.scoring.trade_candidate_scorer import TradeCandidateScorer
 from app.execution.trade_candidate import TradeCandidate
 from app.market.models import Candle, MarketSnapshot
 from app.strategies.signals import Signal
 from app.utils.commons import spread_percent
-
-
-_DEFAULT_TRADE_CANDIDATE_SCORER = TradeCandidateScorer()
 
 
 def build_trade_candidate(
