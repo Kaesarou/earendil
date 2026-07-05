@@ -132,7 +132,19 @@ def process_closed_candle(
             session_decision=session_decision,
         )
 
-    if session_decision is not None and not session_decision.new_entries_allowed:
+    if session_decision is None or session_decision.session_key is None:
+        return _write_rejected_decision(
+            symbol=symbol,
+            snapshot=snapshot,
+            closed_candle=closed_candle,
+            signal=signal,
+            reason='missing_trading_session',
+            risk_manager=risk_manager,
+            trade_journal=trade_journal,
+            session_decision=session_decision,
+        )
+
+    if not session_decision.new_entries_allowed:
         return _write_rejected_decision(
             symbol=symbol,
             snapshot=snapshot,
@@ -149,6 +161,7 @@ def process_closed_candle(
         snapshot=snapshot,
         candle=closed_candle,
         signal=signal,
+        session_key=session_decision.session_key,
     )
 
     trade_journal.write(
