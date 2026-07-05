@@ -8,6 +8,7 @@ from app.execution.trade_executor import TradeExecutor
 from app.journal.jsonl_journal import JsonlJournal
 from app.market.candle_builder import CandleBuilder
 from app.market.models import Candle, MarketSnapshot
+from app.market.session_rules import TradingSessionDecision
 from app.persistence.position_store import PositionStore
 from app.persistence.trade_cooldown_store import TradeCooldownStore
 from app.risk.models import TradePlan
@@ -16,7 +17,7 @@ from app.runtime.position_lifecycle import (
     BrokerAuthorizationErrorChecker,
     close_positions_triggered_by_snapshot,
 )
-from app.runtime.trading_session_window import TradingSessionDecision
+from app.runtime.session_position_lifecycle import close_positions_before_session_end
 from app.strategies.strategy import TrendStrategy
 
 logger = logging.getLogger(__name__)
@@ -54,6 +55,20 @@ def process_symbol(
         cooldown_store=cooldown_store,
         is_broker_authorization_error=is_broker_authorization_error,
     )
+
+    if session_decision is not None:
+        close_positions_before_session_end(
+            symbol=symbol,
+            snapshot=snapshot,
+            session_decision=session_decision,
+            executor=executor,
+            position_tracker=position_tracker,
+            risk_manager=risk_manager,
+            trade_journal=trade_journal,
+            position_store=position_store,
+            cooldown_store=cooldown_store,
+            is_broker_authorization_error=is_broker_authorization_error,
+        )
 
     closed_candle = candle_builder.on_snapshot(snapshot)
     if closed_candle is None:
