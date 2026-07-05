@@ -35,9 +35,11 @@ class JsonlJournal:
     def _serialize(self, value: Any) -> Any:
         if is_dataclass(value) and not isinstance(value, type):
             return self._serialize(asdict(value))
+        if hasattr(value, '_asdict'):
+            return self._serialize(value._asdict())
         if isinstance(value, dict):
             return {key: self._serialize(item) for key, item in value.items()}
-        if isinstance(value, list):
+        if isinstance(value, (list, tuple)):
             return [self._serialize(item) for item in value]
         if isinstance(value, (datetime, date, time)):
             return value.isoformat()
