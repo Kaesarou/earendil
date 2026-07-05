@@ -1,5 +1,13 @@
+from app.brokers.etoro.scalar_extractors import extract_optional_int
+
+
+ORDER_ID_KEYS = ('orderId', 'OrderId', 'orderID', 'OrderID')
+REFERENCE_ID_KEYS = ('referenceId', 'ReferenceId', 'referenceID', 'ReferenceID')
+ORDER_ERROR_CODE_KEYS = ('errorCode',)
+
+
 def extract_order_id(payload: dict) -> str:
-    for key in ('orderId', 'OrderId', 'orderID', 'OrderID'):
+    for key in ORDER_ID_KEYS:
         value = payload.get(key)
         if value is not None:
             return str(value)
@@ -23,7 +31,7 @@ def extract_order_id(payload: dict) -> str:
 
 
 def extract_reference_id(payload: dict) -> str | None:
-    for key in ('referenceId', 'ReferenceId', 'referenceID', 'ReferenceID'):
+    for key in REFERENCE_ID_KEYS:
         value = payload.get(key)
         if value is not None:
             return str(value)
@@ -85,16 +93,13 @@ def extract_position_id_from_order_details(payload: dict) -> str | None:
 
 
 def extract_order_error_code(payload: dict) -> int | None:
-    error_code = payload.get('errorCode')
-
+    error_code = extract_optional_int(payload, ORDER_ERROR_CODE_KEYS)
     if error_code is not None:
-        return int(error_code)
+        return error_code
 
     status = payload.get('status')
     if isinstance(status, dict):
-        status_error_code = status.get('errorCode')
-        if status_error_code is not None:
-            return int(status_error_code)
+        return extract_optional_int(status, ORDER_ERROR_CODE_KEYS)
 
     return None
 
