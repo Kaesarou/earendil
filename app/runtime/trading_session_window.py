@@ -1,5 +1,6 @@
-from datetime import datetime, time
+from datetime import datetime, time, timezone
 from typing import NamedTuple
+from zoneinfo import ZoneInfo
 
 from app.instruments.models import AssetClass
 
@@ -43,6 +44,51 @@ class TradingSessionDecision(NamedTuple):
     session_end_time: datetime | None
     time_until_session_end_minutes: float | None
     session_key: str | None
+
+
+class TradingSessionService:
+    def __init__(
+        self,
+        configs: dict[AssetClass, AssetTradingSessionConfig],
+        timezone_name: str,
+    ):
+        self.configs = configs
+        self.timezone = ZoneInfo(timezone_name)
+
+    def evaluate(self, *, asset_class: AssetClass, now: datetime) -> TradingSessionDecision:
+        config = self.configs[asset_class]
+        if config.is_24_7:
+            return TradingSessionDecision(
+                asset_class=asset_class,
+                session_active=True,
+                session_24_7=True,
+                collect_snapshots=True,
+                new_entries_allowed=True,
+                force_close_required=False,
+                reason=SESSION_TRADABLE,
+                session_start_time=None,
+                session_end_time=None,
+                time_until_session_end_minutes=None,
+                session_key=asset_class.value + ':24_7',
+            )
+        return TradingSessionDecision(
+            asset_class=asset_class,
+            session_active=False,
+            session_24_7=False,
+            collect_snapshots=False,
+            new_entries_allowed=False,
+            force_close_required=False,
+            reason=SESSION_CLOSED,
+            session_start_time=None,
+            session_end_time=None,
+            time_until_session_end_minutes=None,
+            session_key=None,
+        )
+
+    def _to_local_time(self, now: datetime) -> datetime:
+        if now.tzinfo is None:
+            now = now.replace(tzinfo=timezone.utc)
+        return now.astimezone(self.timezone)
 
 
 def parse_trading_sessions(raw_sessions: str) -> tuple[TradingSessionWindow, ...]:
