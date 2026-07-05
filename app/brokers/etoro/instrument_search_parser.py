@@ -1,7 +1,12 @@
 from app.brokers.etoro.payload_collections import keep_dict_items
 from app.brokers.etoro.scalar_extractors import extract_optional_int
+from app.brokers.etoro.string_extractors import extract_optional_string
 
 
+INSTRUMENT_ITEMS_KEYS = ('items', 'data', 'Data', 'Items', 'instruments', 'rates')
+INSTRUMENT_SYMBOL_KEYS = ('internalSymbolFull',)
+INSTRUMENT_DISPLAY_NAME_KEY = 'internalInstrumentDisplayName'
+INSTRUMENT_CURRENT_RATE_KEY = 'currentRate'
 INSTRUMENT_ID_KEYS = (
     'internalInstrumentId',
     'instrumentId',
@@ -11,11 +16,15 @@ INSTRUMENT_ID_KEYS = (
 )
 
 
+def normalize_symbol(symbol: str) -> str:
+    return symbol.upper()
+
+
 def extract_items(payload: dict | list) -> list[dict]:
     if isinstance(payload, list):
         return keep_dict_items(payload)
 
-    for key in ('items', 'data', 'Data', 'Items', 'instruments', 'rates'):
+    for key in INSTRUMENT_ITEMS_KEYS:
         value = payload.get(key)
 
         if isinstance(value, list):
@@ -27,13 +36,17 @@ def extract_items(payload: dict | list) -> list[dict]:
     return []
 
 
+def extract_instrument_symbol(instrument: dict) -> str | None:
+    return extract_optional_string(instrument, INSTRUMENT_SYMBOL_KEYS)
+
+
 def resolve_exact_instrument_id(symbol: str, payload: dict | list) -> int:
-    normalized_symbol = symbol.upper()
+    normalized_symbol = normalize_symbol(symbol)
     items = extract_items(payload)
 
     exact_matches = [
         item for item in items
-        if str(item.get('internalSymbolFull', '')).upper() == normalized_symbol
+        if normalize_symbol(extract_instrument_symbol(item) or '') == normalized_symbol
     ]
 
     if not exact_matches:
@@ -62,10 +75,10 @@ def extract_instrument_id(instrument: dict) -> int | None:
 def candidate_summaries(items: list[dict]) -> list[dict]:
     return [
         {
-            'internalSymbolFull': item.get('internalSymbolFull'),
-            'displayName': item.get('internalInstrumentDisplayName'),
+            'internalSymbolFull': extract_instrument_symbol(item),
+            'displayName': item.get(INSTRUMENT_DISPLAY_NAME_KEY),
             'instrumentId': extract_instrument_id(item),
-            'currentRate': item.get('currentRate'),
+            'currentRate': item.get(INSTRUMENT_CURRENT_RATE_KEY),
         }
         for item in items[:10]
     ]
