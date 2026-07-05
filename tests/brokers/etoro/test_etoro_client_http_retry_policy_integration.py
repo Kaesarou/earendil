@@ -2,6 +2,7 @@ from types import SimpleNamespace
 
 import requests
 
+from app.brokers.etoro.attempt_delay import delay_seconds_for_attempt
 from app.brokers.etoro.etoro_client import EtoroClient
 from app.brokers.etoro.http_retry_policy import is_retryable_http_status
 
@@ -34,6 +35,7 @@ def build_uninitialized_client() -> EtoroClient:
 def test_etoro_client_get_retries_retryable_status_before_success(monkeypatch):
     client = build_uninitialized_client()
     calls = []
+    sleeps = []
     responses = [
         FakeResponse(429),
         FakeResponse(200, {'ok': True}),
@@ -44,11 +46,12 @@ def test_etoro_client_get_retries_retryable_status_before_success(monkeypatch):
         return responses.pop(0)
 
     monkeypatch.setattr(requests, 'get', fake_get)
-    monkeypatch.setattr('time.sleep', lambda seconds: None)
+    monkeypatch.setattr('time.sleep', lambda seconds: sleeps.append(seconds))
 
     assert is_retryable_http_status(429) is True
     assert client._get('/path') == {'ok': True}
     assert len(calls) == 2
+    assert sleeps == [delay_seconds_for_attempt(1)]
 
 
 def test_etoro_client_get_does_not_retry_non_retryable_status(monkeypatch):
