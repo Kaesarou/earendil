@@ -1,1 +1,7 @@
-VALUE = 'session'
+SESSION_CLOSED = 'session_closed'
+SESSION_TRADABLE = 'session_tradable'
+TOO_CLOSE_TO_SESSION_END = 'too_close_to_session_end'
+FORCE_CLOSE_BEFORE_SESSION_END = 'force_close_before_session_end'
+
+NEW_ENTRIES_CUTOFF_MINUTES_BEFORE_SESSION_END = 60
+FORCE_CLOSE_MINUTES_BEFORE_SESSION_END = 20
