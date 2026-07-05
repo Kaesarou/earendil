@@ -7,17 +7,10 @@ from app.risk.risk_manager import RiskManager
 from app.risk.trade_cost_model import TradeCostConfig
 from app.strategies.signals import Signal
 
+SESSION_KEY = 'test-session'
 
-def risk_profile(
-    *,
-    asset_class: AssetClass,
-    max_position_size_percent: float = 100.0,
-    take_profit_percent: float = 1.6,
-    trade_cost: TradeCostConfig,
-    breakeven_stop_enabled: bool = False,
-    breakeven_trigger_percent: float = 1.0,
-    breakeven_buffer_percent: float = 0.0,
-) -> RiskProfile:
+
+def risk_profile(*, asset_class: AssetClass, max_position_size_percent: float = 100.0, take_profit_percent: float = 1.6, trade_cost: TradeCostConfig, breakeven_stop_enabled: bool = False, breakeven_trigger_percent: float = 1.0, breakeven_buffer_percent: float = 0.0) -> RiskProfile:
     return RiskProfile(
         asset_class=asset_class,
         max_position_size_percent=max_position_size_percent,
@@ -43,19 +36,11 @@ def risk_profile(
 
 
 def build_risk_manager(profile: RiskProfile) -> RiskManager:
-    settings = Settings(
-        EQUITY_US_SYMBOLS='AAPL',
-        CRYPTO_SYMBOLS='BTC',
-    )
+    settings = Settings(EQUITY_US_SYMBOLS='AAPL', CRYPTO_SYMBOLS='BTC')
     return RiskManager(
         settings=settings,
         position_sizing_strategy=FixedPercentPositionSizing(),
-        instrument_registry=InstrumentRegistry(
-            settings,
-            risk_profiles={
-                profile.asset_class: profile,
-            },
-        ),
+        instrument_registry=InstrumentRegistry(settings, risk_profiles={profile.asset_class: profile}),
     )
 
 
@@ -67,26 +52,13 @@ def buy_signal() -> Signal:
     return Signal(action='BUY', confidence=0.75, reason='test_buy')
 
 
-def test_risk_manager_uses_dynamic_equity_trade_costs_and_net_breakeven():
-    profile = risk_profile(
-        asset_class=AssetClass.EQUITY_US,
-        trade_cost=TradeCostConfig(
-            open_fee_percent=0.15,
-            close_fee_percent=0.15,
-            include_spread_cost=True,
-            min_expected_net_profit_percent=0.10,
-        ),
-        breakeven_stop_enabled=True,
-        breakeven_trigger_percent=1.0,
-        breakeven_buffer_percent=0.0,
-    )
-    risk_manager = build_risk_manager(profile)
+def evaluate(risk_manager: RiskManager, signal: Signal, snapshot: MarketSnapshot, account_equity: float):
+    return risk_manager.evaluate(signal=signal, snapshot=snapshot, account_equity=account_equity, session_key=SESSION_KEY)
 
-    plan = risk_manager.evaluate(
-        signal=buy_signal(),
-        snapshot=snapshot(),
-        account_equity=1000.0,
-    )
+
+def test_risk_manager_uses_dynamic_equity_trade_costs_and_net_breakeven():
+    profile = risk_profile(asset_class=AssetClass.EQUITY_US, trade_cost=TradeCostConfig(open_fee_percent=0.15, close_fee_percent=0.15, include_spread_cost=True, min_expected_net_profit_percent=0.10), breakeven_stop_enabled=True, breakeven_trigger_percent=1.0, breakeven_buffer_percent=0.0)
+    plan = evaluate(build_risk_manager(profile), buy_signal(), snapshot(), 1000.0)
 
     assert plan.approved
     assert plan.amount == 1000.0
@@ -108,23 +80,8 @@ def test_risk_manager_uses_dynamic_equity_trade_costs_and_net_breakeven():
 
 
 def test_risk_manager_rejects_trade_when_net_profit_percent_is_too_low():
-    profile = risk_profile(
-        asset_class=AssetClass.EQUITY_US,
-        take_profit_percent=3.0,
-        trade_cost=TradeCostConfig(
-            open_fee_percent=1.0,
-            close_fee_percent=1.0,
-            include_spread_cost=False,
-            min_expected_net_profit_percent=1.20,
-        ),
-    )
-    risk_manager = build_risk_manager(profile)
-
-    plan = risk_manager.evaluate(
-        signal=buy_signal(),
-        snapshot=snapshot(bid=100.0, ask=100.0),
-        account_equity=500.0,
-    )
+    profile = risk_profile(asset_class=AssetClass.EQUITY_US, take_profit_percent=3.0, trade_cost=TradeCostConfig(open_fee_percent=1.0, close_fee_percent=1.0, include_spread_cost=False, min_expected_net_profit_percent=1.20))
+    plan = evaluate(build_risk_manager(profile), buy_signal(), snapshot(bid=100.0, ask=100.0), 500.0)
 
     assert not plan.approved
     assert plan.reason == 'expected_profit_too_low_after_fees'
@@ -136,25 +93,9 @@ def test_risk_manager_rejects_trade_when_net_profit_percent_is_too_low():
     assert plan.min_expected_net_profit_percent == 1.2
 
 
-def test_risk_manager_accepts_crypto_trade_when_net_percent_is_positive_even_if_fixed_8_dollars_would_fail():
-    profile = risk_profile(
-        asset_class=AssetClass.CRYPTO,
-        max_position_size_percent=100.0,
-        take_profit_percent=3.0,
-        trade_cost=TradeCostConfig(
-            open_fee_percent=1.0,
-            close_fee_percent=1.0,
-            include_spread_cost=False,
-            min_expected_net_profit_percent=0.10,
-        ),
-    )
-    risk_manager = build_risk_manager(profile)
-
-    plan = risk_manager.evaluate(
-        signal=buy_signal(),
-        snapshot=snapshot(symbol='BTC', bid=100.0, ask=100.0),
-        account_equity=747.0,
-    )
+def test_risk_manager_accepts_crypto_trade_when_net_percent_is_positive():
+    profile = risk_profile(asset_class=AssetClass.CRYPTO, max_position_size_percent=100.0, take_profit_percent=3.0, trade_cost=TradeCostConfig(open_fee_percent=1.0, close_fee_percent=1.0, include_spread_cost=False, min_expected_net_profit_percent=0.10))
+    plan = evaluate(build_risk_manager(profile), buy_signal(), snapshot(symbol='BTC', bid=100.0, ask=100.0), 747.0)
 
     assert plan.approved
     assert plan.amount == 747.0
@@ -167,22 +108,8 @@ def test_risk_manager_accepts_crypto_trade_when_net_percent_is_positive_even_if_
 
 
 def test_risk_manager_uses_trade_cost_min_profit_percent():
-    profile = risk_profile(
-        asset_class=AssetClass.EQUITY_US,
-        trade_cost=TradeCostConfig(
-            open_fee_percent=0.15,
-            close_fee_percent=0.15,
-            include_spread_cost=True,
-            min_expected_net_profit_percent=0.10,
-        ),
-    )
-    risk_manager = build_risk_manager(profile)
-
-    plan = risk_manager.evaluate(
-        signal=buy_signal(),
-        snapshot=snapshot(),
-        account_equity=1000.0,
-    )
+    profile = risk_profile(asset_class=AssetClass.EQUITY_US, trade_cost=TradeCostConfig(open_fee_percent=0.15, close_fee_percent=0.15, include_spread_cost=True, min_expected_net_profit_percent=0.10))
+    plan = evaluate(build_risk_manager(profile), buy_signal(), snapshot(), 1000.0)
 
     assert plan.approved
     assert plan.expected_net_profit == 12.0
@@ -192,25 +119,8 @@ def test_risk_manager_uses_trade_cost_min_profit_percent():
 
 
 def test_risk_manager_uses_net_breakeven_buffer_when_configured_buffer_is_positive():
-    profile = risk_profile(
-        asset_class=AssetClass.EQUITY_US,
-        trade_cost=TradeCostConfig(
-            open_fee_percent=0.15,
-            close_fee_percent=0.15,
-            include_spread_cost=False,
-            min_expected_net_profit_percent=0.0,
-        ),
-        breakeven_stop_enabled=True,
-        breakeven_trigger_percent=1.0,
-        breakeven_buffer_percent=1.0,
-    )
-    risk_manager = build_risk_manager(profile)
-
-    plan = risk_manager.evaluate(
-        signal=buy_signal(),
-        snapshot=snapshot(bid=100.0, ask=100.0),
-        account_equity=1000.0,
-    )
+    profile = risk_profile(asset_class=AssetClass.EQUITY_US, trade_cost=TradeCostConfig(open_fee_percent=0.15, close_fee_percent=0.15, include_spread_cost=False, min_expected_net_profit_percent=0.0), breakeven_stop_enabled=True, breakeven_trigger_percent=1.0, breakeven_buffer_percent=1.0)
+    plan = evaluate(build_risk_manager(profile), buy_signal(), snapshot(bid=100.0, ask=100.0), 1000.0)
 
     assert plan.approved
     assert plan.estimated_total_cost_percent == 0.3
