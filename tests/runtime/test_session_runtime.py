@@ -36,7 +36,7 @@ def test_filter_symbols_by_trading_session_keeps_only_active_symbols():
         timezone_name='Europe/Paris',
     )
 
-    symbols_to_fetch, decisions, _ = filter_symbols_by_trading_session(
+    symbols_to_fetch, decisions, _, reset_keys = filter_symbols_by_trading_session(
         symbols=['AAPL', 'AIR.PA'],
         instrument_registry=registry,
         trading_session_service=service,
@@ -47,3 +47,4 @@ def test_filter_symbols_by_trading_session_keeps_only_active_symbols():
     assert symbols_to_fetch == ['AAPL']
     assert decisions['AAPL'].collect_snapshots
     assert not decisions['AIR.PA'].collect_snapshots
+    assert reset_keys == set()
