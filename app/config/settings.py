@@ -34,6 +34,10 @@ class Settings(BaseSettings):
     crypto_symbols: str = Field(default='', alias='CRYPTO_SYMBOLS')
     equity_us_symbols: str = Field(default='', alias='EQUITY_US_SYMBOLS')
     equity_eu_symbols: str = Field(default='', alias='EQUITY_EU_SYMBOLS')
+    trading_session_timezone: str = Field(default='Europe/Paris', alias='TRADING_SESSION_TIMEZONE')
+    trading_sessions_crypto: str = Field(default='', alias='TRADING_SESSIONS_CRYPTO')
+    trading_sessions_equity_us: str = Field(default='', alias='TRADING_SESSIONS_EQUITY_US')
+    trading_sessions_equity_eu: str = Field(default='', alias='TRADING_SESSIONS_EQUITY_EU')
 
     def watchlist_symbols(self) -> list[str]:
         raw_symbols = self.watchlist.strip()
