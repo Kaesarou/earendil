@@ -1,3 +1,6 @@
+POSITION_ID_KEYS = ('positionID', 'positionId', 'PositionID', 'PositionId')
+
+
 def extract_open_positions(payload: dict) -> list[dict]:
     client_portfolio = payload.get('clientPortfolio')
     if isinstance(client_portfolio, dict):
@@ -16,16 +19,20 @@ def extract_open_positions(payload: dict) -> list[dict]:
     return []
 
 
+def extract_position_id(payload: dict) -> str | None:
+    for key in POSITION_ID_KEYS:
+        position_id = payload.get(key)
+        if position_id is not None:
+            return str(position_id)
+
+    return None
+
+
 def contains_open_position(payload: dict, position_id: str) -> bool:
     open_positions = extract_open_positions(payload)
 
     for position in open_positions:
-        candidate_position_id = (
-            position.get('positionID')
-            or position.get('positionId')
-            or position.get('PositionID')
-            or position.get('PositionId')
-        )
+        candidate_position_id = extract_position_id(position)
 
         if str(candidate_position_id) != str(position_id):
             continue
