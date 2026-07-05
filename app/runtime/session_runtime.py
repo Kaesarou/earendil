@@ -15,19 +15,23 @@ def filter_symbols_by_trading_session(
     symbols_to_fetch: list[str] = []
     session_decisions = {}
     started_session_symbols: list[str] = []
+    closed_session_keys: set[str] = set()
 
     for symbol in symbols:
         asset_class = instrument_registry.resolve(symbol).asset_class
         decision = trading_session_service.evaluate(asset_class=asset_class, now=now)
         session_decisions[symbol] = decision
 
-        if trading_session_state.mark_and_detect_new_session(
+        started, closed_session_key = trading_session_state.mark_and_detect_transition(
             symbol=symbol,
             decision=decision,
-        ):
+        )
+        if started:
             started_session_symbols.append(symbol)
+        if closed_session_key is not None:
+            closed_session_keys.add(closed_session_key)
 
         if decision.collect_snapshots:
             symbols_to_fetch.append(symbol)
 
-    return symbols_to_fetch, session_decisions, started_session_symbols
+    return symbols_to_fetch, session_decisions, started_session_symbols, closed_session_keys
