@@ -1,11 +1,16 @@
+from app.brokers.etoro.payload_collections import keep_dict_items
 from app.brokers.etoro.scalar_extractors import extract_optional_int
 from app.brokers.etoro.string_extractors import extract_optional_string
 
 
 ORDER_ID_KEYS = ('orderId', 'OrderId', 'orderID', 'OrderID')
+ORDER_ID_NESTED_KEYS = ('orderForClose', 'OrderForClose', 'data', 'Data', 'order', 'Order')
 REFERENCE_ID_KEYS = ('referenceId', 'ReferenceId', 'referenceID', 'ReferenceID')
 ORDER_ERROR_CODE_KEYS = ('errorCode',)
 POSITION_ID_KEYS = ('positionId', 'PositionId', 'positionID', 'PositionID')
+POSITION_EXECUTION_KEYS = ('positionExecutions', 'positions')
+POSITION_NESTED_KEYS = ('position', 'Position', 'data', 'Data', 'order', 'Order')
+CLOSE_STATUS_ID_KEYS = ('statusID', 'statusId')
 
 
 def extract_order_id(payload: dict) -> str:
@@ -13,14 +18,7 @@ def extract_order_id(payload: dict) -> str:
     if order_id is not None:
         return order_id
 
-    for key in (
-        'orderForClose',
-        'OrderForClose',
-        'data',
-        'Data',
-        'order',
-        'Order',
-    ):
+    for key in ORDER_ID_NESTED_KEYS:
         value = payload.get(key)
         if isinstance(value, dict):
             try:
@@ -45,29 +43,18 @@ def extract_position_id_from_order_details(payload: dict) -> str | None:
     if direct_position_id is not None:
         return direct_position_id
 
-    position_executions = payload.get('positionExecutions')
-    if isinstance(position_executions, list):
-        for execution in position_executions:
-            if not isinstance(execution, dict):
-                continue
+    for key in POSITION_EXECUTION_KEYS:
+        positions = payload.get(key)
+        if not isinstance(positions, list):
+            continue
 
-            position_id = extract_position_id(execution)
-
-            if position_id is not None:
-                return position_id
-
-    positions = payload.get('positions')
-    if isinstance(positions, list):
-        for position in positions:
-            if not isinstance(position, dict):
-                continue
-
+        for position in keep_dict_items(positions):
             position_id = extract_position_id(position)
 
             if position_id is not None:
                 return position_id
 
-    for key in ('position', 'Position', 'data', 'Data', 'order', 'Order'):
+    for key in POSITION_NESTED_KEYS:
         value = payload.get(key)
         if isinstance(value, dict):
             position_id = extract_position_id_from_order_details(value)
@@ -158,6 +145,6 @@ def is_close_response_accepted(payload: dict, position_id: str) -> bool:
     if str(response_position_id) != str(position_id):
         return False
 
-    status_id = order_for_close.get('statusID') or order_for_close.get('statusId')
+    status_id = extract_optional_int(order_for_close, CLOSE_STATUS_ID_KEYS)
 
     return status_id == 1
