@@ -8,6 +8,7 @@ from app.execution.candidate_ranking import (
 )
 from app.execution.scoring.buy_signal_scorer import BuySignalScorer
 from app.execution.scoring.sell_signal_scorer import SellSignalScorer
+from app.execution.scoring.signal_scorer import directional_score_breakdown
 from app.market.models import Candle, MarketSnapshot
 from app.strategies.signals import Signal
 from app.utils.commons import spread_percent
@@ -82,7 +83,7 @@ def sell_signal(
     )
 
 
-def legacy_score(market_snapshot: MarketSnapshot, signal: Signal) -> float:
+def base_score_without_exhaustion(market_snapshot: MarketSnapshot, signal: Signal) -> float:
     metadata = signal.metadata or {}
 
     session_move_percent = abs(float(metadata.get('session_move_percent', 0.0) or 0.0))
@@ -110,7 +111,38 @@ def legacy_score(market_snapshot: MarketSnapshot, signal: Signal) -> float:
     return score
 
 
-def test_buy_signal_scorer_matches_legacy_score():
+def close_quality(signal: Signal) -> float:
+    metadata = signal.metadata or {}
+    close_position_percent = float(metadata.get('close_position_percent', 0.0) or 0.0)
+    if signal.action == 'SELL':
+        return 100 - close_position_percent
+    return close_position_percent
+
+
+def assert_penalized_score(
+    *,
+    market_snapshot: MarketSnapshot,
+    closed_candle: Candle,
+    signal: Signal,
+    score: float,
+):
+    breakdown = directional_score_breakdown(
+        snapshot=market_snapshot,
+        candle=closed_candle,
+        signal=signal,
+        close_quality=close_quality(signal),
+    )
+
+    assert breakdown.base_score == pytest.approx(
+        base_score_without_exhaustion(market_snapshot, signal)
+    )
+    assert score == pytest.approx(breakdown.final_score)
+    assert score == pytest.approx(
+        breakdown.base_score - breakdown.exhaustion.exhaustion_penalty
+    )
+
+
+def test_buy_signal_scorer_applies_move_exhaustion_penalty():
     market_snapshot = snapshot('MSFT', bid=365.9, ask=366.0, last=365.95)
     closed_candle = candle('MSFT', open=362.0, high=366.0, low=361.9, close=365.95)
     signal = buy_signal(
@@ -125,10 +157,15 @@ def test_buy_signal_scorer_matches_legacy_score():
         signal=signal,
     )
 
-    assert score == pytest.approx(legacy_score(market_snapshot, signal))
+    assert_penalized_score(
+        market_snapshot=market_snapshot,
+        closed_candle=closed_candle,
+        signal=signal,
+        score=score,
+    )
 
 
-def test_sell_signal_scorer_matches_legacy_score():
+def test_sell_signal_scorer_applies_move_exhaustion_penalty():
     market_snapshot = snapshot('AIR.PA', bid=190.9, ask=191.1, last=191.0)
     closed_candle = candle('AIR.PA', open=191.5, high=191.6, low=190.4, close=190.5)
     signal = sell_signal(
@@ -144,10 +181,15 @@ def test_sell_signal_scorer_matches_legacy_score():
         signal=signal,
     )
 
-    assert score == pytest.approx(legacy_score(market_snapshot, signal))
+    assert_penalized_score(
+        market_snapshot=market_snapshot,
+        closed_candle=closed_candle,
+        signal=signal,
+        score=score,
+    )
 
 
-def test_build_trade_candidate_scores_buy_with_buy_scorer_behavior():
+def test_build_trade_candidate_scores_buy_with_penalized_score():
     candidate = build_trade_candidate(
         symbol='MSFT',
         snapshot=snapshot('MSFT', bid=365.9, ask=366.0, last=365.95),
@@ -160,10 +202,19 @@ def test_build_trade_candidate_scores_buy_with_buy_scorer_behavior():
         ),
     )
 
-    assert candidate.score == round(legacy_score(candidate.snapshot, candidate.signal), 4)
+    assert candidate.base_score == round(
+        base_score_without_exhaustion(candidate.snapshot, candidate.signal),
+        4,
+    )
+    assert candidate.score == round(candidate.base_score - candidate.exhaustion_penalty, 4)
+    assert candidate.exhaustion_penalty >= 0
+    assert candidate.late_entry_risk >= 0
+    assert 'base_score=' in candidate.rank_reason
+    assert 'exhaustion_penalty=' in candidate.rank_reason
+    assert 'late_entry_risk=' in candidate.rank_reason
 
 
-def test_build_trade_candidate_scores_sell_with_sell_scorer_behavior():
+def test_build_trade_candidate_scores_sell_with_penalized_score():
     candidate = build_trade_candidate(
         symbol='AIR.PA',
         snapshot=snapshot('AIR.PA', bid=190.9, ask=191.1, last=191.0),
@@ -176,10 +227,14 @@ def test_build_trade_candidate_scores_sell_with_sell_scorer_behavior():
         ),
     )
 
-    assert candidate.score == round(legacy_score(candidate.snapshot, candidate.signal), 4)
+    assert candidate.base_score == round(
+        base_score_without_exhaustion(candidate.snapshot, candidate.signal),
+        4,
+    )
+    assert candidate.score == round(candidate.base_score - candidate.exhaustion_penalty, 4)
 
 
-def test_hold_or_unknown_action_keeps_legacy_buy_compatible_scoring():
+def test_hold_or_unknown_action_uses_penalized_scoring_path():
     candidate = build_trade_candidate(
         symbol='UNKNOWN',
         snapshot=snapshot('UNKNOWN', bid=99.9, ask=100.1, last=100.0),
@@ -199,7 +254,11 @@ def test_hold_or_unknown_action_keeps_legacy_buy_compatible_scoring():
         ),
     )
 
-    assert candidate.score == round(legacy_score(candidate.snapshot, candidate.signal), 4)
+    assert candidate.base_score == round(
+        base_score_without_exhaustion(candidate.snapshot, candidate.signal),
+        4,
+    )
+    assert candidate.score == round(candidate.base_score - candidate.exhaustion_penalty, 4)
 
 
 def test_candidate_ranking_puts_stronger_opportunity_first():
