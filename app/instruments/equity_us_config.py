@@ -1,6 +1,7 @@
 from dataclasses import dataclass
 
 from app.instruments.models import AssetClass, InstrumentConfig, RiskProfile, TrendStrategyConfig
+from app.risk.stale_position_guard import StalePositionConfig
 from app.risk.trade_cost_model import TradeCostConfig
 
 
@@ -47,6 +48,12 @@ class EquityUsConfig(InstrumentConfig):
         trailing_stop_enabled=True,
         trailing_stop_trigger_percent=1.5,
         trailing_stop_distance_percent=0.8,
+        stale_position=StalePositionConfig(
+            enabled=True,
+            max_age_minutes=60,
+            min_favorable_move_percent=0.35,
+            buffer_percent=0.10,
+        ),
         trade_cost=TradeCostConfig(
             open_fee_percent=0.15,
             close_fee_percent=0.15,
