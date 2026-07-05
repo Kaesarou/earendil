@@ -8,6 +8,17 @@ This cleanup is strictly technical refactoring. It must not change trading behav
 
 ## Current status
 
+The helper modules and focused tests are now largely in place. The eToro test suite has also been reorganized by concern for the main pure-helper areas:
+
+- `tests/brokers/etoro/helpers/`
+- `tests/brokers/etoro/helpers/http/`
+- `tests/brokers/etoro/portfolio/`
+- `tests/brokers/etoro/instrument/`
+- `tests/brokers/etoro/market_data/`
+- `tests/brokers/etoro/orders/`
+
+A few old root-level test files could not be deleted through the GitHub connector safety filter. They are intentionally ignored from collection through `tests/brokers/etoro/conftest.py` once their moved replacement exists.
+
 `EtoroClient` still contains inline legacy logic for several responsibilities that now have dedicated helper modules:
 
 - scalar extraction
@@ -22,7 +33,7 @@ This cleanup is strictly technical refactoring. It must not change trading behav
 - close order payload building
 - broker environment resolution
 
-The helper modules and tests are already in place. The next step is progressive delegation from `EtoroClient` to those modules, followed by removal of local legacy implementations when no longer used.
+The remaining major step is progressive delegation from `EtoroClient` to those modules, followed by removal of local legacy implementations when no longer used.
 
 ## Refactoring rules
 
@@ -33,7 +44,7 @@ The helper modules and tests are already in place. The next step is progressive 
 5. Do not change trading strategy or runtime flow.
 6. Keep parity tests while migrating.
 7. Remove parity tests only after the legacy methods have been deleted or reduced to trivial delegation.
-8. Reorganize eToro tests once the delegation cleanup is stable.
+8. Keep moved test files on unique basenames when the old root file cannot be deleted immediately.
 9. Delete this temporary cleanup note when the refactor is complete.
 
 ## Delegation checklist
@@ -114,7 +125,7 @@ Replace inline cache/search details with:
 - `instrument_cache.cached_instrument_id`
 - `instrument_cache.remember_instrument_id`
 - `instrument_search_parser.extract_items`
-- `instrument_search_parser.match_exact_symbol`
+- `instrument_search_parser.resolve_exact_instrument_id`
 - `instrument_search_parser.candidate_summaries`
 - `instrument_search_parser.extract_instrument_id`
 
@@ -132,19 +143,24 @@ Replace inline environment extraction in `__init__` with `broker_environment.bro
 
 Expected result: broker name parsing has one source of truth.
 
-## Test reorganization checklist
+## Test reorganization status
 
-After the eToro client delegation is stable, reorganize the tests by concern instead of keeping one large client-test surface:
+Done or mostly done:
 
-- pure helper tests stay close to their helper name
-- HTTP client parity tests are grouped together
-- order/open/close tests are grouped together
-- market-data tests are grouped together
-- portfolio/account tests are grouped together
-- instrument lookup/cache tests are grouped together
-- redundant parity tests are removed once legacy wrappers disappear
+- pure helper tests
+- HTTP helper tests, except `test_http_headers_builder.py`, which the connector currently blocks when moved
+- portfolio/account tests
+- market-data tests
+- instrument/cache tests
+- order response parser tests
 
-Expected result: eToro tests remain readable after the legacy cleanup and do not preserve obsolete structure from the large `EtoroClient` implementation.
+Known connector leftovers:
+
+- `tests/brokers/etoro/test_portfolio_position_parser.py`
+- `tests/brokers/etoro/test_instrument_search_parser.py`
+- `tests/brokers/etoro/test_instrument_cache.py`
+
+These files should be deleted manually or through a later connector-safe patch. Until then, `tests/brokers/etoro/conftest.py` prevents duplicated collection.
 
 ## Deletion criteria
 
