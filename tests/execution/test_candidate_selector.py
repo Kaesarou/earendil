@@ -172,4 +172,4 @@ def test_evaluated_candidate_selector_rejects_expected_profit_too_low():
     )
 
     assert not result.selected_candidates
-    assert result.rejected_candidates[0].reason == 'expected_profit_too_low_after_fees'
+    assert result.rejected_candidates[0].reason == 'candidate_selection_expected_profit_too_low_after_fees'
