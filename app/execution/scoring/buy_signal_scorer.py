@@ -1,4 +1,4 @@
-from app.execution.scoring.signal_scorer import float_metadata, legacy_directional_score
+from app.execution.scoring.signal_scorer import directional_score, float_metadata
 from app.market.models import Candle, MarketSnapshot
 from app.strategies.signals import Signal
 
@@ -14,7 +14,7 @@ class BuySignalScorer:
         metadata = signal.metadata or {}
         close_position_percent = float_metadata(metadata, 'close_position_percent')
 
-        return legacy_directional_score(
+        return directional_score(
             snapshot=snapshot,
             candle=candle,
             signal=signal,
