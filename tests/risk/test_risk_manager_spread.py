@@ -7,6 +7,8 @@ from app.risk.risk_manager import RiskManager
 from app.risk.trade_cost_model import TradeCostConfig
 from app.strategies.signals import Signal
 
+SESSION_KEY = 'test-session'
+
 
 def build_risk_manager_with_spread_limit() -> RiskManager:
     settings = Settings(EQUITY_US_SYMBOLS='AAPL')
@@ -69,6 +71,7 @@ def test_risk_manager_treats_invalid_spread_as_too_high():
         signal=buy_signal(),
         snapshot=snapshot(bid=100.1, ask=99.9, last=100.0),
         account_equity=100.0,
+        session_key=SESSION_KEY,
     )
 
     assert not plan.approved
