@@ -63,3 +63,16 @@ def test_position_tracker_closes_stale_sell_position():
 
     assert len(close_signals) == 1
     assert close_signals[0].reason == 'stale_position_exit'
+
+
+def test_position_tracker_keeps_take_profit_reason_before_stale_exit():
+    opened_at = datetime(2026, 7, 5, 12, 0, tzinfo=timezone.utc)
+    tracker = PositionTracker()
+    tracker.record_open_position('p1', trade_plan('BUY'), entry_price=100.0, opened_at=opened_at)
+
+    close_signals = tracker.evaluate_snapshot(
+        snapshot(110.0, opened_at + timedelta(minutes=61))
+    )
+
+    assert len(close_signals) == 1
+    assert close_signals[0].reason == 'take_profit_hit'
