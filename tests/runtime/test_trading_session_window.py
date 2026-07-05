@@ -52,7 +52,7 @@ def test_configured_session_is_tradable_when_active():
 
 
 def test_new_entries_are_blocked_during_last_hour():
-    decision = service('09:00-15:00').evaluate(asset_class=AssetClass.EQUITY_US, now=at(13, 30))
+    decision = service('09:00-15:00').evaluate(asset_class=AssetClass.EQUITY_US, now=at(12, 30))
 
     assert decision.collect_snapshots
     assert not decision.new_entries_allowed
@@ -61,7 +61,7 @@ def test_new_entries_are_blocked_during_last_hour():
 
 
 def test_force_close_is_required_during_last_twenty_minutes():
-    decision = service('09:00-15:00').evaluate(asset_class=AssetClass.EQUITY_US, now=at(13, 50))
+    decision = service('09:00-15:00').evaluate(asset_class=AssetClass.EQUITY_US, now=at(12, 50))
 
     assert decision.collect_snapshots
     assert not decision.new_entries_allowed
@@ -80,7 +80,7 @@ def test_session_crossing_midnight_is_active_after_midnight():
 def test_multiple_sessions_are_supported():
     decision = service('09:00-12:00,13:00-15:00').evaluate(
         asset_class=AssetClass.EQUITY_US,
-        now=at(11, 30),
+        now=at(9, 30),
     )
 
     assert decision.session_active
