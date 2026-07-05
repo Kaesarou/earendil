@@ -61,3 +61,13 @@ def test_candle_builder_starts_new_bucket_after_closing_previous_one():
     assert next_candle is not None
     assert next_candle.open == 110.0
     assert next_candle.close == 110.0
+
+
+def test_candle_builder_reset_drops_current_bucket():
+    builder = CandleBuilder(timeframe_seconds=60)
+
+    builder.on_snapshot(snapshot_at(100.0, '2026-06-22T17:10:10'))
+    builder.reset()
+    candle = builder.on_snapshot(snapshot_at(110.0, '2026-06-22T17:11:05'))
+
+    assert candle is None
