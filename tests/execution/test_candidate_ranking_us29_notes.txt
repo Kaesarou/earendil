@@ -1,1 +1,0 @@
-US-29 replaces legacy score parity with penalized final scores. Existing candidate ranking tests should assert base_score for the previous formula and score for the penalized formula.
