@@ -43,3 +43,24 @@ class TradingSessionDecision(NamedTuple):
     session_end_time: datetime | None
     time_until_session_end_minutes: float | None
     session_key: str | None
+
+
+def parse_trading_sessions(raw_sessions: str) -> tuple[TradingSessionWindow, ...]:
+    sessions: list[TradingSessionWindow] = []
+    for raw_session in raw_sessions.split(','):
+        value = raw_session.strip()
+        if not value:
+            continue
+        raw_start, raw_end = value.split('-', maxsplit=1)
+        sessions.append(
+            TradingSessionWindow(
+                start=_parse_time(raw_start.strip()),
+                end=_parse_time(raw_end.strip()),
+            )
+        )
+    return tuple(sessions)
+
+
+def _parse_time(raw_value: str) -> time:
+    hour, minute = raw_value.split(':', maxsplit=1)
+    return time(hour=int(hour), minute=int(minute))
