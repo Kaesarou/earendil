@@ -3,8 +3,6 @@ from dataclasses import dataclass
 from app.market.models import Candle
 from app.strategies.signals import Signal
 
-from .signal_scorer import float_metadata
-
 
 @dataclass(frozen=True)
 class MoveExhaustionConfig:
@@ -43,9 +41,9 @@ class MoveExhaustionAnalyzer:
     ) -> MoveExhaustionAnalysis:
         metadata = signal.metadata or {}
         side = signal.action
-        session_move_percent = float_metadata(metadata, 'session_move_percent')
-        atr_percent = float_metadata(metadata, 'atr_percent')
-        snapshot_momentum_percent = float_metadata(metadata, 'snapshot_momentum_percent')
+        session_move_percent = self._float_metadata(metadata, 'session_move_percent')
+        atr_percent = self._float_metadata(metadata, 'atr_percent')
+        snapshot_momentum_percent = self._float_metadata(metadata, 'snapshot_momentum_percent')
 
         directional_session_move = self._directional_value(
             value=session_move_percent,
@@ -178,3 +176,14 @@ class MoveExhaustionAnalyzer:
         if late_entry_risk >= 40:
             return 'ACCEPTABLE'
         return 'GOOD'
+
+    def _float_metadata(self, metadata: dict, key: str) -> float:
+        value = metadata.get(key, 0.0)
+
+        if value is None:
+            return 0.0
+
+        try:
+            return float(value)
+        except (TypeError, ValueError):
+            return 0.0
