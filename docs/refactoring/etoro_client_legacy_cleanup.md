@@ -33,6 +33,8 @@ The helper modules and tests are already in place. The next step is progressive 
 5. Do not change trading strategy or runtime flow.
 6. Keep parity tests while migrating.
 7. Remove parity tests only after the legacy methods have been deleted or reduced to trivial delegation.
+8. Reorganize eToro tests once the delegation cleanup is stable.
+9. Delete this temporary cleanup note when the refactor is complete.
 
 ## Delegation checklist
 
@@ -130,6 +132,20 @@ Replace inline environment extraction in `__init__` with `broker_environment.bro
 
 Expected result: broker name parsing has one source of truth.
 
+## Test reorganization checklist
+
+After the eToro client delegation is stable, reorganize the tests by concern instead of keeping one large client-test surface:
+
+- pure helper tests stay close to their helper name
+- HTTP client parity tests are grouped together
+- order/open/close tests are grouped together
+- market-data tests are grouped together
+- portfolio/account tests are grouped together
+- instrument lookup/cache tests are grouped together
+- redundant parity tests are removed once legacy wrappers disappear
+
+Expected result: eToro tests remain readable after the legacy cleanup and do not preserve obsolete structure from the large `EtoroClient` implementation.
+
 ## Deletion criteria
 
 A legacy method or block can be removed when:
@@ -143,4 +159,6 @@ A legacy method or block can be removed when:
 - `EtoroClient` is significantly smaller.
 - `EtoroClient` mostly orchestrates broker calls instead of parsing payloads directly.
 - No extracted helper has duplicated logic still living in `EtoroClient` except temporary compatibility wrappers.
+- eToro tests are reorganized by concern and no longer mirror obsolete legacy methods unnecessarily.
+- The temporary `docs/refactoring/etoro_client_legacy_cleanup.md` note is deleted.
 - Full test suite is green.
