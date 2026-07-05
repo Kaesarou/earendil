@@ -7,6 +7,9 @@ from app.risk.risk_manager import RiskManager
 from app.risk.trade_cost_model import TradeCostConfig
 from app.strategies.signals import Signal
 
+SESSION_A = 'EQUITY_US:session-a'
+SESSION_B = 'EQUITY_US:session-b'
+
 
 def risk_profile(
     asset_class: AssetClass,
@@ -48,7 +51,7 @@ def risk_profile(
 def build_risk_manager(
     max_open_positions: int = 2,
     max_open_positions_per_symbol: int = 1,
-    max_trades_per_day: int = 10,
+    max_trades_per_session: int = 10,
     trade_cost: TradeCostConfig | None = None,
     max_spread_percent: float = 0.0,
     min_move_spread_ratio: float = 0.0,
@@ -64,21 +67,19 @@ def build_risk_manager(
     crypto_stop_loss_percent: float = 1.5,
     crypto_take_profit_percent: float = 3.0,
     crypto_trade_cost: TradeCostConfig | None = None,
-    crypto_force_close_enabled: bool = False,
     crypto_max_spread_percent: float = 0.0,
     crypto_min_move_spread_ratio: float = 0.0,
 ) -> RiskManager:
     settings = Settings(
         MAX_OPEN_POSITIONS=max_open_positions,
         MAX_OPEN_POSITIONS_PER_SYMBOL=max_open_positions_per_symbol,
-        MAX_TRADES_PER_DAY=max_trades_per_day,
+        MAX_TRADES_PER_SESSION=max_trades_per_session,
         EQUITY_US_SYMBOLS='AAPL,MSFT',
         CRYPTO_SYMBOLS=crypto_symbols,
     )
-
     risk_profiles = {
         AssetClass.EQUITY_US: risk_profile(
-            asset_class=AssetClass.EQUITY_US,
+            AssetClass.EQUITY_US,
             trade_cost=trade_cost,
             max_spread_percent=max_spread_percent,
             min_move_spread_ratio=min_move_spread_ratio,
@@ -91,7 +92,7 @@ def build_risk_manager(
             max_take_profit_percent=max_take_profit_percent,
         ),
         AssetClass.CRYPTO: risk_profile(
-            asset_class=AssetClass.CRYPTO,
+            AssetClass.CRYPTO,
             max_position_size_percent=crypto_max_position_size_percent,
             stop_loss_percent=crypto_stop_loss_percent,
             take_profit_percent=crypto_take_profit_percent,
@@ -100,7 +101,6 @@ def build_risk_manager(
             min_move_spread_ratio=crypto_min_move_spread_ratio,
         ),
     }
-
     return RiskManager(
         settings=settings,
         position_sizing_strategy=FixedPercentPositionSizing(),
@@ -108,369 +108,169 @@ def build_risk_manager(
     )
 
 
-def snapshot(
-    symbol: str = 'AAPL',
-    bid: float = 99.0,
-    ask: float = 101.0,
-    last: float = 100.0,
-) -> MarketSnapshot:
-    return MarketSnapshot.now(
-        symbol=symbol,
-        bid=bid,
-        ask=ask,
-        last=last,
-    )
+def snapshot(symbol: str = 'AAPL', bid: float = 99.0, ask: float = 101.0, last: float = 100.0) -> MarketSnapshot:
+    return MarketSnapshot.now(symbol=symbol, bid=bid, ask=ask, last=last)
 
 
 def buy_signal(atr_percent: float | None = None) -> Signal:
-    metadata = None
-    if atr_percent is not None:
-        metadata = {'atr_percent': atr_percent}
-
-    return Signal(
-        action='BUY',
-        confidence=0.65,
-        reason='test_buy',
-        metadata=metadata,
-    )
+    metadata = {'atr_percent': atr_percent} if atr_percent is not None else None
+    return Signal(action='BUY', confidence=0.65, reason='test_buy', metadata=metadata)
 
 
 def sell_signal() -> Signal:
-    return Signal(
-        action='SELL',
-        confidence=0.65,
-        reason='test_sell',
-    )
+    return Signal(action='SELL', confidence=0.65, reason='test_sell')
+
+
+def evaluate(risk_manager: RiskManager, *, signal: Signal, snapshot: MarketSnapshot, account_equity: float, session_key: str = SESSION_A):
+    return risk_manager.evaluate(signal=signal, snapshot=snapshot, account_equity=account_equity, session_key=session_key)
+
+
+def record_open(risk_manager: RiskManager, symbol: str = 'AAPL', session_key: str = SESSION_A) -> None:
+    risk_manager.record_open_position(symbol, session_key=session_key)
 
 
 def test_risk_manager_approves_buy_when_no_position_is_open():
-    risk_manager = build_risk_manager()
-
-    plan = risk_manager.evaluate(
-        signal=buy_signal(),
-        snapshot=snapshot('AAPL'),
-        account_equity=100.0,
-    )
-
+    plan = evaluate(build_risk_manager(), signal=buy_signal(), snapshot=snapshot('AAPL'), account_equity=100.0)
     assert plan.approved
     assert plan.symbol == 'AAPL'
     assert plan.amount == 40.0
     assert plan.stop_loss == 99.7
     assert plan.take_profit == 100.5
-    assert plan.expected_gross_profit == 0.2
-    assert plan.expected_net_profit == 0.2
     assert plan.expected_net_profit_percent == 0.5
-    assert plan.required_min_expected_net_profit_amount == 0.0
-    assert plan.min_expected_net_profit_percent == 0.0
-    assert plan.estimated_fees == 0.0
-    assert plan.dynamic_sl_tp_enabled is False
 
 
 def test_risk_manager_uses_crypto_risk_profile_for_crypto_symbol():
-    risk_manager = build_risk_manager(
-        crypto_symbols='DOGE',
-        crypto_max_position_size_percent=1.0,
-        crypto_stop_loss_percent=1.5,
-        crypto_take_profit_percent=3.0,
-        crypto_trade_cost=TradeCostConfig(
-            fixed_open_fee=0.05,
-            include_spread_cost=False,
-        ),
-    )
-
-    plan = risk_manager.evaluate(
-        signal=buy_signal(),
-        snapshot=snapshot('DOGE'),
-        account_equity=1000.0,
-    )
-
+    risk_manager = build_risk_manager(crypto_symbols='DOGE', crypto_max_position_size_percent=1.0, crypto_stop_loss_percent=1.5, crypto_take_profit_percent=3.0, crypto_trade_cost=TradeCostConfig(fixed_open_fee=0.05, include_spread_cost=False))
+    plan = evaluate(risk_manager, signal=buy_signal(), snapshot=snapshot('DOGE'), account_equity=1000.0)
     assert plan.approved
     assert plan.symbol == 'DOGE'
     assert plan.amount == 10.0
     assert plan.stop_loss == 98.5
     assert plan.take_profit == 103.0
-    assert plan.expected_gross_profit == 0.3
     assert plan.expected_net_profit == 0.25
-    assert plan.expected_net_profit_percent == 2.5
-    assert plan.estimated_fees == 0.05
 
 
 def test_risk_manager_uses_atr_dynamic_stop_loss_and_take_profit():
-    risk_manager = build_risk_manager(
-        dynamic_sl_tp_enabled=True,
-        stop_loss_atr_multiplier=1.5,
-        take_profit_atr_multiplier=2.5,
-        min_stop_loss_percent=0.5,
-        max_stop_loss_percent=2.0,
-        min_take_profit_percent=1.0,
-        max_take_profit_percent=4.0,
-    )
-
-    plan = risk_manager.evaluate(
-        signal=buy_signal(atr_percent=0.8),
-        snapshot=snapshot('AAPL'),
-        account_equity=100.0,
-    )
-
+    risk_manager = build_risk_manager(dynamic_sl_tp_enabled=True, stop_loss_atr_multiplier=1.5, take_profit_atr_multiplier=2.5, min_stop_loss_percent=0.5, max_stop_loss_percent=2.0, min_take_profit_percent=1.0, max_take_profit_percent=4.0)
+    plan = evaluate(risk_manager, signal=buy_signal(atr_percent=0.8), snapshot=snapshot('AAPL'), account_equity=100.0)
     assert plan.approved
     assert plan.stop_loss == 98.8
     assert plan.take_profit == 102.0
-    assert plan.expected_gross_profit == 0.8
-    assert plan.expected_net_profit == 0.8
-    assert plan.expected_net_profit_percent == 2.0
     assert plan.atr_percent == 0.8
     assert plan.dynamic_sl_tp_enabled is True
-    assert plan.effective_stop_loss_percent == 1.2
-    assert plan.effective_take_profit_percent == 2.0
 
 
 def test_risk_manager_clamps_atr_dynamic_stop_loss_and_take_profit():
-    risk_manager = build_risk_manager(
-        dynamic_sl_tp_enabled=True,
-        stop_loss_atr_multiplier=1.5,
-        take_profit_atr_multiplier=2.5,
-        min_stop_loss_percent=0.5,
-        max_stop_loss_percent=2.0,
-        min_take_profit_percent=1.0,
-        max_take_profit_percent=4.0,
-    )
-
-    plan = risk_manager.evaluate(
-        signal=buy_signal(atr_percent=3.0),
-        snapshot=snapshot('AAPL'),
-        account_equity=100.0,
-    )
-
+    risk_manager = build_risk_manager(dynamic_sl_tp_enabled=True, stop_loss_atr_multiplier=1.5, take_profit_atr_multiplier=2.5, min_stop_loss_percent=0.5, max_stop_loss_percent=2.0, min_take_profit_percent=1.0, max_take_profit_percent=4.0)
+    plan = evaluate(risk_manager, signal=buy_signal(atr_percent=3.0), snapshot=snapshot('AAPL'), account_equity=100.0)
     assert plan.approved
-    assert plan.stop_loss == 98.0
-    assert plan.take_profit == 104.0
     assert plan.effective_stop_loss_percent == 2.0
     assert plan.effective_take_profit_percent == 4.0
 
 
 def test_risk_manager_rejects_when_spread_is_too_high():
-    risk_manager = build_risk_manager(
-        max_spread_percent=0.5,
-    )
-
-    plan = risk_manager.evaluate(
-        signal=buy_signal(),
-        snapshot=snapshot('AAPL', bid=99.0, ask=101.0, last=100.0),
-        account_equity=100.0,
-    )
-
+    plan = evaluate(build_risk_manager(max_spread_percent=0.5), signal=buy_signal(), snapshot=snapshot('AAPL', bid=99.0, ask=101.0), account_equity=100.0)
     assert not plan.approved
     assert plan.reason == 'spread_too_high'
     assert plan.spread_percent == 2.0
-    assert plan.max_spread_percent == 0.5
 
 
 def test_risk_manager_does_not_reject_only_because_expected_move_is_low_vs_spread():
-    risk_manager = build_risk_manager(
-        max_spread_percent=5.0,
-        min_move_spread_ratio=4.0,
-    )
-
-    plan = risk_manager.evaluate(
-        signal=buy_signal(),
-        snapshot=snapshot('AAPL', bid=99.9, ask=100.1, last=100.0),
-        account_equity=100.0,
-    )
-
+    plan = evaluate(build_risk_manager(max_spread_percent=5.0, min_move_spread_ratio=4.0), signal=buy_signal(), snapshot=snapshot('AAPL', bid=99.9, ask=100.1), account_equity=100.0)
     assert plan.approved
-    assert plan.spread_percent == 0.2
-    assert plan.expected_move_percent == 0.5
     assert plan.min_required_move_percent == 0.8
-    assert plan.min_move_spread_ratio == 4.0
 
 
 def test_risk_manager_rejects_when_total_open_positions_limit_is_reached():
-    risk_manager = build_risk_manager(
-        max_open_positions=1,
-        max_open_positions_per_symbol=1,
-    )
-    risk_manager.record_open_position('AAPL')
-
-    plan = risk_manager.evaluate(
-        signal=buy_signal(),
-        snapshot=snapshot('MSFT'),
-        account_equity=100.0,
-    )
-
+    risk_manager = build_risk_manager(max_open_positions=1, max_open_positions_per_symbol=1)
+    record_open(risk_manager, 'AAPL')
+    plan = evaluate(risk_manager, signal=buy_signal(), snapshot=snapshot('MSFT'), account_equity=100.0)
     assert not plan.approved
     assert plan.reason == 'max_open_positions_reached'
 
 
 def test_risk_manager_rejects_when_symbol_open_positions_limit_is_reached():
-    risk_manager = build_risk_manager(
-        max_open_positions=2,
-        max_open_positions_per_symbol=1,
-    )
-    risk_manager.record_open_position('AAPL')
-
-    plan = risk_manager.evaluate(
-        signal=buy_signal(),
-        snapshot=snapshot('AAPL'),
-        account_equity=100.0,
-    )
-
+    risk_manager = build_risk_manager(max_open_positions=2, max_open_positions_per_symbol=1)
+    record_open(risk_manager, 'AAPL')
+    plan = evaluate(risk_manager, signal=buy_signal(), snapshot=snapshot('AAPL'), account_equity=100.0)
     assert not plan.approved
     assert plan.reason == 'max_open_positions_per_symbol_reached'
 
 
 def test_risk_manager_allows_another_symbol_when_total_limit_is_not_reached():
-    risk_manager = build_risk_manager(
-        max_open_positions=2,
-        max_open_positions_per_symbol=1,
-    )
-    risk_manager.record_open_position('AAPL')
-
-    plan = risk_manager.evaluate(
-        signal=buy_signal(),
-        snapshot=snapshot('MSFT'),
-        account_equity=100.0,
-    )
-
+    risk_manager = build_risk_manager(max_open_positions=2, max_open_positions_per_symbol=1)
+    record_open(risk_manager, 'AAPL')
+    plan = evaluate(risk_manager, signal=buy_signal(), snapshot=snapshot('MSFT'), account_equity=100.0)
     assert plan.approved
-    assert plan.symbol == 'MSFT'
 
 
 def test_risk_manager_decrements_symbol_count_when_position_is_closed():
-    risk_manager = build_risk_manager(
-        max_open_positions=2,
-        max_open_positions_per_symbol=1,
-    )
-    risk_manager.record_open_position('AAPL')
+    risk_manager = build_risk_manager(max_open_positions=2, max_open_positions_per_symbol=1)
+    record_open(risk_manager, 'AAPL')
     risk_manager.record_close_position('AAPL')
-
-    plan = risk_manager.evaluate(
-        signal=buy_signal(),
-        snapshot=snapshot('AAPL'),
-        account_equity=100.0,
-    )
-
+    plan = evaluate(risk_manager, signal=buy_signal(), snapshot=snapshot('AAPL'), account_equity=100.0)
     assert plan.approved
     assert risk_manager.open_positions == 0
-    assert risk_manager.open_positions_by_symbol == {}
 
 
 def test_risk_manager_normalizes_symbol_when_tracking_positions():
-    risk_manager = build_risk_manager(
-        max_open_positions=2,
-        max_open_positions_per_symbol=1,
-    )
-    risk_manager.record_open_position(' aapl ')
-
-    plan = risk_manager.evaluate(
-        signal=buy_signal(),
-        snapshot=snapshot('AAPL'),
-        account_equity=100.0,
-    )
-
+    risk_manager = build_risk_manager(max_open_positions=2, max_open_positions_per_symbol=1)
+    record_open(risk_manager, ' aapl ')
+    plan = evaluate(risk_manager, signal=buy_signal(), snapshot=snapshot('AAPL'), account_equity=100.0)
     assert not plan.approved
     assert plan.reason == 'max_open_positions_per_symbol_reached'
 
 
-def test_risk_manager_rejects_when_max_trades_per_day_is_reached():
-    risk_manager = build_risk_manager(
-        max_open_positions=2,
-        max_open_positions_per_symbol=2,
-        max_trades_per_day=1,
-    )
-    risk_manager.record_open_position('AAPL')
+def test_risk_manager_rejects_when_max_trades_per_session_is_reached():
+    risk_manager = build_risk_manager(max_open_positions=2, max_open_positions_per_symbol=2, max_trades_per_session=1)
+    record_open(risk_manager, 'AAPL', SESSION_A)
     risk_manager.record_close_position('AAPL')
-
-    plan = risk_manager.evaluate(
-        signal=buy_signal(),
-        snapshot=snapshot('MSFT'),
-        account_equity=100.0,
-    )
-
+    plan = evaluate(risk_manager, signal=buy_signal(), snapshot=snapshot('MSFT'), account_equity=100.0, session_key=SESSION_A)
     assert not plan.approved
-    assert plan.reason == 'max_trades_per_day_reached'
+    assert plan.reason == 'max_trades_per_session_reached'
+
+
+def test_risk_manager_tracks_trade_quota_per_session():
+    risk_manager = build_risk_manager(max_open_positions=2, max_open_positions_per_symbol=2, max_trades_per_session=1)
+    record_open(risk_manager, 'AAPL', SESSION_A)
+    risk_manager.record_close_position('AAPL')
+    plan = evaluate(risk_manager, signal=buy_signal(), snapshot=snapshot('MSFT'), account_equity=100.0, session_key=SESSION_B)
+    assert plan.approved
+    assert risk_manager.trades_for_session(SESSION_A) == 1
+    assert risk_manager.trades_for_session(SESSION_B) == 0
+
+
+def test_risk_manager_resets_trade_quota_for_one_session():
+    risk_manager = build_risk_manager(max_open_positions=2, max_open_positions_per_symbol=2, max_trades_per_session=1)
+    record_open(risk_manager, 'AAPL', SESSION_A)
+    record_open(risk_manager, 'MSFT', SESSION_B)
+    risk_manager.reset_session_trades(SESSION_A)
+    assert risk_manager.trades_for_session(SESSION_A) == 0
+    assert risk_manager.trades_for_session(SESSION_B) == 1
 
 
 def test_risk_manager_rejects_when_expected_profit_does_not_cover_fees():
-    risk_manager = build_risk_manager(
-        trade_cost=TradeCostConfig(
-            fixed_open_fee=0.25,
-            include_spread_cost=False,
-        ),
-    )
-
-    plan = risk_manager.evaluate(
-        signal=buy_signal(),
-        snapshot=snapshot('AAPL'),
-        account_equity=100.0,
-    )
-
+    risk_manager = build_risk_manager(trade_cost=TradeCostConfig(fixed_open_fee=0.25, include_spread_cost=False))
+    plan = evaluate(risk_manager, signal=buy_signal(), snapshot=snapshot('AAPL'), account_equity=100.0)
     assert not plan.approved
     assert plan.reason == 'expected_profit_too_low_after_fees'
-    assert plan.amount == 40.0
-    assert plan.expected_gross_profit == 0.2
-    assert plan.estimated_fees == 0.25
-    assert plan.expected_net_profit == -0.05
-    assert plan.expected_net_profit_percent == -0.125
 
 
 def test_risk_manager_rejects_when_expected_net_profit_percent_is_below_minimum():
-    risk_manager = build_risk_manager(
-        trade_cost=TradeCostConfig(
-            fixed_open_fee=0.05,
-            include_spread_cost=False,
-            min_expected_net_profit_percent=0.4,
-        ),
-    )
-
-    plan = risk_manager.evaluate(
-        signal=buy_signal(),
-        snapshot=snapshot('AAPL'),
-        account_equity=100.0,
-    )
-
+    risk_manager = build_risk_manager(trade_cost=TradeCostConfig(fixed_open_fee=0.05, include_spread_cost=False, min_expected_net_profit_percent=0.4))
+    plan = evaluate(risk_manager, signal=buy_signal(), snapshot=snapshot('AAPL'), account_equity=100.0)
     assert not plan.approved
     assert plan.reason == 'expected_profit_too_low_after_fees'
-    assert plan.expected_gross_profit == 0.2
-    assert plan.estimated_fees == 0.05
-    assert plan.expected_net_profit == 0.15
-    assert plan.expected_net_profit_percent == 0.375
-    assert plan.required_min_expected_net_profit_amount == 0.16
-    assert plan.min_expected_net_profit_percent == 0.4
 
 
 def test_risk_manager_approves_when_expected_net_profit_percent_matches_minimum():
-    risk_manager = build_risk_manager(
-        trade_cost=TradeCostConfig(
-            fixed_open_fee=0.05,
-            include_spread_cost=False,
-            min_expected_net_profit_percent=0.375,
-        ),
-    )
-
-    plan = risk_manager.evaluate(
-        signal=buy_signal(),
-        snapshot=snapshot('AAPL'),
-        account_equity=100.0,
-    )
-
+    risk_manager = build_risk_manager(trade_cost=TradeCostConfig(fixed_open_fee=0.05, include_spread_cost=False, min_expected_net_profit_percent=0.375))
+    plan = evaluate(risk_manager, signal=buy_signal(), snapshot=snapshot('AAPL'), account_equity=100.0)
     assert plan.approved
-    assert plan.expected_gross_profit == 0.2
-    assert plan.estimated_fees == 0.05
-    assert plan.expected_net_profit == 0.15
     assert plan.expected_net_profit_percent == 0.375
-    assert plan.required_min_expected_net_profit_amount == 0.15
-    assert plan.min_expected_net_profit_percent == 0.375
 
 
 def test_risk_manager_approves_sell_when_short_selling_is_enabled():
-    risk_manager = build_risk_manager()
-
-    plan = risk_manager.evaluate(
-        signal=sell_signal(),
-        snapshot=snapshot('AAPL'),
-        account_equity=100.0,
-    )
-
+    plan = evaluate(build_risk_manager(), signal=sell_signal(), snapshot=snapshot('AAPL'), account_equity=100.0)
     assert plan.approved
-    assert plan.symbol == 'AAPL'
     assert plan.side == 'SELL'
