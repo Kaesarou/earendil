@@ -13,7 +13,7 @@ class TradeCandidate:
     signal: Signal
     score: float
     rank_reason: str
-    session_key: str
+    session_key: str = ''
     base_score: float = 0.0
     exhaustion_penalty: float = 0.0
     late_entry_risk: float = 0.0
