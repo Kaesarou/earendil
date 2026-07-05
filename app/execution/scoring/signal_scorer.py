@@ -16,7 +16,7 @@ class SignalScorer(Protocol):
         ...
 
 
-def legacy_directional_score(
+def directional_score(
     *,
     snapshot: MarketSnapshot,
     candle: Candle,
