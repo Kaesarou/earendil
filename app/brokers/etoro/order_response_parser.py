@@ -4,6 +4,7 @@ from app.brokers.etoro.scalar_extractors import extract_optional_int
 ORDER_ID_KEYS = ('orderId', 'OrderId', 'orderID', 'OrderID')
 REFERENCE_ID_KEYS = ('referenceId', 'ReferenceId', 'referenceID', 'ReferenceID')
 ORDER_ERROR_CODE_KEYS = ('errorCode',)
+POSITION_ID_KEYS = ('positionId', 'PositionId', 'positionID', 'PositionID')
 
 
 def extract_order_id(payload: dict) -> str:
@@ -39,16 +40,25 @@ def extract_reference_id(payload: dict) -> str | None:
     return None
 
 
-def extract_position_id_from_order_details(payload: dict) -> str | None:
-    direct_position_id = (
+def extract_position_id(payload: dict) -> str | None:
+    position_id = (
         payload.get('positionId')
         or payload.get('PositionId')
         or payload.get('positionID')
         or payload.get('PositionID')
     )
 
+    if position_id is None:
+        return None
+
+    return str(position_id)
+
+
+def extract_position_id_from_order_details(payload: dict) -> str | None:
+    direct_position_id = extract_position_id(payload)
+
     if direct_position_id is not None:
-        return str(direct_position_id)
+        return direct_position_id
 
     position_executions = payload.get('positionExecutions')
     if isinstance(position_executions, list):
@@ -56,15 +66,10 @@ def extract_position_id_from_order_details(payload: dict) -> str | None:
             if not isinstance(execution, dict):
                 continue
 
-            position_id = (
-                execution.get('positionId')
-                or execution.get('PositionId')
-                or execution.get('positionID')
-                or execution.get('PositionID')
-            )
+            position_id = extract_position_id(execution)
 
             if position_id is not None:
-                return str(position_id)
+                return position_id
 
     positions = payload.get('positions')
     if isinstance(positions, list):
@@ -72,15 +77,10 @@ def extract_position_id_from_order_details(payload: dict) -> str | None:
             if not isinstance(position, dict):
                 continue
 
-            position_id = (
-                position.get('positionId')
-                or position.get('PositionId')
-                or position.get('positionID')
-                or position.get('PositionID')
-            )
+            position_id = extract_position_id(position)
 
             if position_id is not None:
-                return str(position_id)
+                return position_id
 
     for key in ('position', 'Position', 'data', 'Data', 'order', 'Order'):
         value = payload.get(key)
@@ -168,12 +168,7 @@ def is_close_response_accepted(payload: dict, position_id: str) -> bool:
     if not isinstance(order_for_close, dict):
         return False
 
-    response_position_id = (
-        order_for_close.get('positionID')
-        or order_for_close.get('positionId')
-        or order_for_close.get('PositionID')
-        or order_for_close.get('PositionId')
-    )
+    response_position_id = extract_position_id(order_for_close)
 
     if str(response_position_id) != str(position_id):
         return False
