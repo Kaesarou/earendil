@@ -36,17 +36,7 @@ def extract_reference_id(payload: dict) -> str | None:
 
 
 def extract_position_id(payload: dict) -> str | None:
-    position_id = (
-        payload.get('positionId')
-        or payload.get('PositionId')
-        or payload.get('positionID')
-        or payload.get('PositionID')
-    )
-
-    if position_id is None:
-        return None
-
-    return str(position_id)
+    return extract_optional_string(payload, POSITION_ID_KEYS)
 
 
 def extract_position_id_from_order_details(payload: dict) -> str | None:
