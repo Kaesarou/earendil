@@ -29,7 +29,7 @@ class Settings(BaseSettings):
 
     max_open_positions: int = Field(default=1, alias='MAX_OPEN_POSITIONS')
     max_open_positions_per_symbol: int = Field(default=1, alias='MAX_OPEN_POSITIONS_PER_SYMBOL')
-    max_trades_per_day: int = Field(default=3, alias='MAX_TRADES_PER_DAY')
+    max_trades_per_session: int = Field(default=3, alias='MAX_TRADES_PER_SESSION')
 
     crypto_symbols: str = Field(default='', alias='CRYPTO_SYMBOLS')
     equity_us_symbols: str = Field(default='', alias='EQUITY_US_SYMBOLS')
