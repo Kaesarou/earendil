@@ -13,6 +13,11 @@ class CandleBuilder:
         self._prices: list[float] = []
         self._symbol: str | None = None
 
+    def reset(self) -> None:
+        self._current_bucket_start = None
+        self._prices = []
+        self._symbol = None
+
     def on_snapshot(self, snapshot: MarketSnapshot) -> Candle | None:
         bucket_start = self._bucket_start(snapshot.timestamp)
 
