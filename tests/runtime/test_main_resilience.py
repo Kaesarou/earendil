@@ -12,6 +12,8 @@ from app.risk.models import TradePlan
 from app.risk.risk_manager import RiskManager
 from app.strategies.signals import Signal
 
+TEST_SESSION_KEY = 'test-session'
+
 
 def snapshot(symbol: str) -> MarketSnapshot:
     return MarketSnapshot(
@@ -58,11 +60,11 @@ def candidate(symbol: str, score: float) -> TradeCandidate:
         ),
         score=score,
         rank_reason=f'score={score}',
+        session_key=TEST_SESSION_KEY,
     )
 
 
 class FakeExecutionBroker(BrokerClient):
-    
     def get_market_snapshots(self, symbols: list[str]) -> dict[str, MarketSnapshot]:
         raise NotImplementedError
 
@@ -92,8 +94,10 @@ class FakeExecutionBroker(BrokerClient):
 class FakeRiskManager:
     def __init__(self):
         self.opened_symbols: list[str] = []
+        self.session_keys: list[str] = []
 
-    def evaluate(self, signal, snapshot, account_equity):
+    def evaluate(self, signal, snapshot, account_equity, session_key):
+        self.session_keys.append(session_key)
         return TradePlan(
             approved=True,
             reason=signal.reason,
@@ -116,8 +120,9 @@ class FakeRiskManager:
             'asset_class': 'TEST',
         }
 
-    def record_open_position(self, symbol: str) -> None:
+    def record_open_position(self, symbol: str, session_key: str) -> None:
         self.opened_symbols.append(symbol)
+        self.session_keys.append(session_key)
 
 
 class FakeExecutor:
@@ -186,6 +191,7 @@ def test_execute_ranked_candidates_continues_after_candidate_execution_error():
     assert executor.executed_symbols == ['MSFT']
     assert risk_manager.opened_symbols == ['MSFT']
     assert position_tracker.tracked_symbols == ['MSFT']
+    assert TEST_SESSION_KEY in risk_manager.session_keys
 
     event_types = [event_type for event_type, _ in journal.events]
 
