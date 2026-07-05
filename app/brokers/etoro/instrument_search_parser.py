@@ -1,3 +1,15 @@
+from app.brokers.etoro.scalar_extractors import extract_optional_int
+
+
+INSTRUMENT_ID_KEYS = (
+    'internalInstrumentId',
+    'instrumentId',
+    'InstrumentID',
+    'instrumentID',
+    'id',
+)
+
+
 def extract_items(payload: dict | list) -> list[dict]:
     if isinstance(payload, list):
         return [item for item in payload if isinstance(item, dict)]
@@ -43,18 +55,7 @@ def resolve_exact_instrument_id(symbol: str, payload: dict | list) -> int:
 
 
 def extract_instrument_id(instrument: dict) -> int | None:
-    for key in (
-        'internalInstrumentId',
-        'instrumentId',
-        'InstrumentID',
-        'instrumentID',
-        'id',
-    ):
-        instrument_id = instrument.get(key)
-        if instrument_id is not None:
-            return int(instrument_id)
-
-    return None
+    return extract_optional_int(instrument, INSTRUMENT_ID_KEYS)
 
 
 def candidate_summaries(items: list[dict]) -> list[dict]:
