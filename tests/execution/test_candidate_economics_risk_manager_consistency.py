@@ -14,6 +14,8 @@ from app.risk.position_sizing import FixedPercentPositionSizing
 from app.risk.risk_manager import RiskManager
 from app.strategies.signals import Signal
 
+SESSION_KEY = 'EQUITY_US:test-session'
+
 
 def make_candidate(action: str) -> TradeCandidate:
     now = datetime(2026, 7, 4, 18, 0, tzinfo=timezone.utc)
@@ -48,6 +50,7 @@ def make_candidate(action: str) -> TradeCandidate:
         signal=signal,
         score=120.0,
         rank_reason='test',
+        session_key=SESSION_KEY,
     )
 
 
@@ -87,6 +90,7 @@ def test_candidate_economics_matches_risk_manager_trade_costs(action: str):
         signal=candidate.signal,
         snapshot=candidate.snapshot,
         account_equity=100000.0,
+        session_key=candidate.session_key,
     )
 
     assert plan.approved
@@ -129,6 +133,7 @@ def test_risk_manager_builds_sell_trade_plan_with_short_side_price_levels():
         signal=candidate.signal,
         snapshot=candidate.snapshot,
         account_equity=100000.0,
+        session_key=candidate.session_key,
     )
 
     assert plan.approved
