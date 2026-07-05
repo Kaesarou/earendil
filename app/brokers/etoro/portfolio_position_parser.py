@@ -1,3 +1,6 @@
+from app.brokers.etoro.string_extractors import extract_optional_string
+
+
 POSITION_ID_KEYS = ('positionID', 'positionId', 'PositionID', 'PositionId')
 
 
@@ -20,12 +23,7 @@ def extract_open_positions(payload: dict) -> list[dict]:
 
 
 def extract_position_id(payload: dict) -> str | None:
-    for key in POSITION_ID_KEYS:
-        position_id = payload.get(key)
-        if position_id is not None:
-            return str(position_id)
-
-    return None
+    return extract_optional_string(payload, POSITION_ID_KEYS)
 
 
 def contains_open_position(payload: dict, position_id: str) -> bool:
