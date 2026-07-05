@@ -44,6 +44,7 @@ class PositionCloseSignal:
     exit_price: float
     reason: str
     detected_at: datetime
+    metadata: dict[str, float | int | str | bool] | None = None
 
 
 @dataclass(frozen=True)
@@ -332,6 +333,24 @@ class PositionTracker:
             exit_price=snapshot.last,
             reason=decision.reason or STALE_POSITION_EXIT_REASON,
             detected_at=snapshot.timestamp,
+            metadata={
+                'stale_position_action': 'CLOSE',
+                'stale_position_age_minutes': round(decision.age_minutes, 4),
+                'stale_position_mfe_percent': round(decision.mfe_percent, 4),
+                'stale_position_required_mfe_percent': round(
+                    decision.required_mfe_percent,
+                    4,
+                ),
+                'estimated_total_cost_percent': round(
+                    decision.estimated_total_cost_percent,
+                    4,
+                ),
+                'stale_position_max_age_minutes': position.stale_position_max_age_minutes,
+                'stale_position_min_favorable_move_percent': (
+                    position.stale_position_min_favorable_move_percent
+                ),
+                'stale_position_buffer_percent': position.stale_position_buffer_percent,
+            },
         )
 
     def _managed_stop_reason(self, position: TrackedPosition) -> str:
