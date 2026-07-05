@@ -30,7 +30,7 @@ class EquityUsConfig(InstrumentConfig):
         max_position_size_percent=0.75,
         stop_loss_percent=0.90,
         take_profit_percent=1.60,
-        force_close_enabled=True,
+        force_close_enabled=False,
         force_close_hour=21,
         force_close_minute=55,
         max_spread_percent=0.10,
