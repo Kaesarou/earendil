@@ -1,4 +1,4 @@
-from datetime import datetime, time, timezone
+from datetime import datetime, time, timedelta, timezone
 from typing import NamedTuple
 from zoneinfo import ZoneInfo
 
@@ -57,20 +57,32 @@ class TradingSessionService:
 
     def evaluate(self, *, asset_class: AssetClass, now: datetime) -> TradingSessionDecision:
         config = self.configs[asset_class]
+        local_now = self._to_local_time(now)
         if config.is_24_7:
-            return TradingSessionDecision(
-                asset_class=asset_class,
-                session_active=True,
-                session_24_7=True,
-                collect_snapshots=True,
-                new_entries_allowed=True,
-                force_close_required=False,
-                reason=SESSION_TRADABLE,
-                session_start_time=None,
-                session_end_time=None,
-                time_until_session_end_minutes=None,
-                session_key=asset_class.value + ':24_7',
-            )
+            return self._decision_24_7(asset_class)
+
+        active_session = self._active_session(config.sessions, local_now)
+        if active_session is None:
+            return self._decision_closed(asset_class)
+
+        return self._decision_active(asset_class, local_now, active_session)
+
+    def _decision_24_7(self, asset_class: AssetClass) -> TradingSessionDecision:
+        return TradingSessionDecision(
+            asset_class=asset_class,
+            session_active=True,
+            session_24_7=True,
+            collect_snapshots=True,
+            new_entries_allowed=True,
+            force_close_required=False,
+            reason=SESSION_TRADABLE,
+            session_start_time=None,
+            session_end_time=None,
+            time_until_session_end_minutes=None,
+            session_key=asset_class.value + ':24_7',
+        )
+
+    def _decision_closed(self, asset_class: AssetClass) -> TradingSessionDecision:
         return TradingSessionDecision(
             asset_class=asset_class,
             session_active=False,
@@ -84,6 +96,63 @@ class TradingSessionService:
             time_until_session_end_minutes=None,
             session_key=None,
         )
+
+    def _decision_active(
+        self,
+        asset_class: AssetClass,
+        local_now: datetime,
+        active_session: tuple[datetime, datetime],
+    ) -> TradingSessionDecision:
+        session_start, session_end = active_session
+        time_until_end = max(0.0, (session_end - local_now).total_seconds() / 60)
+        reason = SESSION_TRADABLE
+        new_entries_allowed = True
+        force_close_required = False
+        if time_until_end <= FORCE_CLOSE_MINUTES_BEFORE_SESSION_END:
+            reason = FORCE_CLOSE_BEFORE_SESSION_END
+            new_entries_allowed = False
+            force_close_required = True
+        elif time_until_end <= NEW_ENTRIES_CUTOFF_MINUTES_BEFORE_SESSION_END:
+            reason = TOO_CLOSE_TO_SESSION_END
+            new_entries_allowed = False
+
+        return TradingSessionDecision(
+            asset_class=asset_class,
+            session_active=True,
+            session_24_7=False,
+            collect_snapshots=True,
+            new_entries_allowed=new_entries_allowed,
+            force_close_required=force_close_required,
+            reason=reason,
+            session_start_time=session_start,
+            session_end_time=session_end,
+            time_until_session_end_minutes=round(time_until_end, 4),
+            session_key=asset_class.value + ':' + session_start.isoformat() + ':' + session_end.isoformat(),
+        )
+
+    def _active_session(
+        self,
+        sessions: tuple[TradingSessionWindow, ...],
+        local_now: datetime,
+    ) -> tuple[datetime, datetime] | None:
+        for session in sessions:
+            start_at, end_at = self._bounds_for_now(session, local_now)
+            if start_at <= local_now < end_at:
+                return start_at, end_at
+        return None
+
+    def _bounds_for_now(
+        self,
+        session: TradingSessionWindow,
+        local_now: datetime,
+    ) -> tuple[datetime, datetime]:
+        start_at = datetime.combine(local_now.date(), session.start, tzinfo=self.timezone)
+        end_day = local_now.date() + timedelta(days=1) if session.crosses_midnight else local_now.date()
+        end_at = datetime.combine(end_day, session.end, tzinfo=self.timezone)
+        if session.crosses_midnight and local_now.time() < session.end:
+            start_at -= timedelta(days=1)
+            end_at -= timedelta(days=1)
+        return start_at, end_at
 
     def _to_local_time(self, now: datetime) -> datetime:
         if now.tzinfo is None:
