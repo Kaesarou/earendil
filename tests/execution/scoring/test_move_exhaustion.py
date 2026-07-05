@@ -1,5 +1,7 @@
 from datetime import datetime, timezone
 
+import pytest
+
 from app.execution.candidate_ranking import build_trade_candidate
 from app.execution.scoring.move_exhaustion import MoveExhaustionAnalyzer
 from app.execution.scoring.signal_scorer import directional_score_breakdown
@@ -129,7 +131,9 @@ def test_directional_score_subtracts_exhaustion_penalty():
     )
 
     assert breakdown.exhaustion.exhaustion_penalty > 0
-    assert breakdown.final_score == breakdown.base_score - breakdown.exhaustion.exhaustion_penalty
+    assert breakdown.final_score == pytest.approx(
+        breakdown.base_score - breakdown.exhaustion.exhaustion_penalty
+    )
 
 
 def test_trade_candidate_exposes_entry_quality_metadata_for_logs():
