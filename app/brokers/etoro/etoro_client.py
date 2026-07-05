@@ -5,10 +5,73 @@ from uuid import uuid4
 import requests
 
 from app.brokers.base import BrokerClient
+from app.brokers.etoro.account_equity_mapper import (
+    extract_account_equity,
+    extract_optional_account_equity,
+)
+from app.brokers.etoro.attempt_delay import delay_seconds_for_attempt
+from app.brokers.etoro.broker_environment import broker_environment_from_name
+from app.brokers.etoro.close_order_payload_builder import build_close_order_payload
+from app.brokers.etoro.endpoint_paths import (
+    close_position_path,
+    demo_order_details_path,
+    demo_portfolio_path,
+    instrument_rates_path,
+    instrument_search_path,
+    open_order_path,
+    real_order_lookup_path,
+    real_portfolio_path,
+)
+from app.brokers.etoro.http_failure import raise_for_failed_response
+from app.brokers.etoro.http_headers_builder import build_headers
+from app.brokers.etoro.http_response_payload import response_payload
+from app.brokers.etoro.http_retry_policy import (
+    default_get_max_attempts,
+    is_retryable_http_status,
+)
+from app.brokers.etoro.http_url_builder import build_http_url
+from app.brokers.etoro.instrument_cache import (
+    cached_instrument_id,
+    remember_instrument_id,
+)
+from app.brokers.etoro.instrument_search_parser import (
+    extract_items,
+    resolve_exact_instrument_id,
+)
+from app.brokers.etoro.market_data_mapper import to_market_snapshots
 from app.brokers.etoro.order_payload_builder import (
     build_open_order_payload,
     leverage_for_side,
     open_transaction_for_side,
+)
+from app.brokers.etoro.order_response_parser import (
+    extract_order_error_code,
+    extract_order_error_message,
+    extract_order_id,
+    extract_position_id_from_order_details,
+    extract_reference_id,
+    is_close_response_accepted,
+    is_order_executed,
+    is_order_rejected,
+)
+from app.brokers.etoro.portfolio_position_parser import (
+    contains_open_position,
+    extract_open_positions,
+)
+from app.brokers.etoro.position_instrument_cache import (
+    forget_position_instrument_id,
+    remember_position_instrument_id,
+    require_position_instrument_id,
+)
+from app.brokers.etoro.scalar_extractors import (
+    extract_float,
+    extract_int,
+    extract_optional_float,
+    extract_optional_int,
+)
+from app.brokers.etoro.trade_side import (
+    ensure_side_is_allowed,
+    normalize_side,
 )
 from app.config.settings import Settings
 from app.market.models import MarketSnapshot
@@ -18,7 +81,7 @@ logger = logging.getLogger(__name__)
 
 class EtoroClient(BrokerClient):
     settings: Settings
-    env:str 
+    env: str
     position_instruments: dict[str, int]
     instrument_ids_by_symbol: dict[str, int]
     symbol_by_instrument_id: dict[int, str]
@@ -26,7 +89,7 @@ class EtoroClient(BrokerClient):
 
     def __init__(self, settings: Settings):
         self.settings = settings
-        self.env = settings.broker.split('_')[-1]
+        self.env = broker_environment_from_name(settings.broker)
         self.position_instruments: dict[str, int] = {}
         self.instrument_ids_by_symbol: dict[str, int] = {}
         self.symbol_by_instrument_id: dict[int, str] = {}
@@ -43,8 +106,8 @@ class EtoroClient(BrokerClient):
             symbol,
             rates_payload=rates_payload,
         )
-     
-    #Pour l'instant on est limité à 100 symbols
+
+    # Pour l'instant on est limité à 100 symbols
     def get_market_snapshots(self, symbols: list[str]) -> dict[str, MarketSnapshot]:
         instruments_ids = self._find_instruments_ids(symbols)
         rates_payload = self._get_market_rates(instruments_ids)
@@ -73,7 +136,6 @@ class EtoroClient(BrokerClient):
         stop_loss: float,
         take_profit: float,
     ) -> str:
-
         normalized_side = self._normalize_side(side)
         self._ensure_side_is_allowed(normalized_side)
 
@@ -120,7 +182,11 @@ class EtoroClient(BrokerClient):
                 f'order_id={order_id}, details={order_details}'
             )
 
-        self.position_instruments[position_id] = instrument_id
+        remember_position_instrument_id(
+            position_instruments=self.position_instruments,
+            position_id=position_id,
+            instrument_id=instrument_id,
+        )
 
         logger.info(
             'eToro position confirmed | order_id=%s | position_id=%s | instrument_id=%s | side=%s',
@@ -133,17 +199,11 @@ class EtoroClient(BrokerClient):
         return position_id
 
     def close_position(self, position_id: str) -> None:
-
-        instrument_id = self.position_instruments.get(position_id)
-        if instrument_id is None:
-            raise ValueError(
-                f'Cannot close eToro position without known instrument id: {position_id}'
-            )
-
-        payload = {
-            'InstrumentId': instrument_id,
-            'UnitsToDeduct': None,
-        }
+        instrument_id = require_position_instrument_id(
+            position_instruments=self.position_instruments,
+            position_id=position_id,
+        )
+        payload = build_close_order_payload(instrument_id)
 
         close_response = self._post(
             self._close_position_path(position_id),
@@ -164,7 +224,10 @@ class EtoroClient(BrokerClient):
                 close_response,
             )
 
-            self.position_instruments.pop(position_id, None)
+            forget_position_instrument_id(
+                position_instruments=self.position_instruments,
+                position_id=position_id,
+            )
             return
 
         close_details = self._wait_for_executed_order(close_order_id)
@@ -177,7 +240,10 @@ class EtoroClient(BrokerClient):
             close_details,
         )
 
-        self.position_instruments.pop(position_id, None)
+        forget_position_instrument_id(
+            position_instruments=self.position_instruments,
+            position_id=position_id,
+        )
 
     def get_order_details(self, order_id: str) -> dict:
         if self.env == 'demo':
@@ -197,10 +263,14 @@ class EtoroClient(BrokerClient):
     def is_position_open(self, position_id: str) -> bool:
         portfolio = self.get_portfolio()
         return self._contains_open_position(portfolio, position_id)
-     
+
     def remember_position_instrument(self, position_id: str, symbol: str) -> None:
         instrument_id = self._find_instrument_id(symbol)
-        self.position_instruments[position_id] = instrument_id
+        remember_position_instrument_id(
+            position_instruments=self.position_instruments,
+            position_id=position_id,
+            instrument_id=instrument_id,
+        )
 
         logger.info(
             'eToro restored position instrument | position_id=%s | symbol=%s | instrument_id=%s',
@@ -215,18 +285,15 @@ class EtoroClient(BrokerClient):
 
     @property
     def headers(self) -> dict[str, str]:
-        return {
-            'x-request-id': str(uuid4()),
-            'x-api-key': self.settings.etoro_api_key,
-            'x-user-key': self.settings.etoro_user_key,
-            'Content-Type': 'application/json',
-            'Accept': 'application/json',
-        }
+        return build_headers(
+            request_id=str(uuid4()),
+            api_key=self.settings.etoro_api_key,
+            user_key=self.settings.etoro_user_key,
+        )
 
     def _get(self, path: str, params: dict | None = None) -> dict:
-        url = f'{self.etoro_api_base_url.rstrip("/")}/{path.lstrip("/")}'
-        max_attempts = 3
-        retry_status_codes = {429, 500, 502, 503, 504}
+        url = build_http_url(self.etoro_api_base_url, path)
+        max_attempts = default_get_max_attempts()
 
         for attempt in range(1, max_attempts + 1):
             try:
@@ -234,7 +301,7 @@ class EtoroClient(BrokerClient):
                     url,
                     headers=self.headers,
                     params=params,
-                    timeout=10,
+                    timeout=default_request_timeout_seconds(),
                 )
             except requests.Timeout as exc:
                 logger.warning(
@@ -249,7 +316,7 @@ class EtoroClient(BrokerClient):
                 if attempt == max_attempts:
                     raise
 
-                time.sleep(attempt)
+                time.sleep(delay_seconds_for_attempt(attempt))
                 continue
 
             except requests.RequestException as exc:
@@ -265,10 +332,10 @@ class EtoroClient(BrokerClient):
                 if attempt == max_attempts:
                     raise
 
-                time.sleep(attempt)
+                time.sleep(delay_seconds_for_attempt(attempt))
                 continue
 
-            if response.status_code in retry_status_codes and attempt < max_attempts:
+            if is_retryable_http_status(response.status_code) and attempt < max_attempts:
                 logger.warning(
                     'eToro GET retryable error | attempt=%s/%s | status=%s | url=%s | params=%s | response=%s',
                     attempt,
@@ -279,7 +346,7 @@ class EtoroClient(BrokerClient):
                     response.text,
                 )
 
-                time.sleep(attempt)
+                time.sleep(delay_seconds_for_attempt(attempt))
                 continue
 
             if not response.ok:
@@ -290,24 +357,21 @@ class EtoroClient(BrokerClient):
                     params,
                     response.text,
                 )
-                response.raise_for_status()
+                raise_for_failed_response(response)
 
-            if not response.content:
-                return {}
-
-            return response.json()
+            return response_payload(response)
 
         raise RuntimeError(f'eToro GET failed after retries | url={url} | params={params}')
 
     def _post(self, path: str, payload: dict) -> dict:
-        url = f'{self.etoro_api_base_url.rstrip("/")}/{path.lstrip("/")}'
+        url = build_http_url(self.etoro_api_base_url, path)
 
         try:
             response = requests.post(
                 url,
                 headers=self.headers,
                 json=payload,
-                timeout=10,
+                timeout=default_request_timeout_seconds(),
             )
         except requests.Timeout as exc:
             logger.error(
@@ -335,28 +399,19 @@ class EtoroClient(BrokerClient):
                 payload,
                 response.text,
             )
-            response.raise_for_status()
+            raise_for_failed_response(response)
 
-        if not response.content:
-            return {}
-
-        return response.json()
+        return response_payload(response)
 
     # -------------------------------------------------------------------------
     # Safety guards
     # -------------------------------------------------------------------------
 
     def _normalize_side(self, side: str) -> str:
-        return side.strip().upper()
+        return normalize_side(side)
 
     def _ensure_side_is_allowed(self, side: str) -> None:
-        if side == 'BUY':
-            return
-
-        if side == 'SELL':
-            return
-
-        raise ValueError(f'Unsupported side for eToro order: {side}')
+        ensure_side_is_allowed(side)
 
     def _build_open_order_payload(
         self,
@@ -386,145 +441,69 @@ class EtoroClient(BrokerClient):
     # -------------------------------------------------------------------------
 
     def _open_order_path(self) -> str:
-        if self.env == 'demo':
-            return '/api/v2/trading/execution/demo/orders'
-
-        return '/api/v2/trading/execution/orders'
+        return open_order_path(self.env)
 
     def _close_position_path(self, position_id: str) -> str:
-        if self.env == 'demo':
-            return f'/api/v1/trading/execution/demo/market-close-orders/positions/{position_id}'
-
-        return f'/api/v1/trading/execution/market-close-orders/positions/{position_id}'
+        return close_position_path(self.env, position_id)
 
     def _demo_order_details_path(self, order_id: str) -> str:
-        return f'/api/v1/trading/info/demo/orders/{order_id}'
+        return demo_order_details_path(order_id)
 
     def _real_order_lookup_path(self) -> str:
-        return '/api/v2/trading/info/orders:lookup'
+        return real_order_lookup_path()
 
     def _demo_portfolio_path(self) -> str:
-        return '/api/v1/trading/info/demo/portfolio'
+        return demo_portfolio_path()
 
     def _real_portfolio_path(self) -> str:
-        return '/api/v1/trading/info/portfolio'
+        return real_portfolio_path()
 
     # -------------------------------------------------------------------------
     # Market data
     # -------------------------------------------------------------------------
-    def _find_instruments_ids(self, symbols: list[str]) -> list[int]:
-        ids = []
-        for symbol in symbols:
-            ids.append(self._find_instrument_id(symbol))
-        return ids
 
+    def _find_instruments_ids(self, symbols: list[str]) -> list[int]:
+        return [self._find_instrument_id(symbol) for symbol in symbols]
 
     def _find_instrument_id(self, symbol: str) -> int:
-        normalized_symbol = symbol.upper()
-
-        cached_instrument_id = self.instrument_ids_by_symbol.get(normalized_symbol)
-        if cached_instrument_id is not None:
-            return cached_instrument_id
+        instrument_id = cached_instrument_id(
+            instrument_ids_by_symbol=self.instrument_ids_by_symbol,
+            symbol=symbol,
+        )
+        if instrument_id is not None:
+            return instrument_id
 
         payload = self._get(
-            '/api/v1/market-data/search',
+            instrument_search_path(),
             params={'internalSymbolFull': symbol},
         )
-
-        items = self._extract_items(payload)
-
-        exact_matches = [
-            item for item in items
-            if str(item.get('internalSymbolFull', '')).upper() == normalized_symbol
-        ]
-
-        if not exact_matches:
-            candidates = [
-                {
-                    'internalSymbolFull': item.get('internalSymbolFull'),
-                    'displayName': item.get('internalInstrumentDisplayName'),
-                    'instrumentId': item.get('internalInstrumentId') or item.get('instrumentId'),
-                    'currentRate': item.get('currentRate'),
-                }
-                for item in items[:10]
-            ]
-
-            raise ValueError(
-                f'No exact eToro instrument match found for symbol={symbol}. '
-                f'Candidates={candidates}'
-            )
-
-        instrument = exact_matches[0]
-        instrument_id = (
-            instrument.get('internalInstrumentId')
-            or instrument.get('instrumentId')
-            or instrument.get('InstrumentID')
-            or instrument.get('instrumentID')
-            or instrument.get('id')
+        resolved_instrument_id = resolve_exact_instrument_id(symbol, payload)
+        remember_instrument_id(
+            instrument_ids_by_symbol=self.instrument_ids_by_symbol,
+            symbol_by_instrument_id=self.symbol_by_instrument_id,
+            symbol=symbol,
+            instrument_id=resolved_instrument_id,
         )
 
-        if instrument_id is None:
-            raise ValueError(
-                f'Unable to find instrument id for symbol={symbol}. Instrument={instrument}'
-            )
-
-        resolved_instrument_id = int(instrument_id)
-        self.instrument_ids_by_symbol[normalized_symbol] = resolved_instrument_id
-        self.symbol_by_instrument_id[resolved_instrument_id] = normalized_symbol
-
         logger.info(
-            'Selected eToro instrument | symbol=%s | display_name=%s | instrument_id=%s | current_rate=%s',
-            instrument.get('internalSymbolFull'),
-            instrument.get('internalInstrumentDisplayName'),
+            'Selected eToro instrument | symbol=%s | instrument_id=%s',
+            symbol,
             resolved_instrument_id,
-            instrument.get('currentRate'),
         )
 
         return resolved_instrument_id
 
     def _get_market_rates(self, instrument_ids: list[int]) -> dict:
-        joined_instrument_ids = ','.join(
-            str(instrument_id)
-            for instrument_id in instrument_ids
-        )
+        return self._get(instrument_rates_path(instrument_ids))
 
-        return self._get(
-            f'/api/v1/market-data/instruments/rates?instrumentIds={joined_instrument_ids}',
-        )
-     
     def _to_market_snapshot(self, symbol: str, rates_payload: dict) -> MarketSnapshot:
         return self._to_market_snapshots(rates_payload)[symbol]
 
     def _to_market_snapshots(self, rates_payload: dict) -> dict[str, MarketSnapshot]:
-        
-        result: dict[str, MarketSnapshot] = {}
-        rates = rates_payload['rates']
-
-        for rate in rates:
-            instrument_id = self._extract_int(rate, ('instrumentID', 'instrumentId'))
-
-            symbol = self.symbol_by_instrument_id.get(instrument_id)
-            if symbol is None:
-                raise ValueError(f'Unable to find cached symbol by instrument_id={instrument_id}.')
-
-            bid = self._extract_float(rate, ('Bid', 'bid', 'bidPrice'))
-            ask = self._extract_float(rate, ('Ask', 'ask', 'askPrice'))
-
-            last = self._extract_optional_float(
-                rate,
-                ('Last', 'last', 'lastPrice', 'Price', 'price', 'lastExecution'),
-            )
-
-            if last is None:
-                last = (bid + ask) / 2
-
-            result[symbol] = MarketSnapshot.now(
-                symbol=symbol,
-                bid=bid,
-                ask=ask,
-                last=last,
-            )
-        return result
+        return to_market_snapshots(
+            rates_payload=rates_payload,
+            symbol_by_instrument_id=self.symbol_by_instrument_id,
+        )
 
     # -------------------------------------------------------------------------
     # Order confirmation
@@ -628,322 +607,56 @@ class EtoroClient(BrokerClient):
         )
 
     def _is_order_executed(self, payload: dict) -> bool:
-        status = payload.get('status')
-
-        if isinstance(status, dict):
-            status_name = str(status.get('name', '')).lower()
-            status_id = status.get('id')
-            status_error_code = status.get('errorCode')
-
-            if status_error_code not in (None, 0):
-                return False
-
-            if status_name == 'executed' or status_id == 1:
-                return True
-
-        error_code = payload.get('errorCode')
-        if error_code not in (None, 0):
-            return False
-
-        status_id = payload.get('statusID')
-        if status_id in (1, 3):
-            return True
-
-        return self._extract_position_id_from_order_details(payload) is not None
+        return is_order_executed(payload)
 
     def _is_order_rejected(self, payload: dict) -> bool:
-        error_code = self._extract_order_error_code(payload)
-        if error_code not in (None, 0):
-            return True
-
-        status = payload.get('status')
-        if isinstance(status, dict):
-            status_error_code = status.get('errorCode')
-            if status_error_code not in (None, 0):
-                return True
-
-            status_name = str(status.get('name', '')).lower()
-            if status_name in ('rejected', 'failed', 'cancelled', 'canceled', 'error'):
-                return True
-
-        return False
+        return is_order_rejected(payload)
 
     def _is_close_response_accepted(self, payload: dict, position_id: str) -> bool:
-        order_for_close = payload.get('orderForClose')
-
-        if not isinstance(order_for_close, dict):
-            return False
-
-        response_position_id = (
-            order_for_close.get('positionID')
-            or order_for_close.get('positionId')
-            or order_for_close.get('PositionID')
-            or order_for_close.get('PositionId')
-        )
-
-        if str(response_position_id) != str(position_id):
-            return False
-
-        status_id = order_for_close.get('statusID') or order_for_close.get('statusId')
-
-        return status_id == 1
+        return is_close_response_accepted(payload, position_id)
 
     def _contains_open_position(self, payload: dict, position_id: str) -> bool:
-        open_positions = self._extract_open_positions(payload)
-
-        for position in open_positions:
-            candidate_position_id = (
-                position.get('positionID')
-                or position.get('positionId')
-                or position.get('PositionID')
-                or position.get('PositionId')
-            )
-
-            if str(candidate_position_id) != str(position_id):
-                continue
-
-            is_open = position.get('isOpen')
-            if is_open is False:
-                return False
-
-            return True
-
-        return False
+        return contains_open_position(payload, position_id)
 
     def _extract_open_positions(self, payload: dict) -> list[dict]:
-        client_portfolio = payload.get('clientPortfolio')
-        if isinstance(client_portfolio, dict):
-            positions = client_portfolio.get('positions')
-            if isinstance(positions, list):
-                return [position for position in positions if isinstance(position, dict)]
-
-        positions = payload.get('positions')
-        if isinstance(positions, list):
-            return [position for position in positions if isinstance(position, dict)]
-
-        data = payload.get('data')
-        if isinstance(data, dict):
-            return self._extract_open_positions(data)
-
-        return []
+        return extract_open_positions(payload)
 
     def _extract_order_error_code(self, payload: dict) -> int | None:
-        error_code = payload.get('errorCode')
-
-        if error_code is not None:
-            return int(error_code)
-
-        status = payload.get('status')
-        if isinstance(status, dict):
-            status_error_code = status.get('errorCode')
-            if status_error_code is not None:
-                return int(status_error_code)
-
-        return None
+        return extract_order_error_code(payload)
 
     def _extract_order_error_message(self, payload: dict) -> str | None:
-        error_message = payload.get('errorMessage')
-
-        if error_message:
-            return str(error_message)
-
-        status = payload.get('status')
-        if isinstance(status, dict):
-            status_error_message = status.get('errorMessage')
-            if status_error_message:
-                return str(status_error_message)
-
-        return None
+        return extract_order_error_message(payload)
 
     # -------------------------------------------------------------------------
     # Extractors
     # -------------------------------------------------------------------------
 
-    def _extract_items(self, payload: dict) -> list[dict]:
-        for key in ('items', 'data', 'Data', 'Items', 'instruments', 'rates'):
-            value = payload.get(key)
-
-            if isinstance(value, list):
-                return [item for item in value if isinstance(item, dict)]
-
-            if isinstance(value, dict):
-                return [value]
-
-        if isinstance(payload, list):
-            return [item for item in payload if isinstance(item, dict)]
-
-        return []
-
+    def _extract_items(self, payload: dict | list) -> list[dict]:
+        return extract_items(payload)
 
     def _extract_float(self, payload: dict, keys: tuple[str, ...]) -> float:
-        value = self._extract_optional_float(payload, keys)
-
-        if value is None:
-            raise ValueError(f'Unable to extract required float keys={keys}. Payload={payload}')
-
-        return value
+        return extract_float(payload, keys)
 
     def _extract_optional_float(self, payload: dict, keys: tuple[str, ...]) -> float | None:
-        for key in keys:
-            value = payload.get(key)
-            if value is not None:
-                return float(value)
+        return extract_optional_float(payload, keys)
 
-        return None
-     
     def _extract_int(self, payload: dict, keys: tuple[str, ...]) -> int:
-        value = self._extract_optional_int(payload, keys)
+        return extract_int(payload, keys)
 
-        if value is None:
-            raise ValueError(f'Unable to extract required int keys={keys}. Payload={payload}')
-
-        return value
-     
     def _extract_optional_int(self, payload: dict, keys: tuple[str, ...]) -> int | None:
-        for key in keys:
-            value = payload.get(key)
-            if value is not None:
-                return int(value)
+        return extract_optional_int(payload, keys)
 
-        return None
-     
     def _extract_account_equity(self, payload: dict) -> float:
-        equity = self._extract_optional_account_equity(payload)
-
-        if equity is None:
-            raise ValueError(f'Unable to extract account equity from eToro portfolio: {payload}')
-
-        if equity <= 0:
-            raise ValueError(f'Invalid eToro account equity={equity}. Portfolio={payload}')
-
-        return equity
-
+        return extract_account_equity(payload)
 
     def _extract_optional_account_equity(self, payload: dict) -> float | None:
-        for key in (
-            'equity',
-            'Equity',
-            'accountEquity',
-            'AccountEquity',
-            'netLiquidationValue',
-            'NetLiquidationValue',
-            'netLiq',
-            'NetLiq',
-            'balance',
-            'Balance',
-            'cash',
-            'Cash',
-            'credit',
-            'Credit',
-            'availableBalance',
-            'AvailableBalance',
-            'availableCash',
-            'AvailableCash',
-        ):
-            value = payload.get(key)
-            if value is not None:
-                return float(value)
-     
-        for key in (
-            'clientPortfolio',
-            'ClientPortfolio',
-            'portfolio',
-            'Portfolio',
-            'account',
-            'Account',
-            'cashAvailable',
-            'CashAvailable',
-            'data',
-            'Data',
-        ):
-            value = payload.get(key)
-     
-            if isinstance(value, dict):
-                nested_equity = self._extract_optional_account_equity(value)
-                if nested_equity is not None:
-                    return nested_equity
-     
-        return None
+        return extract_optional_account_equity(payload)
 
     def _extract_order_id(self, payload: dict) -> str:
-        for key in ('orderId', 'OrderId', 'orderID', 'OrderID'):
-            value = payload.get(key)
-            if value is not None:
-                return str(value)
-
-        for key in (
-            'orderForClose',
-            'OrderForClose',
-            'data',
-            'Data',
-            'order',
-            'Order',
-        ):
-            value = payload.get(key)
-            if isinstance(value, dict):
-                try:
-                    return self._extract_order_id(value)
-                except ValueError:
-                    pass
-
-        raise ValueError(f'Unable to extract order id from eToro response: {payload}')
+        return extract_order_id(payload)
 
     def _extract_reference_id(self, payload: dict) -> str | None:
-        for key in ('referenceId', 'ReferenceId', 'referenceID', 'ReferenceID'):
-            value = payload.get(key)
-            if value is not None:
-                return str(value)
-
-        return None
+        return extract_reference_id(payload)
 
     def _extract_position_id_from_order_details(self, payload: dict) -> str | None:
-        direct_position_id = (
-            payload.get('positionId')
-            or payload.get('PositionId')
-            or payload.get('positionID')
-            or payload.get('PositionID')
-        )
-
-        if direct_position_id is not None:
-            return str(direct_position_id)
-
-        position_executions = payload.get('positionExecutions')
-        if isinstance(position_executions, list):
-            for execution in position_executions:
-                if not isinstance(execution, dict):
-                    continue
-
-                position_id = (
-                    execution.get('positionId')
-                    or execution.get('PositionId')
-                    or execution.get('positionID')
-                    or execution.get('PositionID')
-                )
-
-                if position_id is not None:
-                    return str(position_id)
-
-        positions = payload.get('positions')
-        if isinstance(positions, list):
-            for position in positions:
-                if not isinstance(position, dict):
-                    continue
-
-                position_id = (
-                    position.get('positionId')
-                    or position.get('PositionId')
-                    or position.get('positionID')
-                    or position.get('PositionID')
-                )
-
-                if position_id is not None:
-                    return str(position_id)
-
-        for key in ('position', 'Position', 'data', 'Data', 'order', 'Order'):
-            value = payload.get(key)
-            if isinstance(value, dict):
-                position_id = self._extract_position_id_from_order_details(value)
-                if position_id is not None:
-                    return position_id
-
-        return None
+        return extract_position_id_from_order_details(payload)
