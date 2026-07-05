@@ -2,6 +2,7 @@ from datetime import datetime, time, timedelta, timezone
 from typing import NamedTuple
 from zoneinfo import ZoneInfo
 
+from app.config.settings import Settings
 from app.instruments.models import AssetClass
 
 
@@ -44,6 +45,17 @@ class TradingSessionDecision(NamedTuple):
     session_end_time: datetime | None
     time_until_session_end_minutes: float | None
     session_key: str | None
+
+
+class TradingSessionState:
+    def __init__(self):
+        self._active_session_key_by_symbol: dict[str, str | None] = {}
+
+    def mark_and_detect_new_session(self, *, symbol: str, decision: TradingSessionDecision) -> bool:
+        previous_key = self._active_session_key_by_symbol.get(symbol)
+        current_key = decision.session_key if decision.session_active else None
+        self._active_session_key_by_symbol[symbol] = current_key
+        return current_key is not None and current_key != previous_key
 
 
 class TradingSessionService:
@@ -158,6 +170,26 @@ class TradingSessionService:
         if now.tzinfo is None:
             now = now.replace(tzinfo=timezone.utc)
         return now.astimezone(self.timezone)
+
+
+def trading_session_service_from_settings(settings: Settings) -> TradingSessionService:
+    return TradingSessionService(
+        configs={
+            AssetClass.CRYPTO: AssetTradingSessionConfig(
+                asset_class=AssetClass.CRYPTO,
+                sessions=parse_trading_sessions(settings.trading_sessions_crypto),
+            ),
+            AssetClass.EQUITY_US: AssetTradingSessionConfig(
+                asset_class=AssetClass.EQUITY_US,
+                sessions=parse_trading_sessions(settings.trading_sessions_equity_us),
+            ),
+            AssetClass.EQUITY_EU: AssetTradingSessionConfig(
+                asset_class=AssetClass.EQUITY_EU,
+                sessions=parse_trading_sessions(settings.trading_sessions_equity_eu),
+            ),
+        },
+        timezone_name=settings.trading_session_timezone,
+    )
 
 
 def parse_trading_sessions(raw_sessions: str) -> tuple[TradingSessionWindow, ...]:
