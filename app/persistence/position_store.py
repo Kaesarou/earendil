@@ -17,25 +17,17 @@ class PositionStore:
             connection.execute(
                 """
                 INSERT OR REPLACE INTO open_positions (
-                    position_id,
-                    symbol,
-                    side,
-                    amount,
-                    entry_price,
-                    stop_loss,
-                    take_profit,
-                    opened_at,
-                    initial_stop_loss,
-                    highest_price,
-                    lowest_price,
-                    breakeven_stop_enabled,
-                    breakeven_trigger_percent,
-                    breakeven_buffer_percent,
-                    trailing_stop_enabled,
-                    trailing_stop_trigger_percent,
-                    trailing_stop_distance_percent
+                    position_id, symbol, side, amount, entry_price, stop_loss,
+                    take_profit, opened_at, initial_stop_loss, highest_price,
+                    lowest_price, breakeven_stop_enabled, breakeven_trigger_percent,
+                    breakeven_buffer_percent, trailing_stop_enabled,
+                    trailing_stop_trigger_percent, trailing_stop_distance_percent,
+                    estimated_total_cost_percent, stale_position_enabled,
+                    stale_position_max_age_minutes,
+                    stale_position_min_favorable_move_percent,
+                    stale_position_buffer_percent
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     position.position_id,
@@ -55,45 +47,38 @@ class PositionStore:
                     int(position.trailing_stop_enabled),
                     position.trailing_stop_trigger_percent,
                     position.trailing_stop_distance_percent,
+                    position.estimated_total_cost_percent,
+                    int(position.stale_position_enabled),
+                    position.stale_position_max_age_minutes,
+                    position.stale_position_min_favorable_move_percent,
+                    position.stale_position_buffer_percent,
                 ),
             )
 
     def delete_open_position(self, position_id: str) -> None:
         with self._connect() as connection:
-            connection.execute(
-                'DELETE FROM open_positions WHERE position_id = ?',
-                (position_id,),
-            )
+            connection.execute('DELETE FROM open_positions WHERE position_id = ?', (position_id,))
 
     def load_open_positions(self) -> list[TrackedPosition]:
         with self._connect() as connection:
             rows = connection.execute(
                 """
                 SELECT
-                    position_id,
-                    symbol,
-                    side,
-                    amount,
-                    entry_price,
-                    stop_loss,
-                    take_profit,
-                    opened_at,
-                    initial_stop_loss,
-                    highest_price,
-                    lowest_price,
-                    breakeven_stop_enabled,
-                    breakeven_trigger_percent,
-                    breakeven_buffer_percent,
-                    trailing_stop_enabled,
-                    trailing_stop_trigger_percent,
-                    trailing_stop_distance_percent
+                    position_id, symbol, side, amount, entry_price, stop_loss,
+                    take_profit, opened_at, initial_stop_loss, highest_price,
+                    lowest_price, breakeven_stop_enabled, breakeven_trigger_percent,
+                    breakeven_buffer_percent, trailing_stop_enabled,
+                    trailing_stop_trigger_percent, trailing_stop_distance_percent,
+                    estimated_total_cost_percent, stale_position_enabled,
+                    stale_position_max_age_minutes,
+                    stale_position_min_favorable_move_percent,
+                    stale_position_buffer_percent
                 FROM open_positions
                 ORDER BY opened_at ASC
                 """
             ).fetchall()
 
         positions: list[TrackedPosition] = []
-
         for row in rows:
             (
                 position_id,
@@ -113,8 +98,12 @@ class PositionStore:
                 trailing_stop_enabled,
                 trailing_stop_trigger_percent,
                 trailing_stop_distance_percent,
+                estimated_total_cost_percent,
+                stale_position_enabled,
+                stale_position_max_age_minutes,
+                stale_position_min_favorable_move_percent,
+                stale_position_buffer_percent,
             ) = row
-
             positions.append(
                 TrackedPosition(
                     position_id=str(position_id),
@@ -134,9 +123,15 @@ class PositionStore:
                     trailing_stop_enabled=bool(trailing_stop_enabled),
                     trailing_stop_trigger_percent=float(trailing_stop_trigger_percent),
                     trailing_stop_distance_percent=float(trailing_stop_distance_percent),
+                    estimated_total_cost_percent=float(estimated_total_cost_percent),
+                    stale_position_enabled=bool(stale_position_enabled),
+                    stale_position_max_age_minutes=int(stale_position_max_age_minutes),
+                    stale_position_min_favorable_move_percent=float(
+                        stale_position_min_favorable_move_percent
+                    ),
+                    stale_position_buffer_percent=float(stale_position_buffer_percent),
                 )
             )
-
         return positions
 
     def _connect(self) -> sqlite3.Connection:
@@ -163,40 +158,17 @@ class PositionStore:
                     breakeven_buffer_percent REAL NOT NULL DEFAULT 0,
                     trailing_stop_enabled INTEGER NOT NULL DEFAULT 0,
                     trailing_stop_trigger_percent REAL NOT NULL DEFAULT 0,
-                    trailing_stop_distance_percent REAL NOT NULL DEFAULT 0
+                    trailing_stop_distance_percent REAL NOT NULL DEFAULT 0,
+                    estimated_total_cost_percent REAL NOT NULL DEFAULT 0,
+                    stale_position_enabled INTEGER NOT NULL DEFAULT 0,
+                    stale_position_max_age_minutes INTEGER NOT NULL DEFAULT 0,
+                    stale_position_min_favorable_move_percent REAL NOT NULL DEFAULT 0,
+                    stale_position_buffer_percent REAL NOT NULL DEFAULT 0
                 )
                 """
-            )
-            self._ensure_columns(connection)
-
-    def _ensure_columns(self, connection: sqlite3.Connection) -> None:
-        existing_columns = {
-            row[1]
-            for row in connection.execute('PRAGMA table_info(open_positions)').fetchall()
-        }
-
-        columns: dict[str, str] = {
-            'initial_stop_loss': 'REAL',
-            'highest_price': 'REAL',
-            'lowest_price': 'REAL',
-            'breakeven_stop_enabled': 'INTEGER NOT NULL DEFAULT 0',
-            'breakeven_trigger_percent': 'REAL NOT NULL DEFAULT 0',
-            'breakeven_buffer_percent': 'REAL NOT NULL DEFAULT 0',
-            'trailing_stop_enabled': 'INTEGER NOT NULL DEFAULT 0',
-            'trailing_stop_trigger_percent': 'REAL NOT NULL DEFAULT 0',
-            'trailing_stop_distance_percent': 'REAL NOT NULL DEFAULT 0',
-        }
-
-        for column_name, column_definition in columns.items():
-            if column_name in existing_columns:
-                continue
-
-            connection.execute(
-                f'ALTER TABLE open_positions ADD COLUMN {column_name} {column_definition}'
             )
 
     def _optional_float(self, value: Any) -> float | None:
         if value is None:
             return None
-
         return float(value)
