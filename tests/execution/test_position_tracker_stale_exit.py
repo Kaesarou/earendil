@@ -36,7 +36,12 @@ def test_position_tracker_closes_stale_buy_position():
     )
 
     assert len(close_signals) == 1
-    assert close_signals[0].reason == 'stale_position_exit'
+    close_signal = close_signals[0]
+    assert close_signal.reason == 'stale_position_exit'
+    assert close_signal.metadata is not None
+    assert close_signal.metadata['stale_position_action'] == 'CLOSE'
+    assert close_signal.metadata['stale_position_age_minutes'] == 61.0
+    assert close_signal.metadata['stale_position_required_mfe_percent'] == 0.5
 
 
 def test_position_tracker_keeps_buy_position_with_sufficient_mfe():
