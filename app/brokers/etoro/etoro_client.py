@@ -63,6 +63,7 @@ from app.brokers.etoro.position_instrument_cache import (
     remember_position_instrument_id,
     require_position_instrument_id,
 )
+from app.brokers.etoro.request_settings import default_request_timeout_seconds
 from app.brokers.etoro.scalar_extractors import (
     extract_float,
     extract_int,
