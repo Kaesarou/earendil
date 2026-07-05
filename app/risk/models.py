@@ -39,3 +39,7 @@ class TradePlan:
     trailing_stop_enabled: bool = False
     trailing_stop_trigger_percent: float = 0.0
     trailing_stop_distance_percent: float = 0.0
+    stale_position_enabled: bool = False
+    stale_position_max_age_minutes: int = 0
+    stale_position_min_favorable_move_percent: float = 0.0
+    stale_position_buffer_percent: float = 0.0
