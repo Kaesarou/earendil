@@ -21,7 +21,7 @@ def build_trade_candidate(
         candle=candle,
         signal=signal,
     )
-    score = score_breakdown.final_score
+    score = score_breakdown.base_score
     exhaustion = score_breakdown.exhaustion
     entry_quality_metadata = _entry_quality_metadata(exhaustion)
 
