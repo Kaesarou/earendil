@@ -1,3 +1,4 @@
+from app.brokers.etoro.payload_collections import keep_dict_items
 from app.brokers.etoro.string_extractors import extract_optional_string
 
 
@@ -9,11 +10,11 @@ def extract_open_positions(payload: dict) -> list[dict]:
     if isinstance(client_portfolio, dict):
         positions = client_portfolio.get('positions')
         if isinstance(positions, list):
-            return [position for position in positions if isinstance(position, dict)]
+            return keep_dict_items(positions)
 
     positions = payload.get('positions')
     if isinstance(positions, list):
-        return [position for position in positions if isinstance(position, dict)]
+        return keep_dict_items(positions)
 
     data = payload.get('data')
     if isinstance(data, dict):
