@@ -15,6 +15,7 @@ def build_trade_candidate(
     snapshot: MarketSnapshot,
     candle: Candle,
     signal: Signal,
+    session_key: str,
 ) -> TradeCandidate:
     score_breakdown = _score_breakdown(
         snapshot=snapshot,
@@ -38,6 +39,7 @@ def build_trade_candidate(
             score=score,
             entry_quality_metadata=entry_quality_metadata,
         ),
+        session_key=session_key,
         base_score=round(score_breakdown.base_score, 4),
         exhaustion_penalty=exhaustion.exhaustion_penalty,
         late_entry_risk=exhaustion.late_entry_risk,
