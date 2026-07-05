@@ -5,6 +5,8 @@ from app.risk.position_sizing import FixedPercentPositionSizing
 from app.risk.risk_manager import RiskManager
 from app.strategies.signals import Signal
 
+SESSION_KEY = 'EQUITY_US:test-session'
+
 
 def test_risk_manager_adds_stale_position_settings_to_trade_plan():
     settings = Settings(EQUITY_US_SYMBOLS='AAPL')
@@ -18,6 +20,7 @@ def test_risk_manager_adds_stale_position_settings_to_trade_plan():
         signal=Signal(action='BUY', confidence=0.8, reason='test_buy'),
         snapshot=MarketSnapshot.now(symbol='AAPL', bid=99.95, ask=100.05, last=100.0),
         account_equity=100000.0,
+        session_key=SESSION_KEY,
     )
 
     assert plan.approved
