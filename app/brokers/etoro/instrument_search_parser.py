@@ -1,3 +1,4 @@
+from app.brokers.etoro.payload_collections import keep_dict_items
 from app.brokers.etoro.scalar_extractors import extract_optional_int
 
 
@@ -12,13 +13,13 @@ INSTRUMENT_ID_KEYS = (
 
 def extract_items(payload: dict | list) -> list[dict]:
     if isinstance(payload, list):
-        return [item for item in payload if isinstance(item, dict)]
+        return keep_dict_items(payload)
 
     for key in ('items', 'data', 'Data', 'Items', 'instruments', 'rates'):
         value = payload.get(key)
 
         if isinstance(value, list):
-            return [item for item in value if isinstance(item, dict)]
+            return keep_dict_items(value)
 
         if isinstance(value, dict):
             return [value]
