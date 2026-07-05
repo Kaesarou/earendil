@@ -3,6 +3,11 @@ from datetime import datetime, timezone
 
 from app.market.models import MarketSnapshot
 from app.risk.models import TradePlan
+from app.risk.stale_position_guard import (
+    STALE_POSITION_EXIT_REASON,
+    StalePositionConfig,
+    StalePositionGuard,
+)
 
 
 @dataclass(frozen=True)
@@ -24,6 +29,11 @@ class TrackedPosition:
     trailing_stop_enabled: bool = False
     trailing_stop_trigger_percent: float = 0.0
     trailing_stop_distance_percent: float = 0.0
+    estimated_total_cost_percent: float = 0.0
+    stale_position_enabled: bool = False
+    stale_position_max_age_minutes: int = 0
+    stale_position_min_favorable_move_percent: float = 0.0
+    stale_position_buffer_percent: float = 0.0
 
 
 @dataclass(frozen=True)
@@ -55,8 +65,9 @@ class ClosedPosition:
 
 
 class PositionTracker:
-    def __init__(self):
+    def __init__(self, stale_position_guard: StalePositionGuard | None = None):
         self.positions: dict[str, TrackedPosition] = {}
+        self.stale_position_guard = stale_position_guard or StalePositionGuard()
 
     def restore_open_position(self, position: TrackedPosition) -> None:
         self.positions[position.position_id] = self._normalize_restored_position(position)
@@ -103,6 +114,13 @@ class PositionTracker:
             trailing_stop_enabled=trade_plan.trailing_stop_enabled,
             trailing_stop_trigger_percent=trade_plan.trailing_stop_trigger_percent,
             trailing_stop_distance_percent=trade_plan.trailing_stop_distance_percent,
+            estimated_total_cost_percent=trade_plan.estimated_total_cost_percent or 0.0,
+            stale_position_enabled=trade_plan.stale_position_enabled,
+            stale_position_max_age_minutes=trade_plan.stale_position_max_age_minutes,
+            stale_position_min_favorable_move_percent=(
+                trade_plan.stale_position_min_favorable_move_percent
+            ),
+            stale_position_buffer_percent=trade_plan.stale_position_buffer_percent,
         )
 
         self.positions[position_id] = position
@@ -124,6 +142,9 @@ class PositionTracker:
                 close_signal = self._evaluate_sell_position(position, snapshot)
             else:
                 raise ValueError(f'Unsupported tracked position side: {position.side}')
+
+            if close_signal is None:
+                close_signal = self._evaluate_stale_position(position, snapshot)
 
             if close_signal is not None:
                 close_signals.append(close_signal)
@@ -277,6 +298,41 @@ class PositionTracker:
                 detected_at=snapshot.timestamp,
             )
         return None
+
+    def _evaluate_stale_position(
+        self,
+        position: TrackedPosition,
+        snapshot: MarketSnapshot,
+    ) -> PositionCloseSignal | None:
+        decision = self.stale_position_guard.evaluate(
+            side=position.side,
+            entry_price=position.entry_price,
+            highest_price=position.highest_price,
+            lowest_price=position.lowest_price,
+            opened_at=position.opened_at,
+            now=snapshot.timestamp,
+            estimated_total_cost_percent=position.estimated_total_cost_percent,
+            config=StalePositionConfig(
+                enabled=position.stale_position_enabled,
+                max_age_minutes=position.stale_position_max_age_minutes,
+                min_favorable_move_percent=(
+                    position.stale_position_min_favorable_move_percent
+                ),
+                buffer_percent=position.stale_position_buffer_percent,
+            ),
+        )
+
+        if not decision.should_close:
+            return None
+
+        return PositionCloseSignal(
+            position_id=position.position_id,
+            symbol=position.symbol,
+            side=position.side,
+            exit_price=snapshot.last,
+            reason=decision.reason or STALE_POSITION_EXIT_REASON,
+            detected_at=snapshot.timestamp,
+        )
 
     def _managed_stop_reason(self, position: TrackedPosition) -> str:
         if position.side == 'BUY':
