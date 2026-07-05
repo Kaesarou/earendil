@@ -15,7 +15,7 @@ def build_trade_candidate(
     snapshot: MarketSnapshot,
     candle: Candle,
     signal: Signal,
-    session_key: str,
+    session_key: str = '',
 ) -> TradeCandidate:
     score_breakdown = _score_breakdown(
         snapshot=snapshot,
