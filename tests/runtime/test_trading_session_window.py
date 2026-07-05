@@ -80,7 +80,7 @@ def test_session_crossing_midnight_is_active_after_midnight():
 def test_multiple_sessions_are_supported():
     decision = service('09:00-12:00,13:00-15:00').evaluate(
         asset_class=AssetClass.EQUITY_US,
-        now=at(9, 30),
+        now=at(11, 30),
     )
 
     assert decision.session_active
