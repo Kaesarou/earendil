@@ -44,6 +44,7 @@ class MoveExhaustionAnalyzer:
         session_move_percent = self._float_metadata(metadata, 'session_move_percent')
         atr_percent = self._float_metadata(metadata, 'atr_percent')
         snapshot_momentum_percent = self._float_metadata(metadata, 'snapshot_momentum_percent')
+        has_momentum_metadata = 'snapshot_momentum_percent' in metadata
 
         directional_session_move = self._directional_value(
             value=session_move_percent,
@@ -78,7 +79,8 @@ class MoveExhaustionAnalyzer:
             move_extension_percent / 10
         )
         momentum_deceleration_detected = (
-            move_extension_percent >= self.config.extension_soft_percent
+            has_momentum_metadata
+            and move_extension_percent >= self.config.extension_soft_percent
             and directional_snapshot_momentum < self.config.deceleration_threshold_percent
         )
         deceleration_factor = 1.0 if momentum_deceleration_detected else 0.0
