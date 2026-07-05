@@ -1,4 +1,5 @@
 from app.brokers.etoro.scalar_extractors import extract_optional_int
+from app.brokers.etoro.string_extractors import extract_optional_string
 
 
 ORDER_ID_KEYS = ('orderId', 'OrderId', 'orderID', 'OrderID')
@@ -8,10 +9,9 @@ POSITION_ID_KEYS = ('positionId', 'PositionId', 'positionID', 'PositionID')
 
 
 def extract_order_id(payload: dict) -> str:
-    for key in ORDER_ID_KEYS:
-        value = payload.get(key)
-        if value is not None:
-            return str(value)
+    order_id = extract_optional_string(payload, ORDER_ID_KEYS)
+    if order_id is not None:
+        return order_id
 
     for key in (
         'orderForClose',
@@ -32,12 +32,7 @@ def extract_order_id(payload: dict) -> str:
 
 
 def extract_reference_id(payload: dict) -> str | None:
-    for key in REFERENCE_ID_KEYS:
-        value = payload.get(key)
-        if value is not None:
-            return str(value)
-
-    return None
+    return extract_optional_string(payload, REFERENCE_ID_KEYS)
 
 
 def extract_position_id(payload: dict) -> str | None:
