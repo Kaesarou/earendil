@@ -1,3 +1,41 @@
+from app.brokers.etoro.scalar_extractors import extract_optional_float
+
+
+ACCOUNT_EQUITY_KEYS = (
+    'equity',
+    'Equity',
+    'accountEquity',
+    'AccountEquity',
+    'netLiquidationValue',
+    'NetLiquidationValue',
+    'netLiq',
+    'NetLiq',
+    'balance',
+    'Balance',
+    'cash',
+    'Cash',
+    'credit',
+    'Credit',
+    'availableBalance',
+    'AvailableBalance',
+    'availableCash',
+    'AvailableCash',
+)
+
+NESTED_ACCOUNT_EQUITY_KEYS = (
+    'clientPortfolio',
+    'ClientPortfolio',
+    'portfolio',
+    'Portfolio',
+    'account',
+    'Account',
+    'cashAvailable',
+    'CashAvailable',
+    'data',
+    'Data',
+)
+
+
 def extract_account_equity(payload: dict) -> float:
     equity = extract_optional_account_equity(payload)
 
@@ -11,42 +49,11 @@ def extract_account_equity(payload: dict) -> float:
 
 
 def extract_optional_account_equity(payload: dict) -> float | None:
-    for key in (
-        'equity',
-        'Equity',
-        'accountEquity',
-        'AccountEquity',
-        'netLiquidationValue',
-        'NetLiquidationValue',
-        'netLiq',
-        'NetLiq',
-        'balance',
-        'Balance',
-        'cash',
-        'Cash',
-        'credit',
-        'Credit',
-        'availableBalance',
-        'AvailableBalance',
-        'availableCash',
-        'AvailableCash',
-    ):
-        value = payload.get(key)
-        if value is not None:
-            return float(value)
+    direct_equity = extract_optional_float(payload, ACCOUNT_EQUITY_KEYS)
+    if direct_equity is not None:
+        return direct_equity
 
-    for key in (
-        'clientPortfolio',
-        'ClientPortfolio',
-        'portfolio',
-        'Portfolio',
-        'account',
-        'Account',
-        'cashAvailable',
-        'CashAvailable',
-        'data',
-        'Data',
-    ):
+    for key in NESTED_ACCOUNT_EQUITY_KEYS:
         value = payload.get(key)
 
         if isinstance(value, dict):
