@@ -52,10 +52,21 @@ class TradingSessionState:
         self._active_session_key_by_symbol: dict[str, str | None] = {}
 
     def mark_and_detect_new_session(self, *, symbol: str, decision: TradingSessionDecision) -> bool:
+        started, _ = self.mark_and_detect_transition(symbol=symbol, decision=decision)
+        return started
+
+    def mark_and_detect_transition(
+        self,
+        *,
+        symbol: str,
+        decision: TradingSessionDecision,
+    ) -> tuple[bool, str | None]:
         previous_key = self._active_session_key_by_symbol.get(symbol)
         current_key = decision.session_key if decision.session_active else None
         self._active_session_key_by_symbol[symbol] = current_key
-        return current_key is not None and current_key != previous_key
+        new_session_started = current_key is not None and current_key != previous_key
+        ended_session_key = previous_key if previous_key is not None and current_key != previous_key else None
+        return new_session_started, ended_session_key
 
 
 class TradingSessionService:
