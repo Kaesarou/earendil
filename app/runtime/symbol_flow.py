@@ -16,6 +16,7 @@ from app.runtime.position_lifecycle import (
     BrokerAuthorizationErrorChecker,
     close_positions_triggered_by_snapshot,
 )
+from app.runtime.trading_session_window import TradingSessionDecision
 from app.strategies.strategy import TrendStrategy
 
 logger = logging.getLogger(__name__)
@@ -36,6 +37,7 @@ def process_symbol(
     position_store: PositionStore | None = None,
     cooldown_store: TradeCooldownStore | None = None,
     snapshot: MarketSnapshot | None = None,
+    session_decision: TradingSessionDecision | None = None,
 ) -> TradeCandidate | None:
     snapshot = snapshot or broker.get_market_snapshot(symbol)
     market_journal.write('market_snapshot', {'symbol': symbol, 'snapshot': snapshot})
@@ -65,6 +67,7 @@ def process_symbol(
         risk_manager=risk_manager,
         trade_journal=trade_journal,
         candle_journal=candle_journal,
+        session_decision=session_decision,
     )
 
 
@@ -77,6 +80,7 @@ def process_closed_candle(
     risk_manager: RiskManager,
     trade_journal: JsonlJournal,
     candle_journal: JsonlJournal,
+    session_decision: TradingSessionDecision | None = None,
 ) -> TradeCandidate | None:
     candle_journal.write('candle_closed', {'symbol': symbol, 'candle': closed_candle})
 
@@ -102,27 +106,28 @@ def process_closed_candle(
     )
 
     if signal.action == 'HOLD':
-        plan = TradePlan(
-            approved=False,
-            reason=signal.reason,
+        return _write_rejected_decision(
             symbol=symbol,
-            side=signal.action,
+            snapshot=snapshot,
+            closed_candle=closed_candle,
+            signal=signal,
+            reason=signal.reason,
+            risk_manager=risk_manager,
+            trade_journal=trade_journal,
+            session_decision=session_decision,
         )
-        trade_journal.write(
-            'decision',
-            {
-                'symbol': symbol,
-                'snapshot': snapshot,
-                'candle': closed_candle,
-                'signal': signal,
-                'equity': None,
-                'trade_plan': plan,
-                'instrument_profile': risk_manager.instrument_profile_for(symbol),
-                'risk_profile': risk_manager.risk_profile_for(symbol),
-            },
+
+    if session_decision is not None and not session_decision.new_entries_allowed:
+        return _write_rejected_decision(
+            symbol=symbol,
+            snapshot=snapshot,
+            closed_candle=closed_candle,
+            signal=signal,
+            reason=session_decision.reason,
+            risk_manager=risk_manager,
+            trade_journal=trade_journal,
+            session_decision=session_decision,
         )
-        logger.info('Trade rejected: %s', plan.reason)
-        return None
 
     candidate = build_trade_candidate(
         symbol=symbol,
@@ -139,6 +144,7 @@ def process_closed_candle(
             'candle': closed_candle,
             'signal': signal,
             'candidate': candidate,
+            'session_decision': session_decision,
             'instrument_profile': risk_manager.instrument_profile_for(symbol),
             'risk_profile': risk_manager.risk_profile_for(symbol),
         },
@@ -153,3 +159,38 @@ def process_closed_candle(
     )
 
     return candidate
+
+
+def _write_rejected_decision(
+    *,
+    symbol: str,
+    snapshot: MarketSnapshot,
+    closed_candle: Candle,
+    signal,
+    reason: str,
+    risk_manager: RiskManager,
+    trade_journal: JsonlJournal,
+    session_decision: TradingSessionDecision | None,
+) -> None:
+    plan = TradePlan(
+        approved=False,
+        reason=reason,
+        symbol=symbol,
+        side=signal.action,
+    )
+    trade_journal.write(
+        'decision',
+        {
+            'symbol': symbol,
+            'snapshot': snapshot,
+            'candle': closed_candle,
+            'signal': signal,
+            'equity': None,
+            'trade_plan': plan,
+            'session_decision': session_decision,
+            'instrument_profile': risk_manager.instrument_profile_for(symbol),
+            'risk_profile': risk_manager.risk_profile_for(symbol),
+        },
+    )
+    logger.info('Trade rejected: %s', plan.reason)
+    return None
