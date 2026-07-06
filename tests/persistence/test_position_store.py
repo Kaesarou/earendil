@@ -1,3 +1,4 @@
+import sqlite3
 from datetime import datetime, timezone
 
 from app.execution.position_tracker import TrackedPosition
@@ -76,6 +77,46 @@ def test_position_store_persists_managed_stop_fields(tmp_path):
     assert loaded.trailing_stop_net_buffer_percent == 0.1
     assert loaded.managed_stop_protection_type == 'trailing'
     assert loaded.last_stop_update_metadata is None
+
+
+def test_position_store_migrates_existing_open_positions_table(tmp_path):
+    db_path = tmp_path / 'earendil.sqlite'
+    with sqlite3.connect(db_path) as connection:
+        connection.execute(
+            """
+            CREATE TABLE open_positions (
+                position_id TEXT PRIMARY KEY,
+                symbol TEXT NOT NULL,
+                side TEXT NOT NULL,
+                amount REAL NOT NULL,
+                entry_price REAL NOT NULL,
+                stop_loss REAL NOT NULL,
+                take_profit REAL NOT NULL,
+                opened_at TEXT NOT NULL,
+                initial_stop_loss REAL,
+                highest_price REAL,
+                lowest_price REAL,
+                breakeven_stop_enabled INTEGER NOT NULL DEFAULT 0,
+                breakeven_trigger_percent REAL NOT NULL DEFAULT 0,
+                breakeven_buffer_percent REAL NOT NULL DEFAULT 0,
+                trailing_stop_enabled INTEGER NOT NULL DEFAULT 0,
+                trailing_stop_trigger_percent REAL NOT NULL DEFAULT 0,
+                trailing_stop_distance_percent REAL NOT NULL DEFAULT 0,
+                estimated_total_cost_percent REAL NOT NULL DEFAULT 0,
+                stale_position_enabled INTEGER NOT NULL DEFAULT 0,
+                stale_position_max_age_minutes INTEGER NOT NULL DEFAULT 0,
+                stale_position_min_favorable_move_percent REAL NOT NULL DEFAULT 0,
+                stale_position_buffer_percent REAL NOT NULL DEFAULT 0
+            )
+            """
+        )
+
+    store = PositionStore(str(db_path))
+    store.save_open_position(position('position-1'))
+    loaded = store.load_open_positions()[0]
+
+    assert loaded.trailing_stop_net_buffer_percent == 0.0
+    assert loaded.managed_stop_protection_type is None
 
 
 def test_position_store_replaces_existing_position(tmp_path):
