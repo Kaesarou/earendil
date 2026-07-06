@@ -23,6 +23,25 @@ def build_client() -> EtoroClient:
     )
 
 
+def filled_payload(*, with_position_details: bool) -> dict:
+    payload = {
+        'status': {
+            'id': 3,
+            'name': 'Filled',
+            'errorCode': 0,
+        }
+    }
+    if with_position_details:
+        payload['positionExecutions'] = [
+            {
+                'positionId': 9001,
+                'state': 'open',
+                'openingData': {'avgPrice': 238.0},
+            }
+        ]
+    return payload
+
+
 def test_etoro_client_order_response_parsing_matches_parser():
     client = build_client()
     payload = {
@@ -65,23 +84,51 @@ def test_etoro_client_order_error_parsing_matches_parser():
 
 def test_etoro_client_position_execution_parsing_matches_parser():
     client = build_client()
-    payload = {
-        'status': {
-            'id': 1,
-            'name': 'Executed',
-            'errorCode': 0,
-        },
-        'positionExecutions': [
-            {
-                'positionId': 9001,
-                'state': 'open',
-                'openingData': {
-                    'avgPrice': 238.0,
-                },
-            }
-        ],
-    }
+    payload = filled_payload(with_position_details=True)
 
     assert client._extract_position_id_from_order_details(payload) == extract_position_id_from_order_details(payload)
     assert client._extract_executed_position_details_list(payload) == extract_executed_position_details_list(payload)
     assert client._has_executed_position_details(payload) == has_executed_position_details(payload)
+
+
+def test_wait_for_executed_order_waits_for_filled_position_details(monkeypatch):
+    client = build_client()
+    responses = [
+        filled_payload(with_position_details=False),
+        filled_payload(with_position_details=True),
+    ]
+    seen_order_ids = []
+
+    def fake_get_order_details(order_id: str):
+        seen_order_ids.append(order_id)
+        return responses.pop(0)
+
+    monkeypatch.setattr(client, 'get_order_details', fake_get_order_details)
+
+    details = client._wait_for_executed_order(
+        'order-123',
+        attempts=2,
+        delay_seconds=0,
+        require_position_details=True,
+    )
+
+    assert details == filled_payload(with_position_details=True)
+    assert seen_order_ids == ['order-123', 'order-123']
+
+
+def test_wait_for_executed_order_accepts_filled_close_without_position_details(monkeypatch):
+    client = build_client()
+    monkeypatch.setattr(
+        client,
+        'get_order_details',
+        lambda order_id: filled_payload(with_position_details=False),
+    )
+
+    details = client._wait_for_executed_order(
+        'close-order-123',
+        attempts=1,
+        delay_seconds=0,
+        require_position_details=False,
+    )
+
+    assert details == filled_payload(with_position_details=False)
