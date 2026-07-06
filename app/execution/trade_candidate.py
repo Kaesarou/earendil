@@ -17,6 +17,11 @@ class TradeCandidate:
     base_score: float = 0.0
     exhaustion_penalty: float = 0.0
     late_entry_risk: float = 0.0
+    late_entry_score_cap: float | None = None
+    late_entry_rejection_reason: str | None = None
+    late_entry_severity: str = 'LOW'
+    score_before_late_entry_cap: float = 0.0
+    score_after_late_entry_cap: float = 0.0
     entry_quality_metadata: dict[str, Any] = field(default_factory=dict)
     tp_feasibility_metadata: dict[str, Any] = field(default_factory=dict)
     tp_feasibility_penalty: float = 0.0
