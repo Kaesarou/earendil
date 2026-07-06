@@ -19,6 +19,28 @@ class InstrumentProfile:
 
 
 @dataclass(frozen=True)
+class TpFeasibilityConfig:
+    enabled: bool = True
+    missing_data_penalty_points: float = 8.0
+    feasibility_buffer_percent: float = 0.10
+    tp_atr_soft_ratio: float = 2.0
+    tp_atr_hard_ratio: float = 4.0
+    tp_atr_reject_ratio: float = 6.0
+    tp_momentum_soft_ratio: float = 4.0
+    tp_momentum_hard_ratio: float = 12.0
+    min_directional_momentum_percent: float = 0.03
+    cost_to_tp_soft_ratio: float = 0.25
+    cost_to_tp_hard_ratio: float = 0.45
+    cost_to_tp_reject_ratio: float = 0.65
+    late_move_soft_percent: float = 0.80
+    late_move_hard_percent: float = 2.00
+    near_extreme_distance_percent: float = 0.15
+    max_penalty_points: float = 45.0
+    moderate_score_cap: float = 110.0
+    severe_score_cap: float = 95.0
+
+
+@dataclass(frozen=True)
 class RiskProfile:
     asset_class: AssetClass
     max_position_size_percent: float
@@ -46,6 +68,7 @@ class RiskProfile:
     stale_position: StalePositionConfig = field(default_factory=StalePositionConfig)
     trade_cooldown: TradeCooldownConfig = field(default_factory=TradeCooldownConfig)
     trade_cost: TradeCostConfig = field(default_factory=TradeCostConfig)
+    tp_feasibility: TpFeasibilityConfig = field(default_factory=TpFeasibilityConfig)
 
 
 @dataclass(frozen=True)
