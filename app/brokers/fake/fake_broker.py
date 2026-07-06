@@ -2,7 +2,7 @@ import math
 import time
 from dataclasses import dataclass, field
 
-from app.brokers.base import BrokerClient
+from app.brokers.base import BrokerClient, OpenPositionResult
 from app.market.models import MarketSnapshot
 
 
@@ -30,7 +30,7 @@ class FakeBrokerClient(BrokerClient):
     def get_account_equity(self) -> float:
         return self.equity
 
-    def open_position(self, symbol: str, side: str, amount: float, stop_loss: float, take_profit: float) -> str:
+    def open_position(self, symbol: str, side: str, amount: float, stop_loss: float, take_profit: float) -> OpenPositionResult:
         position_id = f'paper-{int(time.time())}-{len(self.positions) + 1}'
         self.positions[position_id] = {
             'symbol': symbol,
@@ -39,7 +39,7 @@ class FakeBrokerClient(BrokerClient):
             'stop_loss': stop_loss,
             'take_profit': take_profit,
         }
-        return position_id
+        return OpenPositionResult(position_id=position_id, executed_entry_price=None)
 
     def close_position(self, position_id: str) -> None:
         self.positions.pop(position_id, None)
