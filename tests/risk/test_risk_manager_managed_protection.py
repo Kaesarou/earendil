@@ -2,7 +2,7 @@ from app.config.settings import Settings
 from app.instruments.instrument_registry import InstrumentRegistry
 from app.instruments.models import AssetClass, InstrumentProfile, RiskProfile
 from app.market.models import MarketSnapshot
-from app.risk.position_sizing import FixedPercentPositionSizingStrategy
+from app.risk.position_sizing import FixedPercentPositionSizing
 from app.risk.risk_manager import RiskManager
 from app.risk.trade_cost_model import TradeCostConfig
 from app.strategies.signals import Signal
@@ -53,7 +53,7 @@ def risk_profile() -> RiskProfile:
 def build_risk_manager(profile: RiskProfile) -> RiskManager:
     return RiskManager(
         settings=Settings(MAX_OPEN_POSITIONS=10, MAX_OPEN_POSITIONS_PER_SYMBOL=10, MAX_TRADES_PER_SESSION=10),
-        position_sizing_strategy=FixedPercentPositionSizingStrategy(),
+        position_sizing_strategy=FixedPercentPositionSizing(),
         instrument_registry=TestInstrumentRegistry(profile),
     )
 
