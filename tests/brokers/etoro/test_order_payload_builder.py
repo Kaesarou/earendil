@@ -5,8 +5,21 @@ from app.brokers.etoro.order_payload_builder import (
     open_transaction_for_side,
 )
 
+BROKER_EXIT_FIELDS = (
+    'StopLossRate',
+    'TakeProfitRate',
+    'stopLossRate',
+    'takeProfitRate',
+    'stopLossType',
+)
 
-def test_etoro_buy_open_order_payload_uses_market_buy_without_protection_rates():
+
+def assert_no_broker_side_exit_fields(payload: dict) -> None:
+    for field in BROKER_EXIT_FIELDS:
+        assert field not in payload
+
+
+def test_etoro_buy_open_order_payload_uses_market_buy_without_broker_side_exits():
     payload = build_open_order_payload(
         instrument_id=1234,
         side='BUY',
@@ -25,9 +38,10 @@ def test_etoro_buy_open_order_payload_uses_market_buy_without_protection_rates()
         'amount': 500.0,
         'orderCurrency': 'eur',
     }
+    assert_no_broker_side_exit_fields(payload)
 
 
-def test_etoro_sell_open_order_payload_uses_short_cfd_and_stop_loss_rate():
+def test_etoro_sell_open_order_payload_uses_short_cfd_without_broker_side_exits():
     payload = build_open_order_payload(
         instrument_id=1261,
         side='SELL',
@@ -46,23 +60,8 @@ def test_etoro_sell_open_order_payload_uses_short_cfd_and_stop_loss_rate():
         'amount': 497.26,
         'orderCurrency': 'usd',
         'settlementType': 'cfd',
-        'StopLossRate': 337.4092,
     }
-
-
-def test_etoro_open_order_payload_currently_does_not_send_take_profit_rate():
-    payload = build_open_order_payload(
-        instrument_id=1261,
-        side='SELL',
-        amount=497.26,
-        stop_loss=337.4092,
-        take_profit=334.8862,
-        order_currency='USD',
-    )
-
-    assert 'TakeProfitRate' not in payload
-    assert 'takeProfitRate' not in payload
-    assert 'take_profit' not in payload
+    assert_no_broker_side_exit_fields(payload)
 
 
 @pytest.mark.parametrize(
