@@ -31,10 +31,7 @@ def test_position_store_saves_loads_and_deletes_open_positions(tmp_path):
 
     loaded_positions = store.load_open_positions()
 
-    assert [loaded.position_id for loaded in loaded_positions] == [
-        'position-1',
-        'position-2',
-    ]
+    assert [loaded.position_id for loaded in loaded_positions] == ['position-1', 'position-2']
     assert loaded_positions[0].symbol == 'MSFT'
     assert loaded_positions[0].side == 'BUY'
     assert loaded_positions[0].amount == 500.0
@@ -46,29 +43,39 @@ def test_position_store_saves_loads_and_deletes_open_positions(tmp_path):
 
     remaining_positions = store.load_open_positions()
 
-    assert [loaded.position_id for loaded in remaining_positions] == [
-        'position-2',
-    ]
+    assert [loaded.position_id for loaded in remaining_positions] == ['position-2']
 
 
 def test_position_store_persists_adjusted_execution_price_levels(tmp_path):
     store = PositionStore(str(tmp_path / 'earendil.sqlite'))
 
-    store.save_open_position(
-        position(
-            'position-1',
-            'HO.PA',
-            entry_price=238.0,
-            stop_loss=236.096,
-            take_profit=241.332,
-        )
-    )
+    store.save_open_position(position('position-1', 'HO.PA', entry_price=238.0, stop_loss=236.096, take_profit=241.332))
 
     loaded = store.load_open_positions()[0]
 
     assert loaded.entry_price == 238.0
     assert loaded.stop_loss == 236.096
     assert loaded.take_profit == 241.332
+
+
+def test_position_store_persists_managed_stop_fields(tmp_path):
+    store = PositionStore(str(tmp_path / 'earendil.sqlite'))
+    managed_position = position('position-1')
+    managed_position = TrackedPosition(
+        **{
+            **managed_position.__dict__,
+            'trailing_stop_net_buffer_percent': 0.1,
+            'managed_stop_protection_type': 'trailing',
+        }
+    )
+
+    store.save_open_position(managed_position)
+
+    loaded = store.load_open_positions()[0]
+
+    assert loaded.trailing_stop_net_buffer_percent == 0.1
+    assert loaded.managed_stop_protection_type == 'trailing'
+    assert loaded.last_stop_update_metadata is None
 
 
 def test_position_store_replaces_existing_position(tmp_path):
