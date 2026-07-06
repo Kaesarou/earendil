@@ -1,11 +1,10 @@
 from app.brokers.etoro.endpoint_paths import (
     close_position_path,
-    demo_order_details_path,
     demo_portfolio_path,
     instrument_rates_path,
     instrument_search_path,
     open_order_path,
-    real_order_lookup_path,
+    order_lookup_path,
     real_portfolio_path,
 )
 
@@ -30,12 +29,12 @@ def test_close_position_path_uses_real_endpoint_when_env_is_real():
     )
 
 
-def test_demo_order_details_path():
-    assert demo_order_details_path('123') == '/api/v1/trading/info/demo/orders/123'
+def test_order_lookup_path_uses_demo_v2_endpoint_when_env_is_demo():
+    assert order_lookup_path('demo') == '/api/v2/trading/info/demo/orders:lookup'
 
 
-def test_real_order_lookup_path():
-    assert real_order_lookup_path() == '/api/v2/trading/info/orders:lookup'
+def test_order_lookup_path_uses_real_v2_endpoint_when_env_is_real():
+    assert order_lookup_path('live') == '/api/v2/trading/info/orders:lookup'
 
 
 def test_demo_portfolio_path():
