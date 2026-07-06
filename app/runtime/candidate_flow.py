@@ -16,6 +16,7 @@ from app.execution.candidate_selector import (
     select_trade_candidates,
 )
 from app.execution.position_tracker import PositionTracker
+from app.execution.scoring.tp_feasibility import CandidateTpFeasibilityEvaluator
 from app.execution.trade_candidate import TradeCandidate
 from app.execution.trade_executor import TradeExecutor
 from app.journal.jsonl_journal import JsonlJournal
@@ -125,6 +126,17 @@ def apply_trade_cooldown_guard(*, candidates: list[TradeCandidate], risk_manager
     return result.selected_candidates
 
 
+def apply_tp_feasibility_to_evaluated_candidates(*, evaluated_candidates: list[EvaluatedTradeCandidate], risk_manager: RiskManager, evaluator: CandidateTpFeasibilityEvaluator | None = None) -> list[EvaluatedTradeCandidate]:
+    actual_evaluator = evaluator or CandidateTpFeasibilityEvaluator()
+    return [
+        actual_evaluator.evaluate(
+            evaluated_candidate=evaluated_candidate,
+            risk_profile=risk_manager.risk_profile_for(evaluated_candidate.candidate.symbol),
+        )
+        for evaluated_candidate in evaluated_candidates
+    ]
+
+
 def _slippage_percent(*, planned_entry_price: float, effective_entry_price: float) -> float | None:
     if planned_entry_price <= 0:
         return None
@@ -163,6 +175,8 @@ def execute_ranked_candidates(
         selection_equity = execution_broker.get_account_equity()
         evaluated_candidates = [candidate_economics_estimator.evaluate(candidate=candidate, account_equity=selection_equity) for candidate in candidates]
         trade_journal.write('candidate_economics', {'equity': selection_equity, 'evaluated_candidates': evaluated_candidates})
+        evaluated_candidates = apply_tp_feasibility_to_evaluated_candidates(evaluated_candidates=evaluated_candidates, risk_manager=risk_manager)
+        trade_journal.write('candidate_tp_feasibility', {'equity': selection_equity, 'evaluated_candidates': evaluated_candidates})
         if strategy_profile is None:
             evaluated_selection = EvaluatedCandidateSelectionResult(selected_candidates=rank_evaluated_trade_candidates(evaluated_candidates), rejected_candidates=[])
         else:
@@ -182,6 +196,7 @@ def execute_ranked_candidates(
     if not ranked_candidates:
         return
     economics_by_id = {id(item.candidate): item.economics for item in selected_evaluated_candidates or []}
+    feasibility_by_id = {id(item.candidate): item.tp_feasibility for item in selected_evaluated_candidates or []}
     trade_journal.write('candidate_ranking', {'candidates': ranked_candidates, 'evaluated_candidates': selected_evaluated_candidates})
     logger.info('Candidate ranking | candidates=%s', [
         {
@@ -190,6 +205,10 @@ def execute_ranked_candidates(
             'score': candidate.score,
             'expected_net_profit': round(economics_by_id[id(candidate)].expected_net_profit, 4) if id(candidate) in economics_by_id else None,
             'expected_net_profit_percent': round(economics_by_id[id(candidate)].expected_net_profit_percent, 4) if id(candidate) in economics_by_id else None,
+            'tp_feasibility_penalty': candidate.tp_feasibility_penalty,
+            'tp_feasibility_score_cap': candidate.tp_feasibility_score_cap,
+            'tp_feasibility_rejection_reason': candidate.tp_feasibility_rejection_reason,
+            'tp_feasibility_runway_score': feasibility_by_id[id(candidate)].runway_score if id(candidate) in feasibility_by_id and feasibility_by_id[id(candidate)] is not None else None,
             'reason': candidate.rank_reason,
         }
         for candidate in ranked_candidates
