@@ -1,10 +1,12 @@
 from app.brokers.etoro.etoro_client import EtoroClient
 from app.brokers.etoro.order_response_parser import (
+    extract_executed_position_details_list,
     extract_order_error_code,
     extract_order_error_message,
     extract_order_id,
     extract_position_id_from_order_details,
     extract_reference_id,
+    has_executed_position_details,
     is_close_response_accepted,
     is_order_executed,
     is_order_rejected,
@@ -32,12 +34,17 @@ def test_etoro_client_order_id_extractors_match_parser():
 def test_etoro_client_position_id_extractor_matches_parser():
     client = build_uninitialized_client()
     payload = {
-        'statusID': 3,
-        'errorCode': 0,
-        'positions': [
+        'status': {
+            'id': 1,
+            'name': 'Executed',
+            'errorCode': 0,
+        },
+        'positionExecutions': [
             {
-                'positionID': 3549889123,
-                'isOpen': True,
+                'positionId': 3549889123,
+                'openingData': {
+                    'avgPrice': 238.0,
+                },
             }
         ],
     }
@@ -45,6 +52,10 @@ def test_etoro_client_position_id_extractor_matches_parser():
     assert client._extract_position_id_from_order_details(payload) == (
         extract_position_id_from_order_details(payload)
     )
+    assert client._extract_executed_position_details_list(payload) == (
+        extract_executed_position_details_list(payload)
+    )
+    assert client._has_executed_position_details(payload) == has_executed_position_details(payload)
 
 
 def test_etoro_client_order_state_helpers_match_parser():
@@ -58,6 +69,9 @@ def test_etoro_client_order_state_helpers_match_parser():
         'positionExecutions': [
             {
                 'positionId': 9001,
+                'openingData': {
+                    'avgPrice': 238.0,
+                },
             }
         ],
     }
