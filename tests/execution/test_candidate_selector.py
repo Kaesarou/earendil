@@ -77,6 +77,22 @@ def candidate(
     )
 
 
+def evaluated_candidate_with_profit(candidate: TradeCandidate) -> EvaluatedTradeCandidate:
+    return EvaluatedTradeCandidate(
+        candidate=candidate,
+        economics=CandidateEconomics(
+            position_value=100.0,
+            expected_gross_profit=1.0,
+            expected_net_profit=0.5,
+            expected_net_profit_percent=0.5,
+            estimated_total_cost=0.5,
+            estimated_total_cost_percent=0.5,
+            min_expected_net_profit_percent=0.10,
+            required_min_expected_net_profit_amount=0.10,
+        ),
+    )
+
+
 def test_candidate_selector_keeps_only_top_n_candidates():
     candidates = [
         candidate('ONE', signal(session_move_percent=1.8)),
@@ -173,3 +189,24 @@ def test_evaluated_candidate_selector_rejects_expected_profit_too_low():
 
     assert not result.selected_candidates
     assert result.rejected_candidates[0].reason == 'candidate_selection_expected_profit_too_low_after_fees'
+
+
+def test_evaluated_candidate_selector_rejects_tp_feasibility_before_min_score():
+    candidate_with_rejection = TradeCandidate(
+        symbol='LOW',
+        snapshot=snapshot('LOW'),
+        candle=candle('LOW'),
+        signal=signal(),
+        score=10.0,
+        rank_reason='test',
+        session_key=TEST_SESSION_KEY,
+        tp_feasibility_rejection_reason='candidate_selection_tp_feasibility_cost_to_tp_too_high',
+    )
+
+    result = select_evaluated_trade_candidates(
+        [evaluated_candidate_with_profit(candidate_with_rejection)],
+        CandidateSelectionConfig(top_n=0, min_score=100.0),
+    )
+
+    assert not result.selected_candidates
+    assert result.rejected_candidates[0].reason == 'candidate_selection_tp_feasibility_cost_to_tp_too_high'
