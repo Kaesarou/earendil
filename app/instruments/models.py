@@ -17,6 +17,7 @@ class InstrumentProfile:
     symbol: str
     asset_class: AssetClass
 
+
 @dataclass(frozen=True)
 class RiskProfile:
     asset_class: AssetClass
@@ -41,9 +42,11 @@ class RiskProfile:
     trailing_stop_enabled: bool = False
     trailing_stop_trigger_percent: float = 0.0
     trailing_stop_distance_percent: float = 0.0
+    trailing_stop_net_buffer_percent: float = 0.0
     stale_position: StalePositionConfig = field(default_factory=StalePositionConfig)
     trade_cooldown: TradeCooldownConfig = field(default_factory=TradeCooldownConfig)
     trade_cost: TradeCostConfig = field(default_factory=TradeCostConfig)
+
 
 @dataclass(frozen=True)
 class TrendStrategyConfig:
@@ -63,6 +66,7 @@ class TrendStrategyConfig:
     market_regime_max_noise_ratio: float
     snapshot_momentum_window_seconds: int = 180
     min_snapshot_momentum_percent: float = 0.20
+
 
 @dataclass(frozen=True)
 class InstrumentConfig:
