@@ -139,7 +139,6 @@ class EtoroClient(BrokerClient):
         order_id = self._extract_order_id(order_response)
         reference_id = self._extract_reference_id(order_response)
         logger.info('eToro order submitted | order_id=%s | reference_id=%s', order_id, reference_id)
-
         order_details = self._wait_for_executed_order(order_id, require_position_details=True)
         executed_positions = self._extract_executed_position_details_list(order_details)
         if len(executed_positions) != 1:
@@ -167,7 +166,10 @@ class EtoroClient(BrokerClient):
         )
 
     def close_position(self, position_id: str) -> None:
-        instrument_id = require_position_instrument_id(self.position_instruments, position_id)
+        instrument_id = require_position_instrument_id(
+            position_instruments=self.position_instruments,
+            position_id=position_id,
+        )
         close_response = self._post(self._close_position_path(position_id), build_close_order_payload(instrument_id))
         logger.info('eToro close position response: %s', close_response)
         close_order_id = self._extract_order_id(close_response)
@@ -179,7 +181,10 @@ class EtoroClient(BrokerClient):
                 close_order_id,
                 close_response,
             )
-            forget_position_instrument_id(self.position_instruments, position_id)
+            forget_position_instrument_id(
+                position_instruments=self.position_instruments,
+                position_id=position_id,
+            )
             return
         close_details = self._wait_for_executed_order(close_order_id, require_position_details=False)
         self._wait_until_position_closed(position_id)
@@ -189,7 +194,10 @@ class EtoroClient(BrokerClient):
             close_order_id,
             close_details,
         )
-        forget_position_instrument_id(self.position_instruments, position_id)
+        forget_position_instrument_id(
+            position_instruments=self.position_instruments,
+            position_id=position_id,
+        )
 
     def get_order_details(self, order_id: str) -> dict:
         return self._get(self._order_lookup_path(), params={'orderId': order_id})
@@ -204,33 +212,23 @@ class EtoroClient(BrokerClient):
 
     def remember_position_instrument(self, position_id: str, symbol: str) -> None:
         instrument_id = self._find_instrument_id(symbol)
-        remember_position_instrument_id(self.position_instruments, position_id, instrument_id)
-        logger.info(
-            'eToro restored position instrument | position_id=%s | symbol=%s | instrument_id=%s',
-            position_id,
-            symbol,
-            instrument_id,
+        remember_position_instrument_id(
+            position_instruments=self.position_instruments,
+            position_id=position_id,
+            instrument_id=instrument_id,
         )
+        logger.info('eToro restored position instrument | position_id=%s | symbol=%s | instrument_id=%s', position_id, symbol, instrument_id)
 
     @property
     def headers(self) -> dict[str, str]:
-        return build_headers(
-            request_id=str(uuid4()),
-            api_key=self.settings.etoro_api_key,
-            user_key=self.settings.etoro_user_key,
-        )
+        return build_headers(request_id=str(uuid4()), api_key=self.settings.etoro_api_key, user_key=self.settings.etoro_user_key)
 
     def _get(self, path: str, params: dict | None = None) -> dict:
         url = build_http_url(self.etoro_api_base_url, path)
         max_attempts = default_get_max_attempts()
         for attempt in range(1, max_attempts + 1):
             try:
-                response = requests.get(
-                    url,
-                    headers=self.headers,
-                    params=params,
-                    timeout=default_request_timeout_seconds(),
-                )
+                response = requests.get(url, headers=self.headers, params=params, timeout=default_request_timeout_seconds())
             except requests.Timeout as exc:
                 logger.warning('eToro GET timeout | attempt=%s/%s | url=%s | params=%s | error=%s', attempt, max_attempts, url, params, exc)
                 if attempt == max_attempts:
@@ -256,12 +254,7 @@ class EtoroClient(BrokerClient):
     def _post(self, path: str, payload: dict) -> dict:
         url = build_http_url(self.etoro_api_base_url, path)
         try:
-            response = requests.post(
-                url,
-                headers=self.headers,
-                json=payload,
-                timeout=default_request_timeout_seconds(),
-            )
+            response = requests.post(url, headers=self.headers, json=payload, timeout=default_request_timeout_seconds())
         except requests.Timeout as exc:
             logger.error('eToro POST timeout | url=%s | payload=%s | error=%s', url, payload, exc)
             raise
@@ -280,14 +273,7 @@ class EtoroClient(BrokerClient):
         ensure_side_is_allowed(side)
 
     def _build_open_order_payload(self, instrument_id: int, side: str, amount: float, stop_loss: float, take_profit: float) -> dict:
-        return build_open_order_payload(
-            instrument_id=instrument_id,
-            side=side,
-            amount=amount,
-            stop_loss=stop_loss,
-            take_profit=take_profit,
-            order_currency=self.settings.base_currency,
-        )
+        return build_open_order_payload(instrument_id=instrument_id, side=side, amount=amount, stop_loss=stop_loss, take_profit=take_profit, order_currency=self.settings.base_currency)
 
     def _open_transaction_for_side(self, side: str) -> str:
         return open_transaction_for_side(side)
@@ -314,7 +300,10 @@ class EtoroClient(BrokerClient):
         return [self._find_instrument_id(symbol) for symbol in symbols]
 
     def _find_instrument_id(self, symbol: str) -> int:
-        instrument_id = cached_instrument_id(self.instrument_ids_by_symbol, symbol)
+        instrument_id = cached_instrument_id(
+            instrument_ids_by_symbol=self.instrument_ids_by_symbol,
+            symbol=symbol,
+        )
         if instrument_id is not None:
             return instrument_id
         payload = self._get(instrument_search_path(), params={'internalSymbolFull': symbol})
@@ -337,13 +326,7 @@ class EtoroClient(BrokerClient):
     def _to_market_snapshots(self, rates_payload: dict) -> dict[str, MarketSnapshot]:
         return to_market_snapshots(rates_payload=rates_payload, symbol_by_instrument_id=self.symbol_by_instrument_id)
 
-    def _wait_for_executed_order(
-        self,
-        order_id: str,
-        attempts: int = 10,
-        delay_seconds: float = 1.0,
-        require_position_details: bool = True,
-    ) -> dict:
+    def _wait_for_executed_order(self, order_id: str, attempts: int = 10, delay_seconds: float = 1.0, require_position_details: bool = True) -> dict:
         last_lookup_error: Exception | None = None
         for attempt in range(1, attempts + 1):
             try:
@@ -353,32 +336,15 @@ class EtoroClient(BrokerClient):
                 logger.warning('eToro order lookup failed | order_id=%s | attempt=%s/%s | error=%s', order_id, attempt, attempts, exc)
                 time.sleep(delay_seconds)
                 continue
-
             executed = self._is_order_executed(details)
             position_details_ready = self._has_executed_position_details(details)
-            logger.info(
-                'eToro order lookup | order_id=%s | attempt=%s/%s | executed=%s | position_details_ready=%s | response=%s',
-                order_id,
-                attempt,
-                attempts,
-                executed,
-                position_details_ready,
-                details,
-            )
+            logger.info('eToro order lookup | order_id=%s | attempt=%s/%s | executed=%s | position_details_ready=%s | response=%s', order_id, attempt, attempts, executed, position_details_ready, details)
             if self._is_order_rejected(details):
-                raise RuntimeError(
-                    f'eToro order rejected: order_id={order_id}, '
-                    f'error_code={self._extract_order_error_code(details)}, '
-                    f'error_message={self._extract_order_error_message(details)}, details={details}'
-                )
+                raise RuntimeError(f'eToro order rejected: order_id={order_id}, error_code={self._extract_order_error_code(details)}, error_message={self._extract_order_error_message(details)}, details={details}')
             if executed and (position_details_ready or not require_position_details):
                 return details
             time.sleep(delay_seconds)
-        raise RuntimeError(
-            f'eToro order was not executed with required details after polling: '
-            f'order_id={order_id}, require_position_details={require_position_details}, '
-            f'last_lookup_error={last_lookup_error}'
-        )
+        raise RuntimeError(f'eToro order was not executed with required details after polling: order_id={order_id}, require_position_details={require_position_details}, last_lookup_error={last_lookup_error}')
 
     def _wait_until_position_closed(self, position_id: str, attempts: int = 10, delay_seconds: float = 1.0) -> None:
         last_lookup_error: Exception | None = None
