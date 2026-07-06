@@ -195,6 +195,7 @@ class RiskManager:
             trailing_stop_enabled=risk_profile.trailing_stop_enabled,
             trailing_stop_trigger_percent=risk_profile.trailing_stop_trigger_percent,
             trailing_stop_distance_percent=risk_profile.trailing_stop_distance_percent,
+            trailing_stop_net_buffer_percent=risk_profile.trailing_stop_net_buffer_percent,
             stale_position_enabled=risk_profile.stale_position.enabled,
             stale_position_max_age_minutes=risk_profile.stale_position.max_age_minutes,
             stale_position_min_favorable_move_percent=risk_profile.stale_position.min_favorable_move_percent,
