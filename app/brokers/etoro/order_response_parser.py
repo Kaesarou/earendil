@@ -1,5 +1,7 @@
+from dataclasses import dataclass
+
 from app.brokers.etoro.payload_collections import keep_dict_items
-from app.brokers.etoro.scalar_extractors import extract_optional_int
+from app.brokers.etoro.scalar_extractors import extract_optional_float, extract_optional_int
 from app.brokers.etoro.string_extractors import extract_optional_string
 
 
@@ -11,6 +13,13 @@ POSITION_ID_KEYS = ('positionId', 'PositionId', 'positionID', 'PositionID')
 POSITION_EXECUTION_KEYS = ('positionExecutions', 'positions')
 POSITION_NESTED_KEYS = ('position', 'Position', 'data', 'Data', 'order', 'Order')
 CLOSE_STATUS_ID_KEYS = ('statusID', 'statusId')
+AVG_PRICE_KEYS = ('avgPrice',)
+
+
+@dataclass(frozen=True)
+class ExecutedPositionDetails:
+    position_id: str
+    executed_entry_price: float
 
 
 def extract_order_id(payload: dict) -> str:
@@ -64,6 +73,44 @@ def extract_position_id_from_order_details(payload: dict) -> str | None:
     return None
 
 
+def extract_executed_position_details(payload: dict) -> ExecutedPositionDetails | None:
+    executions = extract_executed_position_details_list(payload)
+    if len(executions) != 1:
+        return None
+
+    return executions[0]
+
+
+def extract_executed_position_details_list(payload: dict) -> list[ExecutedPositionDetails]:
+    position_executions = payload.get('positionExecutions')
+    if not isinstance(position_executions, list):
+        return []
+
+    executed_positions: list[ExecutedPositionDetails] = []
+    for execution in keep_dict_items(position_executions):
+        position_id = extract_position_id(execution)
+        opening_data = execution.get('openingData')
+        if position_id is None or not isinstance(opening_data, dict):
+            continue
+
+        avg_price = extract_optional_float(opening_data, AVG_PRICE_KEYS)
+        if avg_price is None or avg_price <= 0:
+            continue
+
+        executed_positions.append(
+            ExecutedPositionDetails(
+                position_id=position_id,
+                executed_entry_price=avg_price,
+            )
+        )
+
+    return executed_positions
+
+
+def has_executed_position_details(payload: dict) -> bool:
+    return extract_executed_position_details(payload) is not None
+
+
 def extract_order_error_code(payload: dict) -> int | None:
     error_code = extract_optional_int(payload, ORDER_ERROR_CODE_KEYS)
     if error_code is not None:
@@ -93,27 +140,14 @@ def extract_order_error_message(payload: dict) -> str | None:
 
 def is_order_executed(payload: dict) -> bool:
     status = payload.get('status')
-
-    if isinstance(status, dict):
-        status_name = str(status.get('name', '')).lower()
-        status_id = status.get('id')
-        status_error_code = status.get('errorCode')
-
-        if status_error_code not in (None, 0):
-            return False
-
-        if status_name == 'executed' or status_id == 1:
-            return True
-
-    error_code = payload.get('errorCode')
-    if error_code not in (None, 0):
+    if not isinstance(status, dict):
         return False
 
-    status_id = payload.get('statusID')
-    if status_id in (1, 3):
-        return True
+    status_error_code = status.get('errorCode')
+    if status_error_code not in (None, 0):
+        return False
 
-    return extract_position_id_from_order_details(payload) is not None
+    return status.get('id') == 1 or str(status.get('name', '')).lower() == 'executed'
 
 
 def is_order_rejected(payload: dict) -> bool:
@@ -123,6 +157,10 @@ def is_order_rejected(payload: dict) -> bool:
 
     status = payload.get('status')
     if isinstance(status, dict):
+        status_id = status.get('id')
+        if status_id in (2, 3):
+            return True
+
         status_error_code = status.get('errorCode')
         if status_error_code not in (None, 0):
             return True
