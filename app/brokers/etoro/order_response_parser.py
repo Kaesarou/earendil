@@ -14,6 +14,8 @@ POSITION_EXECUTION_KEYS = ('positionExecutions', 'positions')
 POSITION_NESTED_KEYS = ('position', 'Position', 'data', 'Data', 'order', 'Order')
 CLOSE_STATUS_ID_KEYS = ('statusID', 'statusId')
 AVG_PRICE_KEYS = ('avgPrice',)
+EXECUTED_STATUS_NAMES = ('executed', 'filled')
+REJECTED_STATUS_NAMES = ('rejected', 'failed', 'cancelled', 'canceled', 'error')
 
 
 @dataclass(frozen=True)
@@ -125,28 +127,37 @@ def is_order_executed(payload: dict) -> bool:
     status = payload.get('status')
     if not isinstance(status, dict):
         return False
+
     status_error_code = status.get('errorCode')
     if status_error_code not in (None, 0):
         return False
-    return status.get('id') == 1
+
+    status_name = str(status.get('name', '')).lower()
+    if status_name in EXECUTED_STATUS_NAMES:
+        return True
+
+    status_id = status.get('id')
+    if status_id == 1:
+        return True
+
+    return status_id == 3 and has_executed_position_details(payload)
 
 
 def is_order_rejected(payload: dict) -> bool:
     error_code = extract_order_error_code(payload)
     if error_code not in (None, 0):
         return True
+
     status = payload.get('status')
-    if isinstance(status, dict):
-        status_id = status.get('id')
-        if status_id in (2, 3):
-            return True
-        status_error_code = status.get('errorCode')
-        if status_error_code not in (None, 0):
-            return True
-        status_name = str(status.get('name', '')).lower()
-        if status_name in ('rejected', 'failed', 'cancelled', 'canceled', 'error'):
-            return True
-    return False
+    if not isinstance(status, dict):
+        return False
+
+    status_error_code = status.get('errorCode')
+    if status_error_code not in (None, 0):
+        return True
+
+    status_name = str(status.get('name', '')).lower()
+    return status_name in REJECTED_STATUS_NAMES
 
 
 def is_close_response_accepted(payload: dict, position_id: str) -> bool:
