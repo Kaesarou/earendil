@@ -4,15 +4,21 @@ from app.execution.position_tracker import TrackedPosition
 from app.persistence.position_store import PositionStore
 
 
-def position(position_id: str, symbol: str = 'MSFT') -> TrackedPosition:
+def position(
+    position_id: str,
+    symbol: str = 'MSFT',
+    entry_price: float = 100.0,
+    stop_loss: float = 99.0,
+    take_profit: float = 102.0,
+) -> TrackedPosition:
     return TrackedPosition(
         position_id=position_id,
         symbol=symbol,
         side='BUY',
         amount=500.0,
-        entry_price=100.0,
-        stop_loss=99.0,
-        take_profit=102.0,
+        entry_price=entry_price,
+        stop_loss=stop_loss,
+        take_profit=take_profit,
         opened_at=datetime(2026, 6, 26, 16, 0, tzinfo=timezone.utc),
     )
 
@@ -43,6 +49,26 @@ def test_position_store_saves_loads_and_deletes_open_positions(tmp_path):
     assert [loaded.position_id for loaded in remaining_positions] == [
         'position-2',
     ]
+
+
+def test_position_store_persists_adjusted_execution_price_levels(tmp_path):
+    store = PositionStore(str(tmp_path / 'earendil.sqlite'))
+
+    store.save_open_position(
+        position(
+            'position-1',
+            'HO.PA',
+            entry_price=238.0,
+            stop_loss=236.096,
+            take_profit=241.332,
+        )
+    )
+
+    loaded = store.load_open_positions()[0]
+
+    assert loaded.entry_price == 238.0
+    assert loaded.stop_loss == 236.096
+    assert loaded.take_profit == 241.332
 
 
 def test_position_store_replaces_existing_position(tmp_path):
