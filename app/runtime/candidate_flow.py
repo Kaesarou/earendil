@@ -125,6 +125,12 @@ def apply_trade_cooldown_guard(*, candidates: list[TradeCandidate], risk_manager
     return result.selected_candidates
 
 
+def _slippage_percent(*, planned_entry_price: float, effective_entry_price: float) -> float | None:
+    if planned_entry_price <= 0:
+        return None
+    return round(((effective_entry_price - planned_entry_price) / planned_entry_price) * 100, 4)
+
+
 def execute_ranked_candidates(
     candidates: list[TradeCandidate],
     execution_broker: BrokerClient,
@@ -207,10 +213,19 @@ def execute_ranked_candidates(
                 'instrument_profile': instrument_profile,
                 'risk_profile': risk_profile,
             })
-            position_id = executor.execute(plan)
-            if not position_id:
+            execution_result = executor.execute(plan)
+            if not execution_result:
                 continue
-            tracked_position = position_tracker.record_open_position(position_id=position_id, trade_plan=plan, entry_price=candidate.snapshot.last)
+            planned_entry_price = candidate.snapshot.last
+            executed_entry_price = execution_result.executed_entry_price
+            effective_entry_price = executed_entry_price if executed_entry_price is not None else planned_entry_price
+            entry_price_source = 'broker_execution' if executed_entry_price is not None else 'snapshot_fallback'
+            adjusted_plan = risk_manager.adjust_trade_plan_to_entry_price(trade_plan=plan, entry_price=effective_entry_price)
+            tracked_position = position_tracker.record_open_position(
+                position_id=execution_result.position_id,
+                trade_plan=adjusted_plan,
+                entry_price=effective_entry_price,
+            )
             risk_manager.record_open_position(candidate.symbol, session_key=candidate.session_key)
             if position_store is not None:
                 try:
@@ -220,11 +235,18 @@ def execute_ranked_candidates(
                     trade_journal.write('position_persistence_error', {'symbol': tracked_position.symbol, 'position_id': tracked_position.position_id, 'position': tracked_position, 'message': str(exc)})
             trade_journal.write('position_opened', {
                 'symbol': candidate.symbol,
-                'position_id': position_id,
+                'position_id': execution_result.position_id,
                 'position': tracked_position,
                 'candidate': candidate,
                 'candidate_economics': candidate_economics,
-                'trade_plan': plan,
+                'trade_plan': adjusted_plan,
+                'original_trade_plan': plan,
+                'adjusted_trade_plan': adjusted_plan,
+                'planned_entry_price': planned_entry_price,
+                'executed_entry_price': executed_entry_price,
+                'effective_entry_price': effective_entry_price,
+                'entry_price_source': entry_price_source,
+                'execution_slippage_percent': _slippage_percent(planned_entry_price=planned_entry_price, effective_entry_price=effective_entry_price),
                 'instrument_profile': instrument_profile,
                 'risk_profile': risk_profile,
             })
