@@ -1,6 +1,6 @@
 import logging
 
-from app.brokers.base import BrokerClient
+from app.brokers.base import BrokerClient, OpenPositionResult as BrokerOpenPositionResult
 from app.risk.models import TradePlan
 
 logger = logging.getLogger(__name__)
@@ -10,7 +10,7 @@ class TradeExecutor:
     def __init__(self, broker: BrokerClient):
         self.broker = broker
 
-    def execute(self, plan: TradePlan):
+    def execute(self, plan: TradePlan) -> BrokerOpenPositionResult | None:
         if not plan.approved:
             logger.info('Trade rejected: %s', plan.reason)
             return None
