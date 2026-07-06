@@ -1,6 +1,6 @@
 from dataclasses import dataclass
 
-from app.instruments.models import AssetClass, InstrumentConfig, RiskProfile, TrendStrategyConfig
+from app.instruments.models import AssetClass, InstrumentConfig, RiskProfile, TpFeasibilityConfig, TrendStrategyConfig
 from app.risk.stale_position_guard import StalePositionConfig
 from app.risk.trade_cost_model import TradeCostConfig
 
@@ -51,4 +51,16 @@ class CryptoConfig(InstrumentConfig):
         trailing_stop_net_buffer_percent=0.15,
         stale_position=StalePositionConfig(enabled=True, max_age_minutes=60, min_favorable_move_percent=0.80, buffer_percent=0.0),
         trade_cost=TradeCostConfig(open_fee_percent=1.00, close_fee_percent=1.00, fixed_open_fee=0.0, fixed_close_fee=0.0, include_spread_cost=True, min_expected_net_profit_percent=0.10),
+        tp_feasibility=TpFeasibilityConfig(
+            tp_atr_soft_ratio=1.8,
+            tp_atr_hard_ratio=3.5,
+            tp_atr_reject_ratio=5.0,
+            tp_momentum_soft_ratio=3.0,
+            tp_momentum_hard_ratio=10.0,
+            min_directional_momentum_percent=0.05,
+            cost_to_tp_soft_ratio=0.35,
+            cost_to_tp_hard_ratio=0.55,
+            cost_to_tp_reject_ratio=0.75,
+            feasibility_buffer_percent=0.15,
+        ),
     )
