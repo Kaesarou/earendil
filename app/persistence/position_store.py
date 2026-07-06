@@ -22,12 +22,13 @@ class PositionStore:
                     lowest_price, breakeven_stop_enabled, breakeven_trigger_percent,
                     breakeven_buffer_percent, trailing_stop_enabled,
                     trailing_stop_trigger_percent, trailing_stop_distance_percent,
+                    trailing_stop_net_buffer_percent, managed_stop_protection_type,
                     estimated_total_cost_percent, stale_position_enabled,
                     stale_position_max_age_minutes,
                     stale_position_min_favorable_move_percent,
                     stale_position_buffer_percent
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     position.position_id,
@@ -47,6 +48,8 @@ class PositionStore:
                     int(position.trailing_stop_enabled),
                     position.trailing_stop_trigger_percent,
                     position.trailing_stop_distance_percent,
+                    position.trailing_stop_net_buffer_percent,
+                    position.managed_stop_protection_type,
                     position.estimated_total_cost_percent,
                     int(position.stale_position_enabled),
                     position.stale_position_max_age_minutes,
@@ -69,6 +72,7 @@ class PositionStore:
                     lowest_price, breakeven_stop_enabled, breakeven_trigger_percent,
                     breakeven_buffer_percent, trailing_stop_enabled,
                     trailing_stop_trigger_percent, trailing_stop_distance_percent,
+                    trailing_stop_net_buffer_percent, managed_stop_protection_type,
                     estimated_total_cost_percent, stale_position_enabled,
                     stale_position_max_age_minutes,
                     stale_position_min_favorable_move_percent,
@@ -98,6 +102,8 @@ class PositionStore:
                 trailing_stop_enabled,
                 trailing_stop_trigger_percent,
                 trailing_stop_distance_percent,
+                trailing_stop_net_buffer_percent,
+                managed_stop_protection_type,
                 estimated_total_cost_percent,
                 stale_position_enabled,
                 stale_position_max_age_minutes,
@@ -123,12 +129,12 @@ class PositionStore:
                     trailing_stop_enabled=bool(trailing_stop_enabled),
                     trailing_stop_trigger_percent=float(trailing_stop_trigger_percent),
                     trailing_stop_distance_percent=float(trailing_stop_distance_percent),
+                    trailing_stop_net_buffer_percent=float(trailing_stop_net_buffer_percent),
+                    managed_stop_protection_type=self._optional_string(managed_stop_protection_type),
                     estimated_total_cost_percent=float(estimated_total_cost_percent),
                     stale_position_enabled=bool(stale_position_enabled),
                     stale_position_max_age_minutes=int(stale_position_max_age_minutes),
-                    stale_position_min_favorable_move_percent=float(
-                        stale_position_min_favorable_move_percent
-                    ),
+                    stale_position_min_favorable_move_percent=float(stale_position_min_favorable_move_percent),
                     stale_position_buffer_percent=float(stale_position_buffer_percent),
                 )
             )
@@ -159,6 +165,8 @@ class PositionStore:
                     trailing_stop_enabled INTEGER NOT NULL DEFAULT 0,
                     trailing_stop_trigger_percent REAL NOT NULL DEFAULT 0,
                     trailing_stop_distance_percent REAL NOT NULL DEFAULT 0,
+                    trailing_stop_net_buffer_percent REAL NOT NULL DEFAULT 0,
+                    managed_stop_protection_type TEXT,
                     estimated_total_cost_percent REAL NOT NULL DEFAULT 0,
                     stale_position_enabled INTEGER NOT NULL DEFAULT 0,
                     stale_position_max_age_minutes INTEGER NOT NULL DEFAULT 0,
@@ -167,8 +175,23 @@ class PositionStore:
                 )
                 """
             )
+            self._ensure_column(connection, 'trailing_stop_net_buffer_percent', 'REAL NOT NULL DEFAULT 0')
+            self._ensure_column(connection, 'managed_stop_protection_type', 'TEXT')
+
+    def _ensure_column(self, connection: sqlite3.Connection, column_name: str, column_definition: str) -> None:
+        existing_columns = {
+            row[1]
+            for row in connection.execute('PRAGMA table_info(open_positions)').fetchall()
+        }
+        if column_name not in existing_columns:
+            connection.execute(f'ALTER TABLE open_positions ADD COLUMN {column_name} {column_definition}')
 
     def _optional_float(self, value: Any) -> float | None:
         if value is None:
             return None
         return float(value)
+
+    def _optional_string(self, value: Any) -> str | None:
+        if value is None:
+            return None
+        return str(value)
