@@ -1,6 +1,13 @@
 from abc import ABC, abstractmethod
+from dataclasses import dataclass
 
 from app.market.models import MarketSnapshot
+
+
+@dataclass(frozen=True)
+class OpenPositionResult:
+    position_id: str
+    executed_entry_price: float | None = None
 
 
 class BrokerClient(ABC):
@@ -24,7 +31,7 @@ class BrokerClient(ABC):
         amount: float,
         stop_loss: float,
         take_profit: float,
-    ) -> str:
+    ) -> OpenPositionResult:
         raise NotImplementedError
 
     @abstractmethod
