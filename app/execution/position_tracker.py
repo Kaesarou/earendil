@@ -1,6 +1,11 @@
 from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 
+from app.execution.managed_stop import (
+    ManagedStopMetadata,
+    calculate_buy_managed_stop,
+    calculate_sell_managed_stop,
+)
 from app.market.models import MarketSnapshot
 from app.risk.models import TradePlan
 from app.risk.stale_position_guard import (
@@ -29,6 +34,9 @@ class TrackedPosition:
     trailing_stop_enabled: bool = False
     trailing_stop_trigger_percent: float = 0.0
     trailing_stop_distance_percent: float = 0.0
+    trailing_stop_net_buffer_percent: float = 0.0
+    managed_stop_protection_type: str | None = None
+    last_stop_update_metadata: ManagedStopMetadata | None = None
     estimated_total_cost_percent: float = 0.0
     stale_position_enabled: bool = False
     stale_position_max_age_minutes: int = 0
@@ -79,13 +87,7 @@ class PositionTracker:
     def remove_position(self, position_id: str) -> TrackedPosition | None:
         return self.positions.pop(position_id, None)
 
-    def record_open_position(
-        self,
-        position_id: str,
-        trade_plan: TradePlan,
-        entry_price: float,
-        opened_at: datetime | None = None,
-    ) -> TrackedPosition:
+    def record_open_position(self, position_id: str, trade_plan: TradePlan, entry_price: float, opened_at: datetime | None = None) -> TrackedPosition:
         if not trade_plan.symbol:
             raise ValueError(f'Cannot track position without symbol: {trade_plan}')
         if not trade_plan.side:
@@ -115,12 +117,11 @@ class PositionTracker:
             trailing_stop_enabled=trade_plan.trailing_stop_enabled,
             trailing_stop_trigger_percent=trade_plan.trailing_stop_trigger_percent,
             trailing_stop_distance_percent=trade_plan.trailing_stop_distance_percent,
+            trailing_stop_net_buffer_percent=trade_plan.trailing_stop_net_buffer_percent,
             estimated_total_cost_percent=trade_plan.estimated_total_cost_percent or 0.0,
             stale_position_enabled=trade_plan.stale_position_enabled,
             stale_position_max_age_minutes=trade_plan.stale_position_max_age_minutes,
-            stale_position_min_favorable_move_percent=(
-                trade_plan.stale_position_min_favorable_move_percent
-            ),
+            stale_position_min_favorable_move_percent=trade_plan.stale_position_min_favorable_move_percent,
             stale_position_buffer_percent=trade_plan.stale_position_buffer_percent,
         )
 
@@ -152,25 +153,14 @@ class PositionTracker:
 
         return close_signals
 
-    def record_closed_position(
-        self,
-        close_signal: PositionCloseSignal,
-        closed_at: datetime | None = None,
-    ) -> ClosedPosition | None:
+    def record_closed_position(self, close_signal: PositionCloseSignal, closed_at: datetime | None = None) -> ClosedPosition | None:
         position = self.positions.pop(close_signal.position_id, None)
         if position is None:
             return None
 
         actual_closed_at = closed_at or close_signal.detected_at
-        duration_seconds = max(
-            0.0,
-            (actual_closed_at - position.opened_at).total_seconds(),
-        )
-        gross_pnl_percent = self._calculate_gross_pnl_percent(
-            side=position.side,
-            entry_price=position.entry_price,
-            exit_price=close_signal.exit_price,
-        )
+        duration_seconds = max(0.0, (actual_closed_at - position.opened_at).total_seconds())
+        gross_pnl_percent = self._calculate_gross_pnl_percent(side=position.side, entry_price=position.entry_price, exit_price=close_signal.exit_price)
         gross_pnl = position.amount * (gross_pnl_percent / 100)
 
         return ClosedPosition(
@@ -193,68 +183,64 @@ class PositionTracker:
     def has_open_positions(self) -> bool:
         return bool(self.positions)
 
-    def _apply_managed_stop(
-        self,
-        position: TrackedPosition,
-        snapshot: MarketSnapshot,
-    ) -> TrackedPosition:
+    def _apply_managed_stop(self, position: TrackedPosition, snapshot: MarketSnapshot) -> TrackedPosition:
         if position.side == 'BUY':
             return self._apply_buy_managed_stop(position, snapshot)
         if position.side == 'SELL':
             return self._apply_sell_managed_stop(position, snapshot)
         return position
 
-    def _apply_buy_managed_stop(
-        self,
-        position: TrackedPosition,
-        snapshot: MarketSnapshot,
-    ) -> TrackedPosition:
+    def _apply_buy_managed_stop(self, position: TrackedPosition, snapshot: MarketSnapshot) -> TrackedPosition:
         highest_price = max(position.highest_price or position.entry_price, snapshot.last)
-        stop_loss = position.stop_loss
-        gain_percent = self._calculate_gross_pnl_percent('BUY', position.entry_price, snapshot.last)
-
-        if position.breakeven_stop_enabled and gain_percent >= position.breakeven_trigger_percent:
-            stop_loss = max(
-                stop_loss,
-                position.entry_price * (1 + position.breakeven_buffer_percent / 100),
-            )
-
-        if position.trailing_stop_enabled and gain_percent >= position.trailing_stop_trigger_percent:
-            stop_loss = max(
-                stop_loss,
-                highest_price * (1 - position.trailing_stop_distance_percent / 100),
-            )
-
-        return replace(position, highest_price=highest_price, stop_loss=round(stop_loss, 5))
-
-    def _apply_sell_managed_stop(
-        self,
-        position: TrackedPosition,
-        snapshot: MarketSnapshot,
-    ) -> TrackedPosition:
         lowest_price = min(position.lowest_price or position.entry_price, snapshot.last)
-        stop_loss = position.stop_loss
-        gain_percent = self._calculate_gross_pnl_percent('SELL', position.entry_price, snapshot.last)
+        decision = calculate_buy_managed_stop(
+            entry_price=position.entry_price,
+            current_stop_loss=position.stop_loss,
+            highest_price=highest_price,
+            lowest_price=lowest_price,
+            breakeven_stop_enabled=position.breakeven_stop_enabled,
+            breakeven_trigger_percent=position.breakeven_trigger_percent,
+            breakeven_buffer_percent=position.breakeven_buffer_percent,
+            trailing_stop_enabled=position.trailing_stop_enabled,
+            trailing_stop_trigger_percent=position.trailing_stop_trigger_percent,
+            trailing_stop_distance_percent=position.trailing_stop_distance_percent,
+            trailing_stop_net_buffer_percent=position.trailing_stop_net_buffer_percent,
+            estimated_total_cost_percent=position.estimated_total_cost_percent,
+        )
+        return self._replace_managed_stop(position, highest_price, lowest_price, decision.stop_loss, decision.protection_type, decision.metadata)
 
-        if position.breakeven_stop_enabled and gain_percent >= position.breakeven_trigger_percent:
-            stop_loss = min(
-                stop_loss,
-                position.entry_price * (1 - position.breakeven_buffer_percent / 100),
-            )
+    def _apply_sell_managed_stop(self, position: TrackedPosition, snapshot: MarketSnapshot) -> TrackedPosition:
+        highest_price = max(position.highest_price or position.entry_price, snapshot.last)
+        lowest_price = min(position.lowest_price or position.entry_price, snapshot.last)
+        decision = calculate_sell_managed_stop(
+            entry_price=position.entry_price,
+            current_stop_loss=position.stop_loss,
+            highest_price=highest_price,
+            lowest_price=lowest_price,
+            breakeven_stop_enabled=position.breakeven_stop_enabled,
+            breakeven_trigger_percent=position.breakeven_trigger_percent,
+            breakeven_buffer_percent=position.breakeven_buffer_percent,
+            trailing_stop_enabled=position.trailing_stop_enabled,
+            trailing_stop_trigger_percent=position.trailing_stop_trigger_percent,
+            trailing_stop_distance_percent=position.trailing_stop_distance_percent,
+            trailing_stop_net_buffer_percent=position.trailing_stop_net_buffer_percent,
+            estimated_total_cost_percent=position.estimated_total_cost_percent,
+        )
+        return self._replace_managed_stop(position, highest_price, lowest_price, decision.stop_loss, decision.protection_type, decision.metadata)
 
-        if position.trailing_stop_enabled and gain_percent >= position.trailing_stop_trigger_percent:
-            stop_loss = min(
-                stop_loss,
-                lowest_price * (1 + position.trailing_stop_distance_percent / 100),
-            )
+    def _replace_managed_stop(self, position: TrackedPosition, highest_price: float, lowest_price: float, stop_loss: float, protection_type: str | None, metadata: ManagedStopMetadata | None) -> TrackedPosition:
+        if protection_type is None:
+            return replace(position, highest_price=highest_price, lowest_price=lowest_price, stop_loss=stop_loss)
+        return replace(
+            position,
+            highest_price=highest_price,
+            lowest_price=lowest_price,
+            stop_loss=stop_loss,
+            managed_stop_protection_type=protection_type,
+            last_stop_update_metadata=metadata,
+        )
 
-        return replace(position, lowest_price=lowest_price, stop_loss=round(stop_loss, 5))
-
-    def _evaluate_buy_position(
-        self,
-        position: TrackedPosition,
-        snapshot: MarketSnapshot,
-    ) -> PositionCloseSignal | None:
+    def _evaluate_buy_position(self, position: TrackedPosition, snapshot: MarketSnapshot) -> PositionCloseSignal | None:
         if snapshot.last <= position.stop_loss:
             return PositionCloseSignal(
                 position_id=position.position_id,
@@ -263,23 +249,13 @@ class PositionTracker:
                 exit_price=snapshot.last,
                 reason=self._managed_stop_reason(position),
                 detected_at=snapshot.timestamp,
+                metadata=self._managed_stop_close_metadata(position, snapshot),
             )
         if snapshot.last >= position.take_profit:
-            return PositionCloseSignal(
-                position_id=position.position_id,
-                symbol=position.symbol,
-                side=position.side,
-                exit_price=snapshot.last,
-                reason='take_profit_hit',
-                detected_at=snapshot.timestamp,
-            )
+            return PositionCloseSignal(position_id=position.position_id, symbol=position.symbol, side=position.side, exit_price=snapshot.last, reason='take_profit_hit', detected_at=snapshot.timestamp)
         return None
 
-    def _evaluate_sell_position(
-        self,
-        position: TrackedPosition,
-        snapshot: MarketSnapshot,
-    ) -> PositionCloseSignal | None:
+    def _evaluate_sell_position(self, position: TrackedPosition, snapshot: MarketSnapshot) -> PositionCloseSignal | None:
         if snapshot.last >= position.stop_loss:
             return PositionCloseSignal(
                 position_id=position.position_id,
@@ -288,23 +264,13 @@ class PositionTracker:
                 exit_price=snapshot.last,
                 reason=self._managed_stop_reason(position),
                 detected_at=snapshot.timestamp,
+                metadata=self._managed_stop_close_metadata(position, snapshot),
             )
         if snapshot.last <= position.take_profit:
-            return PositionCloseSignal(
-                position_id=position.position_id,
-                symbol=position.symbol,
-                side=position.side,
-                exit_price=snapshot.last,
-                reason='take_profit_hit',
-                detected_at=snapshot.timestamp,
-            )
+            return PositionCloseSignal(position_id=position.position_id, symbol=position.symbol, side=position.side, exit_price=snapshot.last, reason='take_profit_hit', detected_at=snapshot.timestamp)
         return None
 
-    def _evaluate_stale_position(
-        self,
-        position: TrackedPosition,
-        snapshot: MarketSnapshot,
-    ) -> PositionCloseSignal | None:
+    def _evaluate_stale_position(self, position: TrackedPosition, snapshot: MarketSnapshot) -> PositionCloseSignal | None:
         decision = self.stale_position_guard.evaluate(
             side=position.side,
             entry_price=position.entry_price,
@@ -316,9 +282,7 @@ class PositionTracker:
             config=StalePositionConfig(
                 enabled=position.stale_position_enabled,
                 max_age_minutes=position.stale_position_max_age_minutes,
-                min_favorable_move_percent=(
-                    position.stale_position_min_favorable_move_percent
-                ),
+                min_favorable_move_percent=position.stale_position_min_favorable_move_percent,
                 buffer_percent=position.stale_position_buffer_percent,
             ),
         )
@@ -337,36 +301,34 @@ class PositionTracker:
                 'stale_position_action': 'CLOSE',
                 'stale_position_age_minutes': round(decision.age_minutes, 4),
                 'stale_position_mfe_percent': round(decision.mfe_percent, 4),
-                'stale_position_required_mfe_percent': round(
-                    decision.required_mfe_percent,
-                    4,
-                ),
-                'estimated_total_cost_percent': round(
-                    decision.estimated_total_cost_percent,
-                    4,
-                ),
+                'stale_position_required_mfe_percent': round(decision.required_mfe_percent, 4),
+                'estimated_total_cost_percent': round(decision.estimated_total_cost_percent, 4),
                 'stale_position_max_age_minutes': position.stale_position_max_age_minutes,
-                'stale_position_min_favorable_move_percent': (
-                    position.stale_position_min_favorable_move_percent
-                ),
+                'stale_position_min_favorable_move_percent': position.stale_position_min_favorable_move_percent,
                 'stale_position_buffer_percent': position.stale_position_buffer_percent,
             },
         )
 
     def _managed_stop_reason(self, position: TrackedPosition) -> str:
-        if position.side == 'BUY':
-            break_even_price = position.entry_price * (1 + position.breakeven_buffer_percent / 100)
-            if position.trailing_stop_enabled and position.stop_loss > break_even_price:
-                return 'trailing_stop_hit'
-            if position.breakeven_stop_enabled and position.stop_loss >= break_even_price:
-                return 'break_even_stop_hit'
-        if position.side == 'SELL':
-            break_even_price = position.entry_price * (1 - position.breakeven_buffer_percent / 100)
-            if position.trailing_stop_enabled and position.stop_loss < break_even_price:
-                return 'trailing_stop_hit'
-            if position.breakeven_stop_enabled and position.stop_loss <= break_even_price:
-                return 'break_even_stop_hit'
+        if position.managed_stop_protection_type == 'trailing':
+            return 'trailing_stop_hit'
+        if position.managed_stop_protection_type == 'break_even':
+            return 'break_even_stop_hit'
         return 'stop_loss_hit'
+
+    def _managed_stop_close_metadata(self, position: TrackedPosition, snapshot: MarketSnapshot) -> dict[str, float | int | str | bool] | None:
+        if position.last_stop_update_metadata is None:
+            return None
+        metadata = dict(position.last_stop_update_metadata)
+        metadata.update(
+            {
+                'managed_stop_protection_type': position.managed_stop_protection_type or '',
+                'stop_loss': round(position.stop_loss, 5),
+                'entry_price': round(position.entry_price, 5),
+                'exit_price': round(snapshot.last, 5),
+            }
+        )
+        return metadata
 
     def _normalize_restored_position(self, position: TrackedPosition) -> TrackedPosition:
         return replace(
@@ -376,12 +338,7 @@ class PositionTracker:
             lowest_price=position.lowest_price or position.entry_price,
         )
 
-    def _calculate_gross_pnl_percent(
-        self,
-        side: str,
-        entry_price: float,
-        exit_price: float,
-    ) -> float:
+    def _calculate_gross_pnl_percent(self, side: str, entry_price: float, exit_price: float) -> float:
         if entry_price <= 0:
             raise ValueError(f'Cannot calculate PnL with invalid entry_price={entry_price}')
         if side == 'BUY':
