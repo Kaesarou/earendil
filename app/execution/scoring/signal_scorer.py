@@ -15,6 +15,8 @@ class SignalScoreBreakdown:
     base_score: float
     final_score: float
     exhaustion: MoveExhaustionAnalysis
+    score_before_late_entry_cap: float = 0.0
+    score_after_late_entry_cap: float = 0.0
 
 
 class SignalScorer(Protocol):
@@ -55,7 +57,6 @@ def directional_score_breakdown(
     move_exhaustion_analyzer: MoveExhaustionAnalyzer | None = None,
 ) -> SignalScoreBreakdown:
     metadata = signal.metadata or {}
-
     session_move_percent = abs(float_metadata(metadata, 'session_move_percent'))
     trend_strength_percent = abs(float_metadata(metadata, 'trend_strength_percent'))
     breakout_percent = abs(float_metadata(metadata, 'breakout_percent'))
@@ -73,27 +74,23 @@ def directional_score_breakdown(
     base_score -= spread_percent(snapshot) * 120
 
     analyzer = move_exhaustion_analyzer or _DEFAULT_MOVE_EXHAUSTION_ANALYZER
-    exhaustion = analyzer.analyze(
-        candle=candle,
-        signal=signal,
-        close_quality=close_quality,
-    )
-
-    final_score = base_score - exhaustion.exhaustion_penalty
+    exhaustion = analyzer.analyze(candle=candle, signal=signal, close_quality=close_quality)
+    score_before_cap = base_score - exhaustion.exhaustion_penalty
+    final_score = min(score_before_cap, exhaustion.late_entry_score_cap) if exhaustion.late_entry_score_cap is not None else score_before_cap
 
     return SignalScoreBreakdown(
         base_score=base_score,
         final_score=final_score,
         exhaustion=exhaustion,
+        score_before_late_entry_cap=score_before_cap,
+        score_after_late_entry_cap=final_score,
     )
 
 
 def float_metadata(metadata: dict, key: str) -> float:
     value = metadata.get(key, 0.0)
-
     if value is None:
         return 0.0
-
     try:
         return float(value)
     except (TypeError, ValueError):
