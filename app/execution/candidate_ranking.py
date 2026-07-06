@@ -24,7 +24,7 @@ def build_trade_candidate(
     )
     score = score_breakdown.final_score
     exhaustion = score_breakdown.exhaustion
-    entry_quality_metadata = _entry_quality_metadata(exhaustion)
+    entry_quality_metadata = _entry_quality_metadata(score_breakdown)
 
     return TradeCandidate(
         symbol=symbol,
@@ -43,6 +43,11 @@ def build_trade_candidate(
         base_score=round(score_breakdown.base_score, 4),
         exhaustion_penalty=exhaustion.exhaustion_penalty,
         late_entry_risk=exhaustion.late_entry_risk,
+        late_entry_score_cap=exhaustion.late_entry_score_cap,
+        late_entry_rejection_reason=exhaustion.late_entry_rejection_reason,
+        late_entry_severity=exhaustion.late_entry_severity,
+        score_before_late_entry_cap=round(score_breakdown.score_before_late_entry_cap, 4),
+        score_after_late_entry_cap=round(score_breakdown.score_after_late_entry_cap, 4),
         entry_quality_metadata=entry_quality_metadata,
     )
 
@@ -76,10 +81,16 @@ def _score_breakdown(
     )
 
 
-def _entry_quality_metadata(exhaustion) -> dict[str, Any]:
+def _entry_quality_metadata(score_breakdown) -> dict[str, Any]:
+    exhaustion = score_breakdown.exhaustion
     return {
         'late_entry_risk': exhaustion.late_entry_risk,
         'exhaustion_penalty': exhaustion.exhaustion_penalty,
+        'late_entry_score_cap': exhaustion.late_entry_score_cap,
+        'late_entry_rejection_reason': exhaustion.late_entry_rejection_reason,
+        'late_entry_severity': exhaustion.late_entry_severity,
+        'score_before_late_entry_cap': round(score_breakdown.score_before_late_entry_cap, 4),
+        'score_after_late_entry_cap': round(score_breakdown.score_after_late_entry_cap, 4),
         'move_extension_percent': exhaustion.move_extension_percent,
         'extension_atr_ratio': exhaustion.extension_atr_ratio,
         'distance_to_recent_high_percent': exhaustion.distance_to_recent_high_percent,
@@ -105,6 +116,11 @@ def _rank_reason(
         f'base_score={round(base_score, 4)} | '
         f'exhaustion_penalty={entry_quality_metadata["exhaustion_penalty"]} | '
         f'late_entry_risk={entry_quality_metadata["late_entry_risk"]} | '
+        f'late_entry_severity={entry_quality_metadata["late_entry_severity"]} | '
+        f'late_entry_score_cap={entry_quality_metadata["late_entry_score_cap"]} | '
+        f'late_entry_rejection_reason={entry_quality_metadata["late_entry_rejection_reason"]} | '
+        f'score_before_late_entry_cap={entry_quality_metadata["score_before_late_entry_cap"]} | '
+        f'score_after_late_entry_cap={entry_quality_metadata["score_after_late_entry_cap"]} | '
         f'remaining_move_quality={entry_quality_metadata["remaining_move_quality"]} | '
         f'exhaustion_components={entry_quality_metadata["reason_exhaustion_components"]} | '
         f'action={signal.action} | '
