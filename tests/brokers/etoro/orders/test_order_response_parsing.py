@@ -34,6 +34,25 @@ def executed_order_payload(avg_price: float = 238.0) -> dict:
     }
 
 
+def filled_order_payload(*, with_position_details: bool = True) -> dict:
+    payload = {
+        'status': {
+            'id': 3,
+            'name': 'Filled',
+            'errorCode': 0,
+        },
+    }
+    if with_position_details:
+        payload['positionExecutions'] = [
+            {
+                'positionId': '123',
+                'state': 'open',
+                'openingData': {'avgPrice': 238.0},
+            }
+        ]
+    return payload
+
+
 def test_extract_order_id_from_direct_order_response():
     assert extract_order_id({'orderId': 362406474, 'referenceId': 'ref-1'}) == '362406474'
 
@@ -119,6 +138,23 @@ def test_extract_executed_position_details_list_returns_all_supported_position_e
     assert has_executed_position_details(payload)
 
 
+def test_filled_order_with_position_execution_is_executed_not_rejected():
+    payload = filled_order_payload(with_position_details=True)
+
+    assert is_order_executed(payload) is True
+    assert is_order_rejected(payload) is False
+    assert has_executed_position_details(payload) is True
+    assert extract_executed_position_details(payload).executed_entry_price == 238.0
+
+
+def test_filled_order_without_position_details_is_executed_but_not_ready():
+    payload = filled_order_payload(with_position_details=False)
+
+    assert is_order_executed(payload) is True
+    assert is_order_rejected(payload) is False
+    assert has_executed_position_details(payload) is False
+
+
 def test_order_is_executed_when_status_id_is_one():
     assert is_order_executed({'status': {'id': 1, 'name': 'Executed', 'errorCode': 0}})
 
@@ -138,6 +174,7 @@ def test_order_is_not_executed_when_status_is_cancelled_or_rejected():
 
 def test_order_is_not_executed_when_error_code_is_non_zero():
     assert not is_order_executed({'status': {'id': 1, 'name': 'Executed', 'errorCode': 759}})
+    assert not is_order_executed({'status': {'id': 3, 'name': 'Filled', 'errorCode': 759}})
 
 
 def test_order_is_rejected_when_error_code_is_non_zero():
@@ -150,6 +187,10 @@ def test_order_is_rejected_when_status_name_is_rejected():
 
 def test_order_is_rejected_when_status_is_cancelled():
     assert is_order_rejected({'status': {'id': 2, 'name': 'Cancelled', 'errorCode': 0}})
+
+
+def test_order_is_rejected_when_status_is_failed():
+    assert is_order_rejected({'status': {'id': 4, 'name': 'Failed', 'errorCode': 0}})
 
 
 def test_extract_order_error_code_from_top_level_payload():
