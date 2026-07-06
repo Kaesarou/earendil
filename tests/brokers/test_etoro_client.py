@@ -8,6 +8,19 @@ def build_settings(broker: str = 'etoro_demo') -> Settings:
     return Settings(BROKER=broker, ETORO_API_KEY='api-key', ETORO_USER_KEY='user-key')
 
 
+def build_filled_order_details(position_id: int = 9001) -> dict:
+    return {
+        'status': {'id': 1, 'name': 'Executed', 'errorCode': 0},
+        'positionExecutions': [
+            {
+                'positionId': position_id,
+                'state': 'open',
+                'openingData': {'avgPrice': 238.0},
+            }
+        ],
+    }
+
+
 def test_find_instrument_id_uses_exact_symbol_match(monkeypatch):
     client = EtoroClient(settings=build_settings())
 
@@ -144,7 +157,7 @@ def test_get_portfolio_uses_real_portfolio_endpoint(monkeypatch):
     assert captured['params'] is None
 
 
-def test_etoro_open_position_sends_expected_demo_order_payload(monkeypatch):
+def test_etoro_open_position_sends_expected_demo_buy_order_payload(monkeypatch):
     client = EtoroClient(settings=Settings(BROKER='etoro_demo', BASE_CURRENCY='USD', ETORO_API_KEY='api-key', ETORO_USER_KEY='user-key'))
     captured = {}
     monkeypatch.setattr(client, '_find_instrument_id', lambda symbol: 100000)
@@ -157,10 +170,7 @@ def test_etoro_open_position_sends_expected_demo_order_payload(monkeypatch):
     def fake_wait_for_executed_order(order_id, require_position_details=True):
         assert order_id == '362406474'
         assert require_position_details is True
-        return {
-            'status': {'id': 1, 'name': 'Executed', 'errorCode': 0},
-            'positionExecutions': [{'positionId': 9001, 'state': 'open', 'openingData': {'avgPrice': 238.0}}],
-        }
+        return build_filled_order_details()
 
     monkeypatch.setattr(client, '_post', fake_post)
     monkeypatch.setattr(client, '_wait_for_executed_order', fake_wait_for_executed_order)
@@ -172,6 +182,35 @@ def test_etoro_open_position_sends_expected_demo_order_payload(monkeypatch):
     assert captured['path'] == '/api/v2/trading/execution/demo/orders'
     assert captured['payload'] == {'action': 'open', 'transaction': 'buy', 'InstrumentID': 100000, 'orderType': 'mkt', 'leverage': 1, 'amount': 5.0, 'orderCurrency': 'usd'}
     assert client.position_instruments['9001'] == 100000
+
+
+def test_etoro_open_position_sends_expected_demo_sell_order_payload_without_broker_side_exits(monkeypatch):
+    client = EtoroClient(settings=Settings(BROKER='etoro_demo', BASE_CURRENCY='USD', ETORO_API_KEY='api-key', ETORO_USER_KEY='user-key'))
+    captured = {}
+    monkeypatch.setattr(client, '_find_instrument_id', lambda symbol: 1261)
+
+    def fake_post(path, payload):
+        captured['path'] = path
+        captured['payload'] = payload
+        return {'orderId': 362406475, 'referenceId': 'ref-2'}
+
+    def fake_wait_for_executed_order(order_id, require_position_details=True):
+        assert order_id == '362406475'
+        assert require_position_details is True
+        return build_filled_order_details(position_id=9002)
+
+    monkeypatch.setattr(client, '_post', fake_post)
+    monkeypatch.setattr(client, '_wait_for_executed_order', fake_wait_for_executed_order)
+
+    result = client.open_position(symbol='HO.PA', side='SELL', amount=497.26, stop_loss=337.4092, take_profit=334.8862)
+
+    assert result.position_id == '9002'
+    assert result.executed_entry_price == 238.0
+    assert captured['path'] == '/api/v2/trading/execution/demo/orders'
+    assert captured['payload'] == {'action': 'open', 'transaction': 'sellShort', 'InstrumentID': 1261, 'orderType': 'mkt', 'leverage': 1, 'amount': 497.26, 'orderCurrency': 'usd', 'settlementType': 'cfd'}
+    assert 'StopLossRate' not in captured['payload']
+    assert 'TakeProfitRate' not in captured['payload']
+    assert client.position_instruments['9002'] == 1261
 
 
 def test_etoro_open_position_rejects_multiple_position_executions(monkeypatch):
