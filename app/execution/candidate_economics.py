@@ -1,10 +1,16 @@
+from __future__ import annotations
+
 from dataclasses import dataclass
+from typing import TYPE_CHECKING
 
 from app.execution.trade_candidate import TradeCandidate
 from app.instruments.instrument_registry import InstrumentRegistry
 from app.risk.position_sizing import PositionSizingStrategy
 from app.risk.trade_cost_model import TradeCostModel
 from app.utils.commons import spread_percent
+
+if TYPE_CHECKING:
+    from app.execution.scoring.tp_feasibility import TpFeasibilityAnalysis
 
 
 @dataclass(frozen=True)
@@ -23,6 +29,7 @@ class CandidateEconomics:
 class EvaluatedTradeCandidate:
     candidate: TradeCandidate
     economics: CandidateEconomics
+    tp_feasibility: TpFeasibilityAnalysis | None = None
 
 
 class CandidateEconomicsEstimator:
