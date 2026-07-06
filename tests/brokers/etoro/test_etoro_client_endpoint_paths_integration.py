@@ -1,9 +1,8 @@
 from app.brokers.etoro.endpoint_paths import (
     close_position_path,
-    demo_order_details_path,
     demo_portfolio_path,
     open_order_path,
-    real_order_lookup_path,
+    order_lookup_path,
     real_portfolio_path,
 )
 from app.brokers.etoro.etoro_client import EtoroClient
@@ -36,12 +35,12 @@ def test_etoro_client_close_position_path_matches_endpoint_path_helper():
     assert live_client._close_position_path('123') == close_position_path('live', '123')
 
 
-def test_etoro_client_order_details_paths_match_endpoint_path_helpers():
+def test_etoro_client_order_lookup_paths_match_endpoint_path_helpers():
     demo_client = build_client('etoro_demo')
     live_client = build_client('etoro_live')
 
-    assert demo_client._demo_order_details_path('123') == demo_order_details_path('123')
-    assert live_client._real_order_lookup_path() == real_order_lookup_path()
+    assert demo_client._order_lookup_path() == order_lookup_path('demo')
+    assert live_client._order_lookup_path() == order_lookup_path('live')
 
 
 def test_etoro_client_portfolio_paths_match_endpoint_path_helpers():
