@@ -10,7 +10,7 @@ class TradeExecutor:
     def __init__(self, broker: BrokerClient):
         self.broker = broker
 
-    def execute(self, plan: TradePlan) -> str | None:
+    def execute(self, plan: TradePlan):
         if not plan.approved:
             logger.info('Trade rejected: %s', plan.reason)
             return None
@@ -21,7 +21,7 @@ class TradeExecutor:
         stop_loss = self._required(plan.stop_loss, 'stop_loss', plan)
         take_profit = self._required(plan.take_profit, 'take_profit', plan)
 
-        position_id = self.broker.open_position(
+        result = self.broker.open_position(
             symbol=symbol,
             side=side,
             amount=amount,
@@ -29,8 +29,8 @@ class TradeExecutor:
             take_profit=take_profit,
         )
 
-        logger.info('Position opened: %s', position_id)
-        return position_id
+        logger.info('Broker result: %s', result)
+        return result
 
     def close(self, position_id: str) -> None:
         self.broker.close_position(position_id)
