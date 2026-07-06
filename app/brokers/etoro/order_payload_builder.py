@@ -21,7 +21,6 @@ def build_open_order_payload(
 
     if side == 'SELL':
         payload['settlementType'] = 'cfd'
-        payload['StopLossRate'] = stop_loss
 
     return payload
 
