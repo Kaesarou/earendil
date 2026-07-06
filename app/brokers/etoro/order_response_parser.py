@@ -108,7 +108,7 @@ def extract_executed_position_details_list(payload: dict) -> list[ExecutedPositi
 
 
 def has_executed_position_details(payload: dict) -> bool:
-    return extract_executed_position_details(payload) is not None
+    return bool(extract_executed_position_details_list(payload))
 
 
 def extract_order_error_code(payload: dict) -> int | None:
