@@ -44,6 +44,15 @@ def select_trade_candidates(
     rejected_candidates: list[RejectedCandidateSelection] = []
 
     for candidate in rank_trade_candidates(candidates):
+        if candidate.late_entry_rejection_reason is not None:
+            rejected_candidates.append(
+                RejectedCandidateSelection(
+                    candidate=candidate,
+                    reason=candidate.late_entry_rejection_reason,
+                )
+            )
+            continue
+
         if config.min_score > 0 and candidate.score < config.min_score:
             rejected_candidates.append(
                 RejectedCandidateSelection(
@@ -83,6 +92,15 @@ def select_evaluated_trade_candidates(
     for evaluated_candidate in rank_evaluated_trade_candidates(evaluated_candidates):
         candidate = evaluated_candidate.candidate
         economics = evaluated_candidate.economics
+
+        if candidate.late_entry_rejection_reason is not None:
+            rejected_candidates.append(
+                RejectedEvaluatedCandidateSelection(
+                    evaluated_candidate=evaluated_candidate,
+                    reason=candidate.late_entry_rejection_reason,
+                )
+            )
+            continue
 
         if candidate.tp_feasibility_rejection_reason is not None:
             rejected_candidates.append(
