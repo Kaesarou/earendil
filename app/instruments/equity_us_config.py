@@ -1,6 +1,6 @@
 from dataclasses import dataclass
 
-from app.instruments.models import AssetClass, InstrumentConfig, RiskProfile, TrendStrategyConfig
+from app.instruments.models import AssetClass, InstrumentConfig, RiskProfile, TpFeasibilityConfig, TrendStrategyConfig
 from app.risk.stale_position_guard import StalePositionConfig
 from app.risk.trade_cost_model import TradeCostConfig
 
@@ -62,5 +62,17 @@ class EquityUsConfig(InstrumentConfig):
             fixed_close_fee=0.0,
             include_spread_cost=True,
             min_expected_net_profit_percent=0.10,
+        ),
+        tp_feasibility=TpFeasibilityConfig(
+            tp_atr_soft_ratio=2.0,
+            tp_atr_hard_ratio=4.0,
+            tp_atr_reject_ratio=6.0,
+            tp_momentum_soft_ratio=4.0,
+            tp_momentum_hard_ratio=12.0,
+            min_directional_momentum_percent=0.03,
+            cost_to_tp_soft_ratio=0.25,
+            cost_to_tp_hard_ratio=0.45,
+            cost_to_tp_reject_ratio=0.65,
+            feasibility_buffer_percent=0.10,
         ),
     )
