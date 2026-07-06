@@ -1,5 +1,5 @@
 from collections import defaultdict
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 from app.config.settings import Settings
 from app.instruments.instrument_registry import InstrumentRegistry
@@ -72,6 +72,27 @@ class RiskManager:
                 spread_percent, expected_move_percent, min_required_move_percent, amount, trade_cost_estimate
             )
         return self._build_trade_plan(signal, snapshot, amount, trade_cost_estimate, risk_profile, effective_risk, spread_percent, expected_move_percent, min_required_move_percent)
+
+    def adjust_trade_plan_to_entry_price(self, *, trade_plan: TradePlan, entry_price: float) -> TradePlan:
+        if not trade_plan.approved:
+            raise ValueError(f'Cannot adjust rejected trade plan: {trade_plan}')
+        if entry_price <= 0:
+            raise ValueError(f'Cannot adjust trade plan with invalid entry_price: {entry_price}')
+        if trade_plan.side not in ('BUY', 'SELL'):
+            raise ValueError(f'Unsupported trade plan side for entry adjustment: {trade_plan.side}')
+        if trade_plan.effective_stop_loss_percent is None:
+            raise ValueError(f'Cannot adjust trade plan without effective_stop_loss_percent: {trade_plan}')
+        if trade_plan.effective_take_profit_percent is None:
+            raise ValueError(f'Cannot adjust trade plan without effective_take_profit_percent: {trade_plan}')
+
+        if trade_plan.side == 'BUY':
+            stop_loss = entry_price * (1 - trade_plan.effective_stop_loss_percent / 100)
+            take_profit = entry_price * (1 + trade_plan.effective_take_profit_percent / 100)
+        else:
+            stop_loss = entry_price * (1 + trade_plan.effective_stop_loss_percent / 100)
+            take_profit = entry_price * (1 - trade_plan.effective_take_profit_percent / 100)
+
+        return replace(trade_plan, stop_loss=round(stop_loss, 5), take_profit=round(take_profit, 5))
 
     def instrument_profile_for(self, symbol: str) -> InstrumentProfile:
         return self.instrument_registry.resolve(symbol)
