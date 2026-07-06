@@ -17,14 +17,6 @@ class CacheEntry:
 
 @dataclass
 class CachedBrokerClient(BrokerClient):
-    """Small caching decorator around any BrokerClient.
-
-    This class owns only cache concerns. Broker-specific endpoint choices stay in
-    the concrete broker implementation. If a delegate supports a true batch API,
-    enabling batch calls lets it use `get_market_snapshots`; otherwise the base
-    BrokerClient implementation simply calls `get_market_snapshot` per symbol.
-    """
-
     delegate: BrokerClient
     account_equity_ttl_seconds: float = 30.0
     position_status_ttl_seconds: float = 5.0
@@ -37,62 +29,36 @@ class CachedBrokerClient(BrokerClient):
 
     def get_market_snapshots(self, symbols: list[str]) -> dict[str, MarketSnapshot]:
         return self.delegate.get_market_snapshots(symbols)
-    
 
     def get_account_equity(self) -> float:
         now = self._now()
-
-        if (
-            self.account_equity_ttl_seconds > 0
-            and self.account_equity_cache is not None
-            and self.account_equity_cache.expires_at > now
-        ):
+        if self.account_equity_ttl_seconds > 0 and self.account_equity_cache is not None and self.account_equity_cache.expires_at > now:
             self._log_cache_hit('account_equity', 'account')
             return cast(float, self.account_equity_cache.value)
-
         self._log_cache_miss('account_equity', 'account')
         equity = self.delegate.get_account_equity()
-
-        if self.account_equity_ttl_seconds > 0:
-            self.account_equity_cache = self._build_entry(
-                equity,
-                self.account_equity_ttl_seconds,
-            )
-        else:
-            self.account_equity_cache = None
-
+        self.account_equity_cache = self._build_entry(equity, self.account_equity_ttl_seconds) if self.account_equity_ttl_seconds > 0 else None
         return equity
 
-    def open_position(self, symbol: str, side: str, amount: float, stop_loss: float, take_profit: float) -> str:
-        position_id = self.delegate.open_position(symbol, side, amount, stop_loss, take_profit)
+    def open_position(self, symbol: str, side: str, amount: float, stop_loss: float, take_profit: float):
+        result = self.delegate.open_position(symbol, side, amount, stop_loss, take_profit)
         self.invalidate_account_and_positions()
-        return position_id
+        return result
 
     def close_position(self, position_id: str) -> None:
         self.delegate.close_position(position_id)
         self.invalidate_account_and_positions()
 
     def is_position_open(self, position_id: str) -> bool:
-        cached_status = self._get_cache_entry(
-            cache=self.position_status_cache,
-            key=position_id,
-            cache_name='position_status',
-        )
+        cached_status = self._get_cache_entry(self.position_status_cache, position_id, 'position_status')
         if cached_status is not None:
             return bool(cached_status)
-
         is_open = self.delegate.is_position_open(position_id)
-        self._put_cache_entry(
-            cache=self.position_status_cache,
-            key=position_id,
-            value=is_open,
-            ttl_seconds=self.position_status_ttl_seconds,
-        )
+        self._put_cache_entry(self.position_status_cache, position_id, is_open, self.position_status_ttl_seconds)
         return is_open
 
     def remember_position_instrument(self, position_id: str, symbol: str) -> None:
         self.delegate.remember_position_instrument(position_id, symbol)
-
 
     def invalidate_account_and_positions(self) -> None:
         self.account_equity_cache = None
