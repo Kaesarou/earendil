@@ -26,7 +26,7 @@ class EquityUsConfig(InstrumentConfig):
         min_snapshot_momentum_percent=0.20,
     )
     risk: RiskProfile = RiskProfile(
-        asset_class=AssetClass('EQUITY_' + 'US'),
+        asset_class=AssetClass.EQUITY_US,
         max_position_size_percent=0.75,
         stop_loss_percent=0.90,
         take_profit_percent=1.60,
