@@ -25,13 +25,14 @@ class TpFeasibilityConfig:
     feasibility_buffer_percent: float = 0.10
     tp_atr_soft_ratio: float = 2.0
     tp_atr_hard_ratio: float = 4.0
-    tp_atr_reject_ratio: float = 6.0
+    tp_atr_severe_ratio: float = 6.0
     tp_momentum_soft_ratio: float = 4.0
     tp_momentum_hard_ratio: float = 12.0
     min_directional_momentum_percent: float = 0.03
     cost_to_tp_soft_ratio: float = 0.25
     cost_to_tp_hard_ratio: float = 0.45
-    cost_to_tp_reject_ratio: float = 0.65
+    cost_to_tp_severe_ratio: float = 0.65
+    cost_to_tp_hard_reject_ratio: float = 1.0
     late_move_soft_percent: float = 0.80
     late_move_hard_percent: float = 2.00
     near_extreme_distance_percent: float = 0.15
