@@ -191,8 +191,8 @@ def test_evaluated_candidate_selector_rejects_expected_profit_too_low():
     assert result.rejected_candidates[0].reason == 'candidate_selection_expected_profit_too_low_after_fees'
 
 
-def test_evaluated_candidate_selector_rejects_tp_feasibility_before_min_score():
-    candidate_with_rejection = TradeCandidate(
+def test_evaluated_candidate_selector_rejects_tp_feasibility_hard_reject_before_min_score():
+    candidate_with_hard_rejection = TradeCandidate(
         symbol='LOW',
         snapshot=snapshot('LOW'),
         candle=candle('LOW'),
@@ -200,13 +200,35 @@ def test_evaluated_candidate_selector_rejects_tp_feasibility_before_min_score():
         score=10.0,
         rank_reason='test',
         session_key=TEST_SESSION_KEY,
-        tp_feasibility_rejection_reason='candidate_selection_tp_feasibility_cost_to_tp_too_high',
+        tp_feasibility_hard_rejection_reason='candidate_selection_tp_feasibility_cost_to_tp_absurd',
     )
 
     result = select_evaluated_trade_candidates(
-        [evaluated_candidate_with_profit(candidate_with_rejection)],
+        [evaluated_candidate_with_profit(candidate_with_hard_rejection)],
         CandidateSelectionConfig(top_n=0, min_score=100.0),
     )
 
     assert not result.selected_candidates
-    assert result.rejected_candidates[0].reason == 'candidate_selection_tp_feasibility_cost_to_tp_too_high'
+    assert result.rejected_candidates[0].reason == 'candidate_selection_tp_feasibility_cost_to_tp_absurd'
+
+
+def test_evaluated_candidate_selector_rejects_penalized_tp_feasibility_candidate_by_min_score():
+    penalized_candidate = TradeCandidate(
+        symbol='LOW',
+        snapshot=snapshot('LOW'),
+        candle=candle('LOW'),
+        signal=signal(),
+        score=95.0,
+        rank_reason='test',
+        session_key=TEST_SESSION_KEY,
+        tp_feasibility_penalty=30.0,
+        tp_feasibility_score_cap=95.0,
+    )
+
+    result = select_evaluated_trade_candidates(
+        [evaluated_candidate_with_profit(penalized_candidate)],
+        CandidateSelectionConfig(top_n=0, min_score=100.0),
+    )
+
+    assert not result.selected_candidates
+    assert result.rejected_candidates[0].reason == 'candidate_selection_score_too_low'
