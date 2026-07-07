@@ -79,6 +79,12 @@ def sell_signal(
             'breakdown_percent': breakdown_percent,
             'candle_range_percent': 0.4,
             'close_position_percent': close_position_percent,
+            'atr_percent': 0.5,
+            'snapshot_momentum_percent': -0.40,
+            'snapshot_momentum_required_percent': 0.25,
+            'snapshot_breakdown_percent': abs(breakdown_percent),
+            'snapshot_close_position_percent': close_position_percent,
+            'regime_noise_ratio': 0.8,
         },
     )
 
@@ -165,7 +171,7 @@ def test_buy_signal_scorer_applies_move_exhaustion_penalty():
     )
 
 
-def test_sell_signal_scorer_applies_move_exhaustion_penalty():
+def test_sell_signal_scorer_keeps_clean_sell_on_directional_path():
     market_snapshot = snapshot('AIR.PA', bid=190.9, ask=191.1, last=191.0)
     closed_candle = candle('AIR.PA', open=191.5, high=191.6, low=190.4, close=190.5)
     signal = sell_signal(
@@ -209,12 +215,13 @@ def test_build_trade_candidate_scores_buy_with_penalized_score():
     assert candidate.score == round(candidate.base_score - candidate.exhaustion_penalty, 4)
     assert candidate.exhaustion_penalty >= 0
     assert candidate.late_entry_risk >= 0
+    assert candidate.sell_score_metadata == {}
     assert 'base_score=' in candidate.rank_reason
     assert 'exhaustion_penalty=' in candidate.rank_reason
     assert 'late_entry_risk=' in candidate.rank_reason
 
 
-def test_build_trade_candidate_scores_sell_with_penalized_score():
+def test_build_trade_candidate_scores_clean_sell_with_strict_sell_metadata():
     candidate = build_trade_candidate(
         symbol='AIR.PA',
         snapshot=snapshot('AIR.PA', bid=190.9, ask=191.1, last=191.0),
@@ -223,7 +230,7 @@ def test_build_trade_candidate_scores_sell_with_penalized_score():
             session_move_percent=-1.4,
             trend_strength_percent=-0.25,
             breakdown_percent=-0.2,
-            close_position_percent=90.0,
+            close_position_percent=10.0,
         ),
     )
 
@@ -232,6 +239,11 @@ def test_build_trade_candidate_scores_sell_with_penalized_score():
         4,
     )
     assert candidate.score == round(candidate.base_score - candidate.exhaustion_penalty, 4)
+    assert candidate.sell_specific_penalty == 0.0
+    assert candidate.sell_rejection_reason is None
+    assert candidate.sell_score_metadata['market_context_alignment'] == 'not_available_v1'
+    assert 'sell_specific_penalty=0.0' in candidate.rank_reason
+    assert 'short_snapshot_momentum=' in candidate.rank_reason
 
 
 def test_hold_or_unknown_action_uses_penalized_scoring_path():
