@@ -1,5 +1,6 @@
 from typing import Any
 
+from app.execution.scoring.sell_signal_scorer import SellSignalScorer
 from app.execution.scoring.signal_scorer import (
     directional_score_breakdown,
     float_metadata,
@@ -8,6 +9,8 @@ from app.execution.trade_candidate import TradeCandidate
 from app.market.models import Candle, MarketSnapshot
 from app.strategies.signals import Signal
 from app.utils.commons import spread_percent
+
+_DEFAULT_SELL_SCORER = SellSignalScorer()
 
 
 def build_trade_candidate(
@@ -25,6 +28,7 @@ def build_trade_candidate(
     score = score_breakdown.final_score
     exhaustion = score_breakdown.exhaustion
     entry_quality_metadata = _entry_quality_metadata(score_breakdown)
+    sell_score_metadata = score_breakdown.score_metadata.get('sell_score', {})
 
     return TradeCandidate(
         symbol=symbol,
@@ -38,6 +42,7 @@ def build_trade_candidate(
             base_score=score_breakdown.base_score,
             score=score,
             entry_quality_metadata=entry_quality_metadata,
+            sell_score_metadata=sell_score_metadata,
         ),
         session_key=session_key,
         base_score=round(score_breakdown.base_score, 4),
@@ -49,6 +54,10 @@ def build_trade_candidate(
         score_before_late_entry_cap=round(score_breakdown.score_before_late_entry_cap, 4),
         score_after_late_entry_cap=round(score_breakdown.score_after_late_entry_cap, 4),
         entry_quality_metadata=entry_quality_metadata,
+        sell_score_metadata=sell_score_metadata,
+        sell_specific_penalty=score_breakdown.sell_specific_penalty,
+        sell_score_cap=score_breakdown.sell_score_cap,
+        sell_rejection_reason=score_breakdown.sell_rejection_reason,
     )
 
 
@@ -73,6 +82,12 @@ def _score_breakdown(
         if signal.action == 'SELL'
         else close_position_percent
     )
+    if signal.action == 'SELL':
+        return _DEFAULT_SELL_SCORER.score_breakdown(
+            snapshot=snapshot,
+            candle=candle,
+            signal=signal,
+        )
     return directional_score_breakdown(
         snapshot=snapshot,
         candle=candle,
@@ -108,8 +123,10 @@ def _rank_reason(
     base_score: float,
     score: float,
     entry_quality_metadata: dict[str, Any],
+    sell_score_metadata: dict[str, Any],
 ) -> str:
     metadata = signal.metadata or {}
+    sell_reason = _sell_rank_reason(sell_score_metadata)
 
     return (
         f'score={round(score, 4)} | '
@@ -121,6 +138,7 @@ def _rank_reason(
         f'late_entry_rejection_reason={entry_quality_metadata["late_entry_rejection_reason"]} | '
         f'score_before_late_entry_cap={entry_quality_metadata["score_before_late_entry_cap"]} | '
         f'score_after_late_entry_cap={entry_quality_metadata["score_after_late_entry_cap"]} | '
+        f'{sell_reason}'
         f'remaining_move_quality={entry_quality_metadata["remaining_move_quality"]} | '
         f'exhaustion_components={entry_quality_metadata["reason_exhaustion_components"]} | '
         f'action={signal.action} | '
@@ -132,4 +150,20 @@ def _rank_reason(
         f'candle_range={float_metadata(metadata, "candle_range_percent")} | '
         f'close_position={float_metadata(metadata, "close_position_percent")} | '
         f'spread={round(spread_percent(snapshot), 4)}'
+    )
+
+
+def _sell_rank_reason(sell_score_metadata: dict[str, Any]) -> str:
+    if not sell_score_metadata:
+        return ''
+    return (
+        f'sell_specific_penalty={sell_score_metadata["sell_specific_penalty"]} | '
+        f'sell_score_cap={sell_score_metadata["sell_score_cap"]} | '
+        f'sell_rejection_reason={sell_score_metadata["sell_rejection_reason"]} | '
+        f'sell_components={sell_score_metadata["sell_score_components"]} | '
+        f'market_context_alignment={sell_score_metadata["market_context_alignment"]} | '
+        f'symbol_relative_strength={sell_score_metadata["symbol_relative_strength"]} | '
+        f'breakdown_strength={sell_score_metadata["breakdown_strength"]} | '
+        f'short_snapshot_momentum={sell_score_metadata["short_snapshot_momentum"]} | '
+        f'sell_close_quality={sell_score_metadata["sell_close_quality"]} | '
     )
