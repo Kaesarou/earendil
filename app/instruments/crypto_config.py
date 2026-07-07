@@ -54,13 +54,13 @@ class CryptoConfig(InstrumentConfig):
         tp_feasibility=TpFeasibilityConfig(
             tp_atr_soft_ratio=1.8,
             tp_atr_hard_ratio=3.5,
-            tp_atr_reject_ratio=5.0,
+            tp_atr_severe_ratio=5.0,
             tp_momentum_soft_ratio=3.0,
             tp_momentum_hard_ratio=10.0,
             min_directional_momentum_percent=0.05,
             cost_to_tp_soft_ratio=0.35,
             cost_to_tp_hard_ratio=0.55,
-            cost_to_tp_reject_ratio=0.75,
+            cost_to_tp_severe_ratio=0.75,
             feasibility_buffer_percent=0.15,
         ),
     )
