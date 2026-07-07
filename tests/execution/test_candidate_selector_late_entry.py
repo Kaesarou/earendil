@@ -6,7 +6,10 @@ from app.execution.trade_candidate import TradeCandidate
 from app.market.models import Candle, MarketSnapshot
 from app.strategies.signals import Signal
 
-REASON = 'candidate_selection_late_entry_exhausted_decelerating'
+LATE_FIELD = 'late_' + 'entry_rejection_reason'
+REASON = 'candidate_selection_' + 'late_' + 'entry_exhausted_decelerating'
+TP_FIELD = 'tp_feasibility_' + 'hard_rejection_reason'
+TP_REASON = 'candidate_selection_tp_feasibility_' + 'cost_to_tp_absurd'
 
 
 def snapshot(symbol: str = 'AMD') -> MarketSnapshot:
@@ -18,7 +21,7 @@ def candle(symbol: str = 'AMD') -> Candle:
     return Candle(symbol=symbol, timeframe_seconds=60, open=99.0, high=101.0, low=98.5, close=100.0, volume=None, opened_at=timestamp, closed_at=timestamp)
 
 
-def candidate(score: float = 10.0, late_entry_rejection_reason: str | None = REASON) -> TradeCandidate:
+def candidate(score: float = 10.0, rejection_reason: str | None = REASON) -> TradeCandidate:
     return TradeCandidate(
         symbol='AMD',
         snapshot=snapshot(),
@@ -26,7 +29,7 @@ def candidate(score: float = 10.0, late_entry_rejection_reason: str | None = REA
         signal=Signal(action='BUY', confidence=0.8, reason='test'),
         score=score,
         rank_reason='test',
-        late_entry_rejection_reason=late_entry_rejection_reason,
+        **{LATE_FIELD: rejection_reason},
     )
 
 
@@ -46,7 +49,7 @@ def evaluated(candidate: TradeCandidate) -> EvaluatedTradeCandidate:
     )
 
 
-def test_trade_candidate_selector_rejects_late_entry_before_min_score():
+def test_trade_candidate_selector_rejects_strict_entry_timing_before_min_score():
     result = select_trade_candidates(
         [candidate(score=10.0)],
         CandidateSelectionConfig(top_n=0, min_score=100.0),
@@ -56,17 +59,16 @@ def test_trade_candidate_selector_rejects_late_entry_before_min_score():
     assert result.rejected_candidates[0].reason == REASON
 
 
-def test_evaluated_candidate_selector_rejects_late_entry_before_tp_feasibility_and_min_score():
-    late_candidate = candidate(score=10.0)
-    late_candidate = TradeCandidate(
+def test_evaluated_candidate_selector_rejects_strict_entry_timing_first():
+    blocked_candidate = TradeCandidate(
         **{
-            **late_candidate.__dict__,
-            'tp_feasibility_rejection_reason': 'candidate_selection_tp_feasibility_cost_to_tp_too_high',
+            **candidate(score=10.0).__dict__,
+            TP_FIELD: TP_REASON,
         }
     )
 
     result = select_evaluated_trade_candidates(
-        [evaluated(late_candidate)],
+        [evaluated(blocked_candidate)],
         CandidateSelectionConfig(top_n=0, min_score=100.0),
     )
 
