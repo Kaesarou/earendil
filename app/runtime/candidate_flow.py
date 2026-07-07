@@ -6,18 +6,10 @@ from typing import TypeVar
 from app.brokers.base import BrokerClient
 from app.execution.candidate_economics import CandidateEconomicsEstimator, EvaluatedTradeCandidate
 from app.execution.candidate_ranking import rank_trade_candidates
-from app.execution.candidate_selector import (
-    CandidateSelectionResult,
-    EvaluatedCandidateSelectionResult,
-    RejectedCandidateSelection,
-    RejectedEvaluatedCandidateSelection,
-    rank_evaluated_trade_candidates,
-    select_evaluated_trade_candidates,
-    select_trade_candidates,
-)
+from app.execution.candidate_selector import CandidateSelectionResult, EvaluatedCandidateSelectionResult, RejectedCandidateSelection, RejectedEvaluatedCandidateSelection, rank_evaluated_trade_candidates, select_evaluated_trade_candidates, select_trade_candidates
 from app.execution.position_tracker import PositionTracker
 from app.execution.scoring.tp_feasibility import CandidateTpFeasibilityEvaluator
-from app.execution.sl_tp_profile import EffectiveSlTpResolver
+from app.execution.sl_tp_profile import EffectiveSlTp, EffectiveSlTpResolver
 from app.execution.trade_candidate import TradeCandidate
 from app.execution.trade_executor import TradeExecutor
 from app.journal.jsonl_journal import JsonlJournal
@@ -110,19 +102,7 @@ def apply_trade_cooldown_guard(*, candidates: list[TradeCandidate], risk_manager
         candidate = rejected.candidate
         decision = rejected.decision
         plan = TradePlan(approved=False, reason=decision.reason or 'trade_cooldown_active', symbol=candidate.symbol, side=candidate.signal.action)
-        trade_journal.write('decision', {
-            'symbol': candidate.symbol,
-            'snapshot': candidate.snapshot,
-            'candle': candidate.candle,
-            'signal': candidate.signal,
-            'candidate': candidate,
-            'equity': None,
-            'trade_plan': plan,
-            'cooldown': decision.active_cooldown,
-            'cooldown_remaining_seconds': decision.remaining_seconds,
-            'instrument_profile': risk_manager.instrument_profile_for(candidate.symbol),
-            'risk_profile': risk_manager.risk_profile_for(candidate.symbol),
-        })
+        trade_journal.write('decision', {'symbol': candidate.symbol, 'snapshot': candidate.snapshot, 'candle': candidate.candle, 'signal': candidate.signal, 'candidate': candidate, 'equity': None, 'trade_plan': plan, 'cooldown': decision.active_cooldown, 'cooldown_remaining_seconds': decision.remaining_seconds, 'instrument_profile': risk_manager.instrument_profile_for(candidate.symbol), 'risk_profile': risk_manager.risk_profile_for(candidate.symbol)})
         logger.info('Trade rejected by cooldown | symbol=%s | action=%s | reason=%s | remaining_seconds=%s', candidate.symbol, candidate.signal.action, plan.reason, decision.remaining_seconds)
     return result.selected_candidates
 
@@ -130,10 +110,7 @@ def apply_trade_cooldown_guard(*, candidates: list[TradeCandidate], risk_manager
 def apply_tp_feasibility_to_evaluated_candidates(*, evaluated_candidates: list[EvaluatedTradeCandidate], risk_manager: RiskManager, evaluator: CandidateTpFeasibilityEvaluator | None = None) -> list[EvaluatedTradeCandidate]:
     actual_evaluator = evaluator or CandidateTpFeasibilityEvaluator()
     return [
-        actual_evaluator.evaluate(
-            evaluated_candidate=evaluated_candidate,
-            risk_profile=risk_manager.risk_profile_for(evaluated_candidate.candidate.symbol),
-        )
+        actual_evaluator.evaluate(evaluated_candidate=evaluated_candidate, risk_profile=risk_manager.risk_profile_for(evaluated_candidate.candidate.symbol))
         for evaluated_candidate in evaluated_candidates
     ]
 
@@ -144,18 +121,24 @@ def _slippage_percent(*, planned_entry_price: float, effective_entry_price: floa
     return round(((effective_entry_price - planned_entry_price) / planned_entry_price) * 100, 4)
 
 
+def _risk_profile_supports_effective_sl_tp(risk_profile: object) -> bool:
+    return hasattr(risk_profile, 'dynamic_sl_tp_enabled')
+
+
+def _resolve_runtime_effective_sl_tp(*, candidate: TradeCandidate, risk_profile: object, resolver: EffectiveSlTpResolver) -> EffectiveSlTp | None:
+    if not _risk_profile_supports_effective_sl_tp(risk_profile):
+        return None
+    return resolver.resolve(candidate=candidate, risk_profile=risk_profile)
+
+
+def _evaluate_risk_manager(*, risk_manager: RiskManager, candidate: TradeCandidate, equity: float, effective_sl_tp: EffectiveSlTp | None) -> TradePlan:
+    if effective_sl_tp is None:
+        return risk_manager.evaluate(signal=candidate.signal, snapshot=candidate.snapshot, account_equity=equity, session_key=candidate.session_key)
+    return risk_manager.evaluate(signal=candidate.signal, snapshot=candidate.snapshot, account_equity=equity, session_key=candidate.session_key, effective_sl_tp=effective_sl_tp)
+
+
 def execute_ranked_candidates(
-    candidates: list[TradeCandidate],
-    execution_broker: BrokerClient,
-    risk_manager: RiskManager,
-    executor: TradeExecutor,
-    position_tracker: PositionTracker,
-    trade_journal: JsonlJournal,
-    position_store: PositionStore | None = None,
-    strategy_profile: StrategyProfileConfig | None = None,
-    cooldown_guard: TradeCooldownGuard | None = None,
-    candidate_economics_estimator: CandidateEconomicsEstimator | None = None,
-    is_broker_authorization_error: BrokerAuthorizationErrorChecker | None = None,
+    candidates: list[TradeCandidate], execution_broker: BrokerClient, risk_manager: RiskManager, executor: TradeExecutor, position_tracker: PositionTracker, trade_journal: JsonlJournal, position_store: PositionStore | None = None, strategy_profile: StrategyProfileConfig | None = None, cooldown_guard: TradeCooldownGuard | None = None, candidate_economics_estimator: CandidateEconomicsEstimator | None = None, is_broker_authorization_error: BrokerAuthorizationErrorChecker | None = None,
 ) -> None:
     if not candidates:
         return
@@ -186,13 +169,7 @@ def execute_ranked_candidates(
         rejected_evaluated_candidates = evaluated_selection.rejected_candidates
         selection_result = _legacy_selection_result_from_evaluated(evaluated_selection)
         ranked_candidates = selection_result.selected_candidates
-    trade_journal.write('candidate_selection', {
-        'strategy_profile': strategy_profile.name if strategy_profile else None,
-        'selected_candidates': selection_result.selected_candidates,
-        'rejected_candidates': selection_result.rejected_candidates,
-        'selected_evaluated_candidates': selected_evaluated_candidates,
-        'rejected_evaluated_candidates': rejected_evaluated_candidates,
-    })
+    trade_journal.write('candidate_selection', {'strategy_profile': strategy_profile.name if strategy_profile else None, 'selected_candidates': selection_result.selected_candidates, 'rejected_candidates': selection_result.rejected_candidates, 'selected_evaluated_candidates': selected_evaluated_candidates, 'rejected_evaluated_candidates': rejected_evaluated_candidates})
     logger.info('Candidate selection | profile=%s | selected=%s | rejected=%s', strategy_profile.name if strategy_profile else None, [c.symbol for c in selection_result.selected_candidates], [{'symbol': r.candidate.symbol, 'reason': r.reason} for r in selection_result.rejected_candidates])
     if not ranked_candidates:
         return
@@ -208,10 +185,10 @@ def execute_ranked_candidates(
             'score': candidate.score,
             'expected_net_profit': round(economics_by_id[id(candidate)].expected_net_profit, 4) if id(candidate) in economics_by_id else None,
             'expected_net_profit_percent': round(economics_by_id[id(candidate)].expected_net_profit_percent, 4) if id(candidate) in economics_by_id else None,
-            'effective_take_profit_percent': effective_sl_tp_by_id[id(candidate)].take_profit_percent if id(candidate) in effective_sl_tp_by_id else None,
-            'effective_stop_loss_percent': effective_sl_tp_by_id[id(candidate)].stop_loss_percent if id(candidate) in effective_sl_tp_by_id else None,
-            'sl_tp_mode': effective_sl_tp_by_id[id(candidate)].mode if id(candidate) in effective_sl_tp_by_id else None,
-            'sl_tp_source': effective_sl_tp_by_id[id(candidate)].source if id(candidate) in effective_sl_tp_by_id else None,
+            'effective_take_profit_percent': effective_sl_tp_by_id[id(candidate)].take_profit_percent if id(candidate) in effective_sl_tp_by_id and effective_sl_tp_by_id[id(candidate)] is not None else None,
+            'effective_stop_loss_percent': effective_sl_tp_by_id[id(candidate)].stop_loss_percent if id(candidate) in effective_sl_tp_by_id and effective_sl_tp_by_id[id(candidate)] is not None else None,
+            'sl_tp_mode': effective_sl_tp_by_id[id(candidate)].mode if id(candidate) in effective_sl_tp_by_id and effective_sl_tp_by_id[id(candidate)] is not None else None,
+            'sl_tp_source': effective_sl_tp_by_id[id(candidate)].source if id(candidate) in effective_sl_tp_by_id and effective_sl_tp_by_id[id(candidate)] is not None else None,
             'tp_feasibility_penalty': candidate.tp_feasibility_penalty,
             'tp_feasibility_score_cap': candidate.tp_feasibility_score_cap,
             'tp_feasibility_hard_rejection_reason': candidate.tp_feasibility_hard_rejection_reason,
@@ -227,22 +204,10 @@ def execute_ranked_candidates(
             equity = execution_broker.get_account_equity()
             instrument_profile = risk_manager.instrument_profile_for(candidate.symbol)
             risk_profile = risk_manager.risk_profile_for(candidate.symbol)
-            effective_sl_tp = effective_sl_tp_by_id.get(id(candidate)) or sl_tp_resolver.resolve(candidate=candidate, risk_profile=risk_profile)
-            plan = risk_manager.evaluate(signal=candidate.signal, snapshot=candidate.snapshot, account_equity=equity, session_key=candidate.session_key, effective_sl_tp=effective_sl_tp)
+            effective_sl_tp = effective_sl_tp_by_id.get(id(candidate)) or _resolve_runtime_effective_sl_tp(candidate=candidate, risk_profile=risk_profile, resolver=sl_tp_resolver)
+            plan = _evaluate_risk_manager(risk_manager=risk_manager, candidate=candidate, equity=equity, effective_sl_tp=effective_sl_tp)
             candidate_economics = economics_by_id.get(id(candidate))
-            trade_journal.write('decision', {
-                'symbol': candidate.symbol,
-                'snapshot': candidate.snapshot,
-                'candle': candidate.candle,
-                'signal': candidate.signal,
-                'candidate': candidate,
-                'candidate_economics': candidate_economics,
-                'effective_sl_tp': effective_sl_tp,
-                'equity': equity,
-                'trade_plan': plan,
-                'instrument_profile': instrument_profile,
-                'risk_profile': risk_profile,
-            })
+            trade_journal.write('decision', {'symbol': candidate.symbol, 'snapshot': candidate.snapshot, 'candle': candidate.candle, 'signal': candidate.signal, 'candidate': candidate, 'candidate_economics': candidate_economics, 'effective_sl_tp': effective_sl_tp, 'equity': equity, 'trade_plan': plan, 'instrument_profile': instrument_profile, 'risk_profile': risk_profile})
             execution_result = executor.execute(plan)
             if not execution_result:
                 continue
@@ -251,11 +216,7 @@ def execute_ranked_candidates(
             effective_entry_price = executed_entry_price if executed_entry_price is not None else planned_entry_price
             entry_price_source = 'broker_execution' if executed_entry_price is not None else 'snapshot_fallback'
             adjusted_plan = risk_manager.adjust_trade_plan_to_entry_price(trade_plan=plan, entry_price=effective_entry_price)
-            tracked_position = position_tracker.record_open_position(
-                position_id=execution_result.position_id,
-                trade_plan=adjusted_plan,
-                entry_price=effective_entry_price,
-            )
+            tracked_position = position_tracker.record_open_position(position_id=execution_result.position_id, trade_plan=adjusted_plan, entry_price=effective_entry_price)
             risk_manager.record_open_position(candidate.symbol, session_key=candidate.session_key)
             if position_store is not None:
                 try:
@@ -263,24 +224,7 @@ def execute_ranked_candidates(
                 except Exception as exc:
                     logger.exception('Position persistence save error | position_id=%s | symbol=%s | error=%s', tracked_position.position_id, tracked_position.symbol, exc)
                     trade_journal.write('position_persistence_error', {'symbol': tracked_position.symbol, 'position_id': tracked_position.position_id, 'position': tracked_position, 'message': str(exc)})
-            trade_journal.write('position_opened', {
-                'symbol': candidate.symbol,
-                'position_id': execution_result.position_id,
-                'position': tracked_position,
-                'candidate': candidate,
-                'candidate_economics': candidate_economics,
-                'effective_sl_tp': effective_sl_tp,
-                'trade_plan': adjusted_plan,
-                'original_trade_plan': plan,
-                'adjusted_trade_plan': adjusted_plan,
-                'planned_entry_price': planned_entry_price,
-                'executed_entry_price': executed_entry_price,
-                'effective_entry_price': effective_entry_price,
-                'entry_price_source': entry_price_source,
-                'execution_slippage_percent': _slippage_percent(planned_entry_price=planned_entry_price, effective_entry_price=effective_entry_price),
-                'instrument_profile': instrument_profile,
-                'risk_profile': risk_profile,
-            })
+            trade_journal.write('position_opened', {'symbol': candidate.symbol, 'position_id': execution_result.position_id, 'position': tracked_position, 'candidate': candidate, 'candidate_economics': candidate_economics, 'effective_sl_tp': effective_sl_tp, 'trade_plan': adjusted_plan, 'original_trade_plan': plan, 'adjusted_trade_plan': adjusted_plan, 'planned_entry_price': planned_entry_price, 'executed_entry_price': executed_entry_price, 'effective_entry_price': effective_entry_price, 'entry_price_source': entry_price_source, 'execution_slippage_percent': _slippage_percent(planned_entry_price=planned_entry_price, effective_entry_price=effective_entry_price), 'instrument_profile': instrument_profile, 'risk_profile': risk_profile})
         except Exception as exc:
             if is_broker_authorization_error is not None and is_broker_authorization_error(exc):
                 raise
