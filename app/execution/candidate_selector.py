@@ -120,11 +120,11 @@ def select_evaluated_trade_candidates(
             )
             continue
 
-        if candidate.tp_feasibility_rejection_reason is not None:
+        if candidate.tp_feasibility_hard_rejection_reason is not None:
             rejected_candidates.append(
                 RejectedEvaluatedCandidateSelection(
                     evaluated_candidate=evaluated_candidate,
-                    reason=candidate.tp_feasibility_rejection_reason,
+                    reason=candidate.tp_feasibility_hard_rejection_reason,
                 )
             )
             continue
