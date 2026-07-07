@@ -87,19 +87,26 @@ def test_tp_feasibility_easy_tp_has_low_penalty():
 
     assert analysis.tp_feasibility_penalty == 0.0
     assert analysis.score_cap is None
-    assert analysis.tp_feasibility_rejection_reason is None
+    assert analysis.tp_feasibility_hard_rejection_reason is None
     assert analysis.runway_score == 100.0
 
 
-def test_tp_feasibility_rejects_tp_too_far_vs_atr():
+def test_tp_feasibility_caps_tp_too_far_vs_atr_without_hard_reject():
     analysis = TpFeasibilityAnalyzer().analyze(
         evaluated_candidate=evaluated(metadata={'atr_percent': 0.25, 'snapshot_momentum_percent': 0.5, 'session_move_percent': 0.3}),
         risk_profile=risk_profile(take_profit_percent=1.6),
     )
 
     assert analysis.tp_to_atr_ratio == 6.4
-    assert analysis.tp_feasibility_rejection_reason == 'candidate_selection_tp_feasibility_tp_too_far_vs_atr'
-    assert 'tp_too_far_vs_atr_reject' in analysis.reason_components
+    assert analysis.tp_feasibility_penalty == 30.0
+    assert analysis.score_cap == 95.0
+    assert analysis.score_before_tp_feasibility == 150.0
+    assert analysis.score_after_tp_penalty == 120.0
+    assert analysis.adjusted_score == 95.0
+    assert analysis.tp_feasibility_hard_rejection_reason is None
+    assert 'tp_too_far_vs_atr_severe' in analysis.reason_components
+    assert 'tp_too_far_vs_atr_severe' in analysis.penalty_components
+    assert 'tp_atr_severe_cap' in analysis.cap_components
 
 
 def test_tp_feasibility_caps_when_snapshot_momentum_is_opposite():
@@ -113,15 +120,28 @@ def test_tp_feasibility_caps_when_snapshot_momentum_is_opposite():
     assert 'opposite_snapshot_momentum' in analysis.reason_components
 
 
-def test_tp_feasibility_rejects_costs_too_high_vs_tp():
+def test_tp_feasibility_caps_high_costs_vs_tp_without_hard_reject():
     analysis = TpFeasibilityAnalyzer().analyze(
         evaluated_candidate=evaluated(metadata={'atr_percent': 1.0, 'snapshot_momentum_percent': 0.5, 'session_move_percent': 0.3}, cost_percent=1.1),
         risk_profile=risk_profile(take_profit_percent=1.5),
     )
 
     assert analysis.cost_to_tp_ratio == 0.7333
-    assert analysis.tp_feasibility_rejection_reason == 'candidate_selection_tp_feasibility_cost_to_tp_too_high'
-    assert 'cost_to_tp_too_high_reject' in analysis.reason_components
+    assert analysis.tp_feasibility_hard_rejection_reason is None
+    assert analysis.score_cap == 95.0
+    assert 'cost_to_tp_too_high_severe' in analysis.reason_components
+
+
+def test_tp_feasibility_hard_rejects_absurd_costs_vs_tp():
+    analysis = TpFeasibilityAnalyzer().analyze(
+        evaluated_candidate=evaluated(metadata={'atr_percent': 1.0, 'snapshot_momentum_percent': 0.5, 'session_move_percent': 0.3}, cost_percent=1.6),
+        risk_profile=risk_profile(take_profit_percent=1.5),
+    )
+
+    assert analysis.cost_to_tp_ratio == 1.0667
+    assert analysis.tp_feasibility_hard_rejection_reason == 'candidate_selection_tp_feasibility_cost_to_tp_absurd'
+    assert 'cost_to_tp_absurd_hard_reject' in analysis.reason_components
+    assert 'cost_to_tp_absurd_hard_reject' in analysis.hard_rejection_components
 
 
 def test_tp_feasibility_missing_data_is_safe_and_prudent():
@@ -130,7 +150,7 @@ def test_tp_feasibility_missing_data_is_safe_and_prudent():
         risk_profile=risk_profile(take_profit_percent=1.0),
     )
 
-    assert analysis.tp_feasibility_rejection_reason is None
+    assert analysis.tp_feasibility_hard_rejection_reason is None
     assert analysis.tp_feasibility_penalty == 24.0
     assert {'missing_atr', 'missing_snapshot_momentum', 'missing_session_move'}.issubset(set(analysis.reason_components))
 
@@ -162,5 +182,8 @@ def test_candidate_tp_feasibility_evaluator_applies_score_cap():
     assert result.candidate.score == 110.0
     assert result.candidate.tp_feasibility_score_cap == 110.0
     assert result.candidate.tp_feasibility_penalty == 22.0
+    assert result.candidate.tp_feasibility_hard_rejection_reason is None
     assert result.tp_feasibility is not None
     assert result.candidate.tp_feasibility_metadata['tp_to_atr_ratio'] == 4.0
+    assert result.candidate.tp_feasibility_metadata['score_before_tp_feasibility'] == 160.0
+    assert result.candidate.tp_feasibility_metadata['score_after_tp_penalty'] == 138.0
