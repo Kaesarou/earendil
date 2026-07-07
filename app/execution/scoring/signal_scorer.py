@@ -1,5 +1,5 @@
-from dataclasses import dataclass
-from typing import Protocol
+from dataclasses import dataclass, field
+from typing import Any, Protocol
 
 from app.execution.scoring.move_exhaustion import (
     MoveExhaustionAnalysis,
@@ -17,6 +17,10 @@ class SignalScoreBreakdown:
     exhaustion: MoveExhaustionAnalysis
     score_before_late_entry_cap: float = 0.0
     score_after_late_entry_cap: float = 0.0
+    score_metadata: dict[str, Any] = field(default_factory=dict)
+    sell_specific_penalty: float = 0.0
+    sell_score_cap: float | None = None
+    sell_rejection_reason: str | None = None
 
 
 class SignalScorer(Protocol):
