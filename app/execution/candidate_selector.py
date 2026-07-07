@@ -53,6 +53,15 @@ def select_trade_candidates(
             )
             continue
 
+        if candidate.sell_rejection_reason is not None:
+            rejected_candidates.append(
+                RejectedCandidateSelection(
+                    candidate=candidate,
+                    reason=candidate.sell_rejection_reason,
+                )
+            )
+            continue
+
         if config.min_score > 0 and candidate.score < config.min_score:
             rejected_candidates.append(
                 RejectedCandidateSelection(
@@ -98,6 +107,15 @@ def select_evaluated_trade_candidates(
                 RejectedEvaluatedCandidateSelection(
                     evaluated_candidate=evaluated_candidate,
                     reason=candidate.late_entry_rejection_reason,
+                )
+            )
+            continue
+
+        if candidate.sell_rejection_reason is not None:
+            rejected_candidates.append(
+                RejectedEvaluatedCandidateSelection(
+                    evaluated_candidate=evaluated_candidate,
+                    reason=candidate.sell_rejection_reason,
                 )
             )
             continue
