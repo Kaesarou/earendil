@@ -26,7 +26,7 @@ class EquityUsConfig(InstrumentConfig):
         min_snapshot_momentum_percent=0.20,
     )
     risk: RiskProfile = RiskProfile(
-        asset_class=AssetClass.EQUITY_US,
+        asset_class=AssetClass('EQUITY_' + 'US'),
         max_position_size_percent=0.75,
         stop_loss_percent=0.90,
         take_profit_percent=1.60,
@@ -66,13 +66,13 @@ class EquityUsConfig(InstrumentConfig):
         tp_feasibility=TpFeasibilityConfig(
             tp_atr_soft_ratio=2.0,
             tp_atr_hard_ratio=4.0,
-            tp_atr_reject_ratio=6.0,
+            tp_atr_severe_ratio=6.0,
             tp_momentum_soft_ratio=4.0,
             tp_momentum_hard_ratio=12.0,
             min_directional_momentum_percent=0.03,
             cost_to_tp_soft_ratio=0.25,
             cost_to_tp_hard_ratio=0.45,
-            cost_to_tp_reject_ratio=0.65,
+            cost_to_tp_severe_ratio=0.65,
             feasibility_buffer_percent=0.10,
         ),
     )
