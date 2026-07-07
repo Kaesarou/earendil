@@ -10,6 +10,7 @@ from app.execution.trade_candidate import TradeCandidate
 class CandidateSelectionConfig:
     top_n: int
     min_score: float
+    dynamic_min_score: float | None = None
 
 
 @dataclass(frozen=True)
@@ -22,6 +23,8 @@ class RejectedCandidateSelection:
 class RejectedEvaluatedCandidateSelection:
     evaluated_candidate: EvaluatedTradeCandidate
     reason: str
+    min_score_used: float | None = None
+    selection_threshold_source: str | None = None
 
 
 @dataclass(frozen=True)
@@ -45,30 +48,15 @@ def select_trade_candidates(
 
     for candidate in rank_trade_candidates(candidates):
         if candidate.late_entry_rejection_reason is not None:
-            rejected_candidates.append(
-                RejectedCandidateSelection(
-                    candidate=candidate,
-                    reason=candidate.late_entry_rejection_reason,
-                )
-            )
+            rejected_candidates.append(RejectedCandidateSelection(candidate=candidate, reason=candidate.late_entry_rejection_reason))
             continue
 
         if candidate.sell_rejection_reason is not None:
-            rejected_candidates.append(
-                RejectedCandidateSelection(
-                    candidate=candidate,
-                    reason=candidate.sell_rejection_reason,
-                )
-            )
+            rejected_candidates.append(RejectedCandidateSelection(candidate=candidate, reason=candidate.sell_rejection_reason))
             continue
 
         if config.min_score > 0 and candidate.score < config.min_score:
-            rejected_candidates.append(
-                RejectedCandidateSelection(
-                    candidate=candidate,
-                    reason='candidate_selection_score_too_low',
-                )
-            )
+            rejected_candidates.append(RejectedCandidateSelection(candidate=candidate, reason='candidate_selection_score_too_low'))
             continue
 
         selected_candidates.append(candidate)
@@ -77,18 +65,12 @@ def select_trade_candidates(
         kept_candidates = selected_candidates[: config.top_n]
         overflow_candidates = selected_candidates[config.top_n:]
         rejected_candidates.extend(
-            RejectedCandidateSelection(
-                candidate=candidate,
-                reason='candidate_selection_outside_top_n',
-            )
+            RejectedCandidateSelection(candidate=candidate, reason='candidate_selection_outside_top_n')
             for candidate in overflow_candidates
         )
         selected_candidates = kept_candidates
 
-    return CandidateSelectionResult(
-        selected_candidates=selected_candidates,
-        rejected_candidates=rejected_candidates,
-    )
+    return CandidateSelectionResult(selected_candidates=selected_candidates, rejected_candidates=rejected_candidates)
 
 
 def select_evaluated_trade_candidates(
@@ -101,55 +83,23 @@ def select_evaluated_trade_candidates(
     for evaluated_candidate in rank_evaluated_trade_candidates(evaluated_candidates):
         candidate = evaluated_candidate.candidate
         economics = evaluated_candidate.economics
+        min_score_used, threshold_source = selection_threshold_for(evaluated_candidate, config)
 
         if candidate.late_entry_rejection_reason is not None:
-            rejected_candidates.append(
-                RejectedEvaluatedCandidateSelection(
-                    evaluated_candidate=evaluated_candidate,
-                    reason=candidate.late_entry_rejection_reason,
-                )
-            )
+            rejected_candidates.append(RejectedEvaluatedCandidateSelection(evaluated_candidate=evaluated_candidate, reason=candidate.late_entry_rejection_reason, min_score_used=min_score_used, selection_threshold_source=threshold_source))
             continue
-
         if candidate.sell_rejection_reason is not None:
-            rejected_candidates.append(
-                RejectedEvaluatedCandidateSelection(
-                    evaluated_candidate=evaluated_candidate,
-                    reason=candidate.sell_rejection_reason,
-                )
-            )
+            rejected_candidates.append(RejectedEvaluatedCandidateSelection(evaluated_candidate=evaluated_candidate, reason=candidate.sell_rejection_reason, min_score_used=min_score_used, selection_threshold_source=threshold_source))
             continue
-
         if candidate.tp_feasibility_hard_rejection_reason is not None:
-            rejected_candidates.append(
-                RejectedEvaluatedCandidateSelection(
-                    evaluated_candidate=evaluated_candidate,
-                    reason=candidate.tp_feasibility_hard_rejection_reason,
-                )
-            )
+            rejected_candidates.append(RejectedEvaluatedCandidateSelection(evaluated_candidate=evaluated_candidate, reason=candidate.tp_feasibility_hard_rejection_reason, min_score_used=min_score_used, selection_threshold_source=threshold_source))
             continue
-
-        if config.min_score > 0 and candidate.score < config.min_score:
-            rejected_candidates.append(
-                RejectedEvaluatedCandidateSelection(
-                    evaluated_candidate=evaluated_candidate,
-                    reason='candidate_selection_score_too_low',
-                )
-            )
+        if min_score_used > 0 and candidate.score < min_score_used:
+            rejected_candidates.append(RejectedEvaluatedCandidateSelection(evaluated_candidate=evaluated_candidate, reason='candidate_selection_score_too_low', min_score_used=min_score_used, selection_threshold_source=threshold_source))
             continue
-
-        if (
-            economics.expected_net_profit_percent
-            < economics.min_expected_net_profit_percent
-        ):
-            rejected_candidates.append(
-                RejectedEvaluatedCandidateSelection(
-                    evaluated_candidate=evaluated_candidate,
-                    reason='candidate_selection_expected_profit_too_low_after_fees',
-                )
-            )
+        if economics.expected_net_profit_percent < economics.min_expected_net_profit_percent:
+            rejected_candidates.append(RejectedEvaluatedCandidateSelection(evaluated_candidate=evaluated_candidate, reason='candidate_selection_expected_profit_too_low_after_fees', min_score_used=min_score_used, selection_threshold_source=threshold_source))
             continue
-
         selected_candidates.append(evaluated_candidate)
 
     if config.top_n > 0 and len(selected_candidates) > config.top_n:
@@ -159,35 +109,32 @@ def select_evaluated_trade_candidates(
             RejectedEvaluatedCandidateSelection(
                 evaluated_candidate=evaluated_candidate,
                 reason='candidate_selection_outside_top_n',
+                min_score_used=selection_threshold_for(evaluated_candidate, config)[0],
+                selection_threshold_source=selection_threshold_for(evaluated_candidate, config)[1],
             )
             for evaluated_candidate in overflow_candidates
         )
         selected_candidates = kept_candidates
 
-    return EvaluatedCandidateSelectionResult(
-        selected_candidates=selected_candidates,
-        rejected_candidates=rejected_candidates,
-    )
+    return EvaluatedCandidateSelectionResult(selected_candidates=selected_candidates, rejected_candidates=rejected_candidates)
+
+
+def selection_threshold_for(
+    evaluated_candidate: EvaluatedTradeCandidate,
+    config: CandidateSelectionConfig,
+) -> tuple[float, str]:
+    if evaluated_candidate.effective_sl_tp.mode == 'dynamic' and config.dynamic_min_score is not None:
+        return config.dynamic_min_score, 'dynamic_min_score'
+    return config.min_score, 'min_score'
 
 
 def rank_evaluated_trade_candidates(
     evaluated_candidates: list[EvaluatedTradeCandidate],
 ) -> list[EvaluatedTradeCandidate]:
-    return sorted(
-        evaluated_candidates,
-        key=_evaluated_candidate_ranking_key,
-        reverse=True,
-    )
+    return sorted(evaluated_candidates, key=_evaluated_candidate_ranking_key, reverse=True)
 
 
-def _evaluated_candidate_ranking_key(
-    evaluated_candidate: EvaluatedTradeCandidate,
-) -> tuple[float, float, float]:
+def _evaluated_candidate_ranking_key(evaluated_candidate: EvaluatedTradeCandidate) -> tuple[float, float, float]:
     score = evaluated_candidate.candidate.score
     score_bucket = math.floor(score / 5) * 5
-
-    return (
-        score_bucket,
-        evaluated_candidate.economics.expected_net_profit,
-        score,
-    )
+    return (score_bucket, evaluated_candidate.economics.expected_net_profit, score)
