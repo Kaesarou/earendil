@@ -60,7 +60,7 @@ def test_evaluated_candidate_selector_rejects_strict_sell_before_tp_feasibility_
     sell_candidate = TradeCandidate(
         **{
             **candidate(score=10.0).__dict__,
-            'tp_feasibility_rejection_reason': 'candidate_selection_tp_feasibility_cost_to_tp_too_high',
+            'tp_feasibility_hard_rejection_reason': 'candidate_selection_tp_feasibility_cost_to_tp_absurd',
         }
     )
 
