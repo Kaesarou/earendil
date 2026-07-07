@@ -1,7 +1,9 @@
 from app.config.settings import Settings
+from app.execution.sl_tp_profile import EffectiveSlTpResolver
+from app.execution.trade_candidate import TradeCandidate
 from app.instruments.instrument_registry import InstrumentRegistry
 from app.instruments.models import AssetClass, RiskProfile
-from app.market.models import MarketSnapshot
+from app.market.models import Candle, MarketSnapshot
 from app.risk.position_sizing import FixedPercentPositionSizing
 from app.risk.risk_manager import RiskManager
 from app.risk.trade_cost_model import TradeCostConfig
@@ -52,8 +54,14 @@ def buy_signal() -> Signal:
     return Signal(action='BUY', confidence=0.75, reason='test_buy')
 
 
+def _candidate(signal: Signal, snapshot: MarketSnapshot) -> TradeCandidate:
+    candle = Candle(symbol=snapshot.symbol, timeframe_seconds=60, open=snapshot.last, high=snapshot.last, low=snapshot.last, close=snapshot.last, volume=None, opened_at=snapshot.timestamp, closed_at=snapshot.timestamp)
+    return TradeCandidate(symbol=snapshot.symbol, snapshot=snapshot, candle=candle, signal=signal, score=120.0, rank_reason='risk_manager_test')
+
+
 def evaluate(risk_manager: RiskManager, signal: Signal, snapshot: MarketSnapshot, account_equity: float):
-    return risk_manager.evaluate(signal=signal, snapshot=snapshot, account_equity=account_equity, session_key=SESSION_KEY)
+    effective_sl_tp = EffectiveSlTpResolver().resolve(candidate=_candidate(signal, snapshot), risk_profile=risk_manager.risk_profile_for(snapshot.symbol))
+    return risk_manager.evaluate(signal=signal, snapshot=snapshot, account_equity=account_equity, session_key=SESSION_KEY, effective_sl_tp=effective_sl_tp)
 
 
 def test_risk_manager_uses_dynamic_equity_trade_costs_and_net_breakeven():
