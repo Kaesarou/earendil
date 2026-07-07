@@ -2,6 +2,7 @@ from collections import defaultdict
 from dataclasses import dataclass, replace
 
 from app.config.settings import Settings
+from app.execution.sl_tp_profile import EffectiveSlTp
 from app.instruments.instrument_registry import InstrumentRegistry
 from app.instruments.models import InstrumentProfile, RiskProfile
 from app.market.models import MarketSnapshot
@@ -10,14 +11,6 @@ from app.risk.position_sizing import PositionSizingStrategy
 from app.risk.trade_cost_model import TradeCostEstimate, TradeCostModel
 from app.strategies.signals import Signal
 from app.utils.commons import normalize_symbol, spread_percent as calculate_spread_percent
-
-
-@dataclass(frozen=True)
-class EffectiveRisk:
-    stop_loss_percent: float
-    take_profit_percent: float
-    atr_percent: float | None
-    dynamic_sl_tp_enabled: bool
 
 
 @dataclass(frozen=True)
@@ -46,19 +39,18 @@ class RiskManager:
         self.open_positions = 0
         self.open_positions_by_symbol: dict[str, int] = defaultdict(int)
 
-    def evaluate(self, signal: Signal, snapshot: MarketSnapshot, account_equity: float, session_key: str) -> TradePlan:
+    def evaluate(self, signal: Signal, snapshot: MarketSnapshot, account_equity: float, session_key: str, effective_sl_tp: EffectiveSlTp) -> TradePlan:
         risk_profile = self.risk_profile_for(snapshot.symbol)
-        effective_risk = self._effective_risk(signal, risk_profile)
         spread_percent = self._calculate_spread_percent(snapshot)
-        expected_move_percent = effective_risk.take_profit_percent
+        expected_move_percent = effective_sl_tp.take_profit_percent
         min_required_move_percent = self._calculate_min_required_move_percent(spread_percent, risk_profile)
         rejection_reason = self._rejection_reason(signal, snapshot.symbol, risk_profile, spread_percent, session_key)
         if rejection_reason is not None:
-            return self._rejected_plan(rejection_reason, signal, snapshot, risk_profile, effective_risk, spread_percent, expected_move_percent, min_required_move_percent)
+            return self._rejected_plan(rejection_reason, signal, snapshot, risk_profile, effective_sl_tp, spread_percent, expected_move_percent, min_required_move_percent)
 
         amount = self.position_sizing_strategy.calculate_amount(account_equity=account_equity, risk_profile=risk_profile)
         if amount <= 0:
-            return self._rejected_plan('invalid_position_amount', signal, snapshot, risk_profile, effective_risk, spread_percent, expected_move_percent, min_required_move_percent)
+            return self._rejected_plan('invalid_position_amount', signal, snapshot, risk_profile, effective_sl_tp, spread_percent, expected_move_percent, min_required_move_percent)
 
         trade_cost_estimate = self.trade_cost_model.estimate(
             position_value=amount,
@@ -68,10 +60,10 @@ class RiskManager:
         )
         if trade_cost_estimate.expected_net_profit_percent < trade_cost_estimate.min_expected_net_profit_percent:
             return self._rejected_plan(
-                'expected_profit_too_low_after_fees', signal, snapshot, risk_profile, effective_risk,
+                'expected_profit_too_low_after_fees', signal, snapshot, risk_profile, effective_sl_tp,
                 spread_percent, expected_move_percent, min_required_move_percent, amount, trade_cost_estimate
             )
-        return self._build_trade_plan(signal, snapshot, amount, trade_cost_estimate, risk_profile, effective_risk, spread_percent, expected_move_percent, min_required_move_percent)
+        return self._build_trade_plan(signal, snapshot, amount, trade_cost_estimate, risk_profile, effective_sl_tp, spread_percent, expected_move_percent, min_required_move_percent)
 
     def adjust_trade_plan_to_entry_price(self, *, trade_plan: TradePlan, entry_price: float) -> TradePlan:
         if not trade_plan.approved:
@@ -142,7 +134,7 @@ class RiskManager:
             return 'spread_too_high'
         return None
 
-    def _rejected_plan(self, reason: str, signal: Signal, snapshot: MarketSnapshot, risk_profile: RiskProfile, effective_risk: EffectiveRisk, spread_percent: float | None, expected_move_percent: float, min_required_move_percent: float | None, amount: float | None = None, trade_cost_estimate: TradeCostEstimate | None = None) -> TradePlan:
+    def _rejected_plan(self, reason: str, signal: Signal, snapshot: MarketSnapshot, risk_profile: RiskProfile, effective_sl_tp: EffectiveSlTp, spread_percent: float | None, expected_move_percent: float, min_required_move_percent: float | None, amount: float | None = None, trade_cost_estimate: TradeCostEstimate | None = None) -> TradePlan:
         fields = self._trade_cost_plan_fields(trade_cost_estimate)
         return TradePlan(
             approved=False, reason=reason, symbol=snapshot.symbol, side=signal.action,
@@ -156,17 +148,18 @@ class RiskManager:
             estimated_total_cost_percent=fields.estimated_total_cost_percent, spread_percent=self._round_optional(spread_percent),
             max_spread_percent=risk_profile.max_spread_percent, expected_move_percent=round(expected_move_percent, 4),
             min_required_move_percent=self._round_optional(min_required_move_percent), min_move_spread_ratio=risk_profile.min_move_spread_ratio,
-            atr_percent=self._round_optional(effective_risk.atr_percent), dynamic_sl_tp_enabled=effective_risk.dynamic_sl_tp_enabled,
-            effective_stop_loss_percent=round(effective_risk.stop_loss_percent, 4), effective_take_profit_percent=round(effective_risk.take_profit_percent, 4),
+            atr_percent=self._round_optional(effective_sl_tp.atr_percent), dynamic_sl_tp_enabled=effective_sl_tp.dynamic_sl_tp_enabled,
+            sl_tp_mode=effective_sl_tp.mode, sl_tp_source=effective_sl_tp.source,
+            effective_stop_loss_percent=round(effective_sl_tp.stop_loss_percent, 4), effective_take_profit_percent=round(effective_sl_tp.take_profit_percent, 4),
         )
 
-    def _build_trade_plan(self, signal: Signal, snapshot: MarketSnapshot, amount: float, trade_cost_estimate: TradeCostEstimate, risk_profile: RiskProfile, effective_risk: EffectiveRisk, spread_percent: float | None, expected_move_percent: float, min_required_move_percent: float | None) -> TradePlan:
+    def _build_trade_plan(self, signal: Signal, snapshot: MarketSnapshot, amount: float, trade_cost_estimate: TradeCostEstimate, risk_profile: RiskProfile, effective_sl_tp: EffectiveSlTp, spread_percent: float | None, expected_move_percent: float, min_required_move_percent: float | None) -> TradePlan:
         if signal.action == 'BUY':
-            stop_loss = snapshot.last * (1 - effective_risk.stop_loss_percent / 100)
-            take_profit = snapshot.last * (1 + effective_risk.take_profit_percent / 100)
+            stop_loss = snapshot.last * (1 - effective_sl_tp.stop_loss_percent / 100)
+            take_profit = snapshot.last * (1 + effective_sl_tp.take_profit_percent / 100)
         elif signal.action == 'SELL':
-            stop_loss = snapshot.last * (1 + effective_risk.stop_loss_percent / 100)
-            take_profit = snapshot.last * (1 - effective_risk.take_profit_percent / 100)
+            stop_loss = snapshot.last * (1 + effective_sl_tp.stop_loss_percent / 100)
+            take_profit = snapshot.last * (1 - effective_sl_tp.take_profit_percent / 100)
         else:
             raise ValueError(f'Unsupported signal action for trade plan: {signal.action}')
 
@@ -186,8 +179,9 @@ class RiskManager:
             estimated_total_cost_percent=fields.estimated_total_cost_percent, spread_percent=self._round_optional(spread_percent),
             max_spread_percent=risk_profile.max_spread_percent, expected_move_percent=round(expected_move_percent, 4),
             min_required_move_percent=self._round_optional(min_required_move_percent), min_move_spread_ratio=risk_profile.min_move_spread_ratio,
-            atr_percent=self._round_optional(effective_risk.atr_percent), dynamic_sl_tp_enabled=effective_risk.dynamic_sl_tp_enabled,
-            effective_stop_loss_percent=round(effective_risk.stop_loss_percent, 4), effective_take_profit_percent=round(effective_risk.take_profit_percent, 4),
+            atr_percent=self._round_optional(effective_sl_tp.atr_percent), dynamic_sl_tp_enabled=effective_sl_tp.dynamic_sl_tp_enabled,
+            sl_tp_mode=effective_sl_tp.mode, sl_tp_source=effective_sl_tp.source,
+            effective_stop_loss_percent=round(effective_sl_tp.stop_loss_percent, 4), effective_take_profit_percent=round(effective_sl_tp.take_profit_percent, 4),
             breakeven_stop_enabled=risk_profile.breakeven_stop_enabled,
             configured_breakeven_trigger_percent=round(risk_profile.breakeven_trigger_percent, 4),
             configured_breakeven_buffer_percent=round(risk_profile.breakeven_buffer_percent, 4),
@@ -219,33 +213,6 @@ class RiskManager:
             estimated_total_cost=round(trade_cost_estimate.total_estimated_cost, 4),
             estimated_total_cost_percent=round(trade_cost_estimate.total_estimated_cost_percent, 4),
         )
-
-    def _effective_risk(self, signal: Signal, risk_profile: RiskProfile) -> EffectiveRisk:
-        atr_percent = self._atr_percent_from_signal(signal)
-        if not risk_profile.dynamic_sl_tp_enabled or atr_percent is None:
-            return EffectiveRisk(risk_profile.stop_loss_percent, risk_profile.take_profit_percent, atr_percent, False)
-        stop_loss_percent = self._clamp_percent(atr_percent * risk_profile.stop_loss_atr_multiplier, risk_profile.min_stop_loss_percent, risk_profile.max_stop_loss_percent)
-        take_profit_percent = self._clamp_percent(atr_percent * risk_profile.take_profit_atr_multiplier, risk_profile.min_take_profit_percent, risk_profile.max_take_profit_percent)
-        return EffectiveRisk(stop_loss_percent, take_profit_percent, atr_percent, True)
-
-    def _atr_percent_from_signal(self, signal: Signal) -> float | None:
-        if signal.metadata is None:
-            return None
-        raw_atr_percent = signal.metadata.get('atr_percent')
-        if raw_atr_percent is None:
-            return None
-        try:
-            atr_percent = float(raw_atr_percent)
-        except (TypeError, ValueError):
-            return None
-        return atr_percent if atr_percent > 0 else None
-
-    def _clamp_percent(self, value: float, minimum: float, maximum: float) -> float:
-        if minimum > 0:
-            value = max(value, minimum)
-        if maximum > 0:
-            value = min(value, maximum)
-        return value
 
     def _calculate_spread_percent(self, snapshot: MarketSnapshot) -> float:
         return calculate_spread_percent(snapshot)
