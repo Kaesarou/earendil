@@ -1,8 +1,8 @@
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from app.instruments.base_configs import CRYPTO_CONFIG, EQUITY_EU_CONFIG, EQUITY_US_CONFIG
 from app.instruments.config_overrides import with_overrides
-from app.instruments.models import InstrumentConfig
+from app.instruments.models import AssetClass, InstrumentConfig
 from app.risk.trade_cooldown import TradeCooldownConfig
 from app.strategies.models import StrategyProfileConfig
 
@@ -42,6 +42,7 @@ AGGRESSIVE_EQUITY_US_CONFIG = with_overrides(
         'min_snapshot_momentum_percent': 0.15,
     },
     risk={
+        'dynamic_sl_tp_enabled': True,
         'trade_cooldown': AGGRESSIVE_TRADE_COOLDOWN,
     },
 )
@@ -71,6 +72,7 @@ class AggressiveStrategyConfig(StrategyProfileConfig):
     name: str = 'aggressive'
     candidate_selection_top_n: int = 2
     candidate_selection_min_score: float = 105.0
+    candidate_selection_dynamic_min_scores: dict[AssetClass, float] = field(default_factory=lambda: {AssetClass.EQUITY_US: 95.0})
     crypto: InstrumentConfig = AGGRESSIVE_CRYPTO_CONFIG
     equity_us: InstrumentConfig = AGGRESSIVE_EQUITY_US_CONFIG
     equity_eu: InstrumentConfig = AGGRESSIVE_EQUITY_EU_CONFIG
