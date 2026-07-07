@@ -23,6 +23,10 @@ class TradeCandidate:
     score_before_late_entry_cap: float = 0.0
     score_after_late_entry_cap: float = 0.0
     entry_quality_metadata: dict[str, Any] = field(default_factory=dict)
+    sell_score_metadata: dict[str, Any] = field(default_factory=dict)
+    sell_specific_penalty: float = 0.0
+    sell_score_cap: float | None = None
+    sell_rejection_reason: str | None = None
     tp_feasibility_metadata: dict[str, Any] = field(default_factory=dict)
     tp_feasibility_penalty: float = 0.0
     tp_feasibility_score_cap: float | None = None
