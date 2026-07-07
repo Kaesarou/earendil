@@ -5,10 +5,11 @@ import pytest
 
 from app.config.settings import Settings
 from app.execution.candidate_economics import CandidateEconomicsEstimator
+from app.execution.scoring.tp_feasibility import CandidateTpFeasibilityEvaluator
 from app.execution.trade_candidate import TradeCandidate
 from app.instruments.base_configs import EQUITY_US_CONFIG
 from app.instruments.instrument_registry import InstrumentRegistry
-from app.instruments.models import AssetClass
+from app.instruments.models import AssetClass, RiskProfile
 from app.market.models import Candle, MarketSnapshot
 from app.risk.position_sizing import FixedPercentPositionSizing
 from app.risk.risk_manager import RiskManager
@@ -17,7 +18,7 @@ from app.strategies.signals import Signal
 SESSION_KEY = 'EQUITY_US:test-session'
 
 
-def make_candidate(action: str) -> TradeCandidate:
+def make_candidate(action: str, metadata: dict | None = None) -> TradeCandidate:
     now = datetime(2026, 7, 4, 18, 0, tzinfo=timezone.utc)
     snapshot = MarketSnapshot(
         symbol='AAPL',
@@ -41,6 +42,7 @@ def make_candidate(action: str) -> TradeCandidate:
         action=action,
         confidence=0.8,
         reason='test_signal',
+        metadata=metadata,
     )
 
     return TradeCandidate(
@@ -54,15 +56,29 @@ def make_candidate(action: str) -> TradeCandidate:
     )
 
 
-def build_instrument_registry() -> InstrumentRegistry:
+def build_instrument_registry(risk_profile: RiskProfile | None = None) -> InstrumentRegistry:
     settings = Settings(EQUITY_US_SYMBOLS='AAPL')
-    risk_profile = replace(
+    actual_risk_profile = risk_profile or replace(
         EQUITY_US_CONFIG.risk,
         force_close_enabled=False,
     )
     return InstrumentRegistry(
         settings,
-        risk_profiles={AssetClass.EQUITY_US: risk_profile},
+        risk_profiles={AssetClass.EQUITY_US: actual_risk_profile},
+    )
+
+
+def dynamic_us_risk_profile() -> RiskProfile:
+    return replace(
+        EQUITY_US_CONFIG.risk,
+        force_close_enabled=False,
+        dynamic_sl_tp_enabled=True,
+        stop_loss_atr_multiplier=1.5,
+        take_profit_atr_multiplier=2.5,
+        min_stop_loss_percent=0.5,
+        max_stop_loss_percent=2.0,
+        min_take_profit_percent=1.0,
+        max_take_profit_percent=4.0,
     )
 
 
@@ -116,6 +132,71 @@ def test_candidate_economics_matches_risk_manager_trade_costs(action: str):
     )
     assert plan.required_min_expected_net_profit_amount == pytest.approx(
         evaluated_candidate.economics.required_min_expected_net_profit_amount,
+    )
+
+
+def test_effective_sl_tp_is_shared_across_economics_feasibility_and_risk_plan():
+    settings = Settings(EQUITY_US_SYMBOLS='AAPL')
+    risk_profile = dynamic_us_risk_profile()
+    instrument_registry = build_instrument_registry(risk_profile)
+    position_sizing_strategy = FixedPercentPositionSizing()
+    estimator = CandidateEconomicsEstimator(
+        position_sizing_strategy=position_sizing_strategy,
+        instrument_registry=instrument_registry,
+    )
+    risk_manager = RiskManager(
+        settings=settings,
+        position_sizing_strategy=position_sizing_strategy,
+        instrument_registry=instrument_registry,
+    )
+    candidate = make_candidate(
+        'BUY',
+        metadata={
+            'atr_percent': 0.8,
+            'snapshot_momentum_percent': 0.5,
+            'session_move_percent': 0.3,
+        },
+    )
+
+    evaluated_candidate = estimator.evaluate(
+        candidate=candidate,
+        account_equity=100000.0,
+    )
+    scored_candidate = CandidateTpFeasibilityEvaluator().evaluate(
+        evaluated_candidate=evaluated_candidate,
+        risk_profile=risk_profile,
+    )
+    plan = risk_manager.evaluate(
+        signal=scored_candidate.candidate.signal,
+        snapshot=scored_candidate.candidate.snapshot,
+        account_equity=100000.0,
+        session_key=scored_candidate.candidate.session_key,
+        effective_sl_tp=scored_candidate.effective_sl_tp,
+    )
+
+    assert scored_candidate.effective_sl_tp is evaluated_candidate.effective_sl_tp
+    assert scored_candidate.effective_sl_tp is not None
+    assert plan.approved
+    assert plan.sl_tp_mode == scored_candidate.effective_sl_tp.mode
+    assert plan.sl_tp_source == scored_candidate.effective_sl_tp.source
+    assert plan.effective_stop_loss_percent == pytest.approx(
+        scored_candidate.effective_sl_tp.stop_loss_percent,
+    )
+    assert plan.effective_take_profit_percent == pytest.approx(
+        scored_candidate.effective_sl_tp.take_profit_percent,
+    )
+    assert evaluated_candidate.economics.effective_stop_loss_percent == pytest.approx(
+        scored_candidate.effective_sl_tp.stop_loss_percent,
+    )
+    assert evaluated_candidate.economics.effective_take_profit_percent == pytest.approx(
+        scored_candidate.effective_sl_tp.take_profit_percent,
+    )
+    assert scored_candidate.tp_feasibility is not None
+    assert scored_candidate.tp_feasibility.effective_stop_loss_percent == pytest.approx(
+        plan.effective_stop_loss_percent,
+    )
+    assert scored_candidate.tp_feasibility.effective_take_profit_percent == pytest.approx(
+        plan.effective_take_profit_percent,
     )
 
 
