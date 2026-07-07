@@ -1,4 +1,4 @@
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from app.execution.candidate_selector import CandidateSelectionConfig
 from app.instruments.models import AssetClass, InstrumentConfig, RiskProfile, TrendStrategyConfig
@@ -12,6 +12,7 @@ class StrategyProfileConfig:
     equity_eu: InstrumentConfig
     candidate_selection_top_n: int
     candidate_selection_min_score: float
+    candidate_selection_dynamic_min_scores: dict[AssetClass, float] = field(default_factory=dict)
 
     @property
     def instrument_configs(self) -> dict[AssetClass, InstrumentConfig]:
@@ -44,4 +45,5 @@ class StrategyProfileConfig:
         return CandidateSelectionConfig(
             top_n=self.candidate_selection_top_n,
             min_score=self.candidate_selection_min_score,
+            dynamic_min_score=self.candidate_selection_dynamic_min_scores.get(asset_class),
         )
