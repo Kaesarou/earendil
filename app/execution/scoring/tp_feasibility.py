@@ -22,6 +22,9 @@ class TpFeasibilityAnalysis:
     required_net_move_percent: float
     cost_to_tp_ratio: float
     reward_to_risk_ratio: float
+    net_reward_to_risk_ratio: float
+    sl_tp_mode: str
+    sl_tp_source: str
     distance_to_trade_extreme_percent: float | None
     movement_consumed_percent: float | None
     runway_score: float
@@ -47,13 +50,14 @@ class TpFeasibilityAnalyzer:
         candidate = evaluated_candidate.candidate
         config = risk_profile.tp_feasibility
         if not config.enabled:
-            return self._disabled_analysis(evaluated_candidate=evaluated_candidate, risk_profile=risk_profile)
+            return self._disabled_analysis(evaluated_candidate=evaluated_candidate)
 
         metadata = candidate.signal.metadata or {}
         side = candidate.signal.action
-        effective_take_profit_percent = risk_profile.take_profit_percent
-        effective_stop_loss_percent = risk_profile.stop_loss_percent
-        atr_percent = _positive_float(metadata.get('atr_percent'))
+        effective_sl_tp = evaluated_candidate.effective_sl_tp
+        effective_take_profit_percent = effective_sl_tp.take_profit_percent
+        effective_stop_loss_percent = effective_sl_tp.stop_loss_percent
+        atr_percent = effective_sl_tp.atr_percent
         snapshot_momentum_percent = _optional_float(metadata.get('snapshot_momentum_percent'))
         session_move_percent = _optional_float(metadata.get('session_move_percent'))
         directional_snapshot_momentum_percent = _directional_value(side, snapshot_momentum_percent)
@@ -61,8 +65,9 @@ class TpFeasibilityAnalyzer:
         tp_to_atr_ratio = _ratio(effective_take_profit_percent, atr_percent)
         tp_to_snapshot_momentum_ratio = _ratio(effective_take_profit_percent, _positive_float(directional_snapshot_momentum_percent))
         required_net_move_percent = evaluated_candidate.economics.estimated_total_cost_percent + evaluated_candidate.economics.min_expected_net_profit_percent + config.feasibility_buffer_percent
-        cost_to_tp_ratio = _safe_ratio(evaluated_candidate.economics.estimated_total_cost_percent, effective_take_profit_percent)
-        reward_to_risk_ratio = _safe_ratio(effective_take_profit_percent, effective_stop_loss_percent)
+        cost_to_tp_ratio = evaluated_candidate.economics.cost_to_tp_ratio
+        reward_to_risk_ratio = evaluated_candidate.economics.reward_to_risk_ratio
+        net_reward_to_risk_ratio = evaluated_candidate.economics.net_reward_to_risk_ratio
         distance_to_trade_extreme_percent = _distance_to_trade_extreme(candidate)
         movement_consumed_percent = max(directional_session_move_percent, 0.0) if directional_session_move_percent is not None else None
 
@@ -74,46 +79,11 @@ class TpFeasibilityAnalyzer:
         cap_components: list[str] = []
         hard_rejection_components: list[str] = []
 
-        penalty, score_cap = self._apply_atr_rules(
-            tp_to_atr_ratio=tp_to_atr_ratio,
-            penalty=penalty,
-            score_cap=score_cap,
-            components=components,
-            penalty_components=penalty_components,
-            cap_components=cap_components,
-            config=config,
-        )
-        penalty, score_cap = self._apply_momentum_rules(
-            directional_snapshot_momentum_percent=directional_snapshot_momentum_percent,
-            tp_to_snapshot_momentum_ratio=tp_to_snapshot_momentum_ratio,
-            penalty=penalty,
-            score_cap=score_cap,
-            components=components,
-            penalty_components=penalty_components,
-            cap_components=cap_components,
-            config=config,
-        )
-        penalty, score_cap, hard_rejection_reason = self._apply_cost_rules(
-            cost_to_tp_ratio=cost_to_tp_ratio,
-            penalty=penalty,
-            score_cap=score_cap,
-            hard_rejection_reason=hard_rejection_reason,
-            components=components,
-            penalty_components=penalty_components,
-            cap_components=cap_components,
-            hard_rejection_components=hard_rejection_components,
-            config=config,
-        )
-        penalty, score_cap = self._apply_runway_rules(
-            distance_to_trade_extreme_percent=distance_to_trade_extreme_percent,
-            movement_consumed_percent=movement_consumed_percent,
-            penalty=penalty,
-            score_cap=score_cap,
-            components=components,
-            penalty_components=penalty_components,
-            cap_components=cap_components,
-            config=config,
-        )
+        penalty, score_cap = self._apply_atr_rules(tp_to_atr_ratio=tp_to_atr_ratio, penalty=penalty, score_cap=score_cap, components=components, penalty_components=penalty_components, cap_components=cap_components, config=config)
+        penalty, score_cap = self._apply_momentum_rules(directional_snapshot_momentum_percent=directional_snapshot_momentum_percent, tp_to_snapshot_momentum_ratio=tp_to_snapshot_momentum_ratio, penalty=penalty, score_cap=score_cap, components=components, penalty_components=penalty_components, cap_components=cap_components, config=config)
+        penalty, score_cap, hard_rejection_reason = self._apply_cost_rules(cost_to_tp_ratio=cost_to_tp_ratio, penalty=penalty, score_cap=score_cap, hard_rejection_reason=hard_rejection_reason, components=components, penalty_components=penalty_components, cap_components=cap_components, hard_rejection_components=hard_rejection_components, config=config)
+        penalty, score_cap = self._apply_runway_rules(distance_to_trade_extreme_percent=distance_to_trade_extreme_percent, movement_consumed_percent=movement_consumed_percent, penalty=penalty, score_cap=score_cap, components=components, penalty_components=penalty_components, cap_components=cap_components, config=config)
+
         penalty = min(round(penalty, 4), config.max_penalty_points)
         runway_score = round(max(0.0, min(100.0, 100.0 - penalty * 2.0)), 4)
         score_before_tp_feasibility = round(candidate.score, 4)
@@ -133,6 +103,9 @@ class TpFeasibilityAnalyzer:
             required_net_move_percent=round(required_net_move_percent, 4),
             cost_to_tp_ratio=round(cost_to_tp_ratio, 4),
             reward_to_risk_ratio=round(reward_to_risk_ratio, 4),
+            net_reward_to_risk_ratio=round(net_reward_to_risk_ratio, 4),
+            sl_tp_mode=effective_sl_tp.mode,
+            sl_tp_source=effective_sl_tp.source,
             distance_to_trade_extreme_percent=_round_optional(distance_to_trade_extreme_percent),
             movement_consumed_percent=_round_optional(movement_consumed_percent),
             runway_score=runway_score,
@@ -148,13 +121,14 @@ class TpFeasibilityAnalyzer:
             reason_components=tuple(components),
         )
 
-    def _disabled_analysis(self, *, evaluated_candidate: EvaluatedTradeCandidate, risk_profile: RiskProfile) -> TpFeasibilityAnalysis:
+    def _disabled_analysis(self, *, evaluated_candidate: EvaluatedTradeCandidate) -> TpFeasibilityAnalysis:
         candidate = evaluated_candidate.candidate
+        effective_sl_tp = evaluated_candidate.effective_sl_tp
         score = round(candidate.score, 4)
         return TpFeasibilityAnalysis(
-            effective_take_profit_percent=round(risk_profile.take_profit_percent, 4),
-            effective_stop_loss_percent=round(risk_profile.stop_loss_percent, 4),
-            atr_percent=None,
+            effective_take_profit_percent=round(effective_sl_tp.take_profit_percent, 4),
+            effective_stop_loss_percent=round(effective_sl_tp.stop_loss_percent, 4),
+            atr_percent=_round_optional(effective_sl_tp.atr_percent),
             snapshot_momentum_percent=None,
             directional_snapshot_momentum_percent=None,
             session_move_percent=None,
@@ -163,7 +137,10 @@ class TpFeasibilityAnalyzer:
             tp_to_snapshot_momentum_ratio=None,
             required_net_move_percent=0.0,
             cost_to_tp_ratio=0.0,
-            reward_to_risk_ratio=_safe_ratio(risk_profile.take_profit_percent, risk_profile.stop_loss_percent),
+            reward_to_risk_ratio=evaluated_candidate.economics.reward_to_risk_ratio,
+            net_reward_to_risk_ratio=evaluated_candidate.economics.net_reward_to_risk_ratio,
+            sl_tp_mode=effective_sl_tp.mode,
+            sl_tp_source=effective_sl_tp.source,
             distance_to_trade_extreme_percent=None,
             movement_consumed_percent=None,
             runway_score=100.0,
@@ -301,10 +278,7 @@ class CandidateTpFeasibilityEvaluator:
         self.analyzer = analyzer or TpFeasibilityAnalyzer()
 
     def evaluate(self, *, evaluated_candidate: EvaluatedTradeCandidate, risk_profile: RiskProfile) -> EvaluatedTradeCandidate:
-        analysis = self.analyzer.analyze(
-            evaluated_candidate=evaluated_candidate,
-            risk_profile=risk_profile,
-        )
+        analysis = self.analyzer.analyze(evaluated_candidate=evaluated_candidate, risk_profile=risk_profile)
         candidate = evaluated_candidate.candidate
         updated_candidate = replace(
             candidate,
@@ -315,11 +289,7 @@ class CandidateTpFeasibilityEvaluator:
             tp_feasibility_score_cap=analysis.score_cap,
             tp_feasibility_hard_rejection_reason=analysis.tp_feasibility_hard_rejection_reason,
         )
-        return replace(
-            evaluated_candidate,
-            candidate=updated_candidate,
-            tp_feasibility=analysis,
-        )
+        return replace(evaluated_candidate, candidate=updated_candidate, tp_feasibility=analysis)
 
 
 def analysis_to_metadata(analysis: TpFeasibilityAnalysis) -> dict[str, Any]:
@@ -336,6 +306,9 @@ def analysis_to_metadata(analysis: TpFeasibilityAnalysis) -> dict[str, Any]:
         'required_net_move_percent': analysis.required_net_move_percent,
         'cost_to_tp_ratio': analysis.cost_to_tp_ratio,
         'reward_to_risk_ratio': analysis.reward_to_risk_ratio,
+        'net_reward_to_risk_ratio': analysis.net_reward_to_risk_ratio,
+        'sl_tp_mode': analysis.sl_tp_mode,
+        'sl_tp_source': analysis.sl_tp_source,
         'distance_to_trade_extreme_percent': analysis.distance_to_trade_extreme_percent,
         'movement_consumed_percent': analysis.movement_consumed_percent,
         'runway_score': analysis.runway_score,
@@ -344,9 +317,7 @@ def analysis_to_metadata(analysis: TpFeasibilityAnalysis) -> dict[str, Any]:
         'tp_feasibility_penalty': analysis.tp_feasibility_penalty,
         'score_cap': analysis.score_cap,
         'adjusted_score': analysis.adjusted_score,
-        'tp_feasibility_hard_rejection_reason': (
-            analysis.tp_feasibility_hard_rejection_reason
-        ),
+        'tp_feasibility_hard_rejection_reason': analysis.tp_feasibility_hard_rejection_reason,
         'penalty_components': list(analysis.penalty_components),
         'cap_components': list(analysis.cap_components),
         'hard_rejection_components': list(analysis.hard_rejection_components),
@@ -359,7 +330,9 @@ def _append_rank_reason(rank_reason: str, analysis: TpFeasibilityAnalysis) -> st
         f'tp_feasibility_penalty={analysis.tp_feasibility_penalty:.2f},'
         f'runway={analysis.runway_score:.2f},'
         f'score_before_tp_feasibility={analysis.score_before_tp_feasibility:.2f},'
-        f'score_after_tp_penalty={analysis.score_after_tp_penalty:.2f}'
+        f'score_after_tp_penalty={analysis.score_after_tp_penalty:.2f},'
+        f'sl_tp_mode={analysis.sl_tp_mode},'
+        f'sl_tp_source={analysis.sl_tp_source}'
     )
     if analysis.score_cap is not None:
         suffix += f',score_cap={analysis.score_cap:.2f}'
@@ -389,12 +362,6 @@ def _directional_value(side: str, value: float | None) -> float | None:
 def _ratio(numerator: float, denominator: float | None) -> float | None:
     if denominator is None or denominator <= 0:
         return None
-    return numerator / denominator
-
-
-def _safe_ratio(numerator: float, denominator: float) -> float:
-    if denominator <= 0:
-        return float('inf')
     return numerator / denominator
 
 
