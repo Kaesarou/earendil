@@ -29,6 +29,8 @@ class TradePlan:
     min_move_spread_ratio: float | None = None
     atr_percent: float | None = None
     dynamic_sl_tp_enabled: bool | None = None
+    sl_tp_mode: str | None = None
+    sl_tp_source: str | None = None
     effective_stop_loss_percent: float | None = None
     effective_take_profit_percent: float | None = None
     breakeven_stop_enabled: bool = False
