@@ -17,6 +17,7 @@ from app.execution.candidate_selector import (
 )
 from app.execution.position_tracker import PositionTracker
 from app.execution.scoring.tp_feasibility import CandidateTpFeasibilityEvaluator
+from app.execution.sl_tp_profile import EffectiveSlTpResolver
 from app.execution.trade_candidate import TradeCandidate
 from app.execution.trade_executor import TradeExecutor
 from app.journal.jsonl_journal import JsonlJournal
@@ -197,6 +198,8 @@ def execute_ranked_candidates(
         return
     economics_by_id = {id(item.candidate): item.economics for item in selected_evaluated_candidates or []}
     feasibility_by_id = {id(item.candidate): item.tp_feasibility for item in selected_evaluated_candidates or []}
+    effective_sl_tp_by_id = {id(item.candidate): item.effective_sl_tp for item in selected_evaluated_candidates or []}
+    sl_tp_resolver = EffectiveSlTpResolver()
     trade_journal.write('candidate_ranking', {'candidates': ranked_candidates, 'evaluated_candidates': selected_evaluated_candidates})
     logger.info('Candidate ranking | candidates=%s', [
         {
@@ -205,6 +208,10 @@ def execute_ranked_candidates(
             'score': candidate.score,
             'expected_net_profit': round(economics_by_id[id(candidate)].expected_net_profit, 4) if id(candidate) in economics_by_id else None,
             'expected_net_profit_percent': round(economics_by_id[id(candidate)].expected_net_profit_percent, 4) if id(candidate) in economics_by_id else None,
+            'effective_take_profit_percent': effective_sl_tp_by_id[id(candidate)].take_profit_percent if id(candidate) in effective_sl_tp_by_id else None,
+            'effective_stop_loss_percent': effective_sl_tp_by_id[id(candidate)].stop_loss_percent if id(candidate) in effective_sl_tp_by_id else None,
+            'sl_tp_mode': effective_sl_tp_by_id[id(candidate)].mode if id(candidate) in effective_sl_tp_by_id else None,
+            'sl_tp_source': effective_sl_tp_by_id[id(candidate)].source if id(candidate) in effective_sl_tp_by_id else None,
             'tp_feasibility_penalty': candidate.tp_feasibility_penalty,
             'tp_feasibility_score_cap': candidate.tp_feasibility_score_cap,
             'tp_feasibility_hard_rejection_reason': candidate.tp_feasibility_hard_rejection_reason,
@@ -218,9 +225,10 @@ def execute_ranked_candidates(
     for candidate in ranked_candidates:
         try:
             equity = execution_broker.get_account_equity()
-            plan = risk_manager.evaluate(signal=candidate.signal, snapshot=candidate.snapshot, account_equity=equity, session_key=candidate.session_key)
             instrument_profile = risk_manager.instrument_profile_for(candidate.symbol)
             risk_profile = risk_manager.risk_profile_for(candidate.symbol)
+            effective_sl_tp = effective_sl_tp_by_id.get(id(candidate)) or sl_tp_resolver.resolve(candidate=candidate, risk_profile=risk_profile)
+            plan = risk_manager.evaluate(signal=candidate.signal, snapshot=candidate.snapshot, account_equity=equity, session_key=candidate.session_key, effective_sl_tp=effective_sl_tp)
             candidate_economics = economics_by_id.get(id(candidate))
             trade_journal.write('decision', {
                 'symbol': candidate.symbol,
@@ -229,6 +237,7 @@ def execute_ranked_candidates(
                 'signal': candidate.signal,
                 'candidate': candidate,
                 'candidate_economics': candidate_economics,
+                'effective_sl_tp': effective_sl_tp,
                 'equity': equity,
                 'trade_plan': plan,
                 'instrument_profile': instrument_profile,
@@ -260,6 +269,7 @@ def execute_ranked_candidates(
                 'position': tracked_position,
                 'candidate': candidate,
                 'candidate_economics': candidate_economics,
+                'effective_sl_tp': effective_sl_tp,
                 'trade_plan': adjusted_plan,
                 'original_trade_plan': plan,
                 'adjusted_trade_plan': adjusted_plan,
