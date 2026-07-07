@@ -207,7 +207,9 @@ def execute_ranked_candidates(
             'expected_net_profit_percent': round(economics_by_id[id(candidate)].expected_net_profit_percent, 4) if id(candidate) in economics_by_id else None,
             'tp_feasibility_penalty': candidate.tp_feasibility_penalty,
             'tp_feasibility_score_cap': candidate.tp_feasibility_score_cap,
-            'tp_feasibility_rejection_reason': candidate.tp_feasibility_rejection_reason,
+            'tp_feasibility_hard_rejection_reason': candidate.tp_feasibility_hard_rejection_reason,
+            'score_before_tp_feasibility': feasibility_by_id[id(candidate)].score_before_tp_feasibility if id(candidate) in feasibility_by_id and feasibility_by_id[id(candidate)] is not None else None,
+            'score_after_tp_penalty': feasibility_by_id[id(candidate)].score_after_tp_penalty if id(candidate) in feasibility_by_id and feasibility_by_id[id(candidate)] is not None else None,
             'tp_feasibility_runway_score': feasibility_by_id[id(candidate)].runway_score if id(candidate) in feasibility_by_id and feasibility_by_id[id(candidate)] is not None else None,
             'reason': candidate.rank_reason,
         }
