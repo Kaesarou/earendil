@@ -5,6 +5,7 @@ from typing import Any, Literal
 
 from app.execution.trade_candidate import TradeCandidate
 from app.instruments.models import RiskProfile
+from app.strategies.signals import Signal
 
 SlTpMode = Literal['fixed', 'dynamic']
 SlTpSource = Literal[
@@ -36,13 +37,11 @@ class EffectiveSlTp:
 
 
 class EffectiveSlTpResolver:
-    def resolve(
-        self,
-        *,
-        candidate: TradeCandidate,
-        risk_profile: RiskProfile,
-    ) -> EffectiveSlTp:
-        atr_percent = self._atr_percent_from_candidate(candidate)
+    def resolve(self, *, candidate: TradeCandidate, risk_profile: RiskProfile) -> EffectiveSlTp:
+        return self.resolve_for_signal(signal=candidate.signal, risk_profile=risk_profile)
+
+    def resolve_for_signal(self, *, signal: Signal, risk_profile: RiskProfile) -> EffectiveSlTp:
+        atr_percent = self._atr_percent_from_signal(signal)
         if not risk_profile.dynamic_sl_tp_enabled:
             return EffectiveSlTp(
                 stop_loss_percent=risk_profile.stop_loss_percent,
@@ -63,25 +62,14 @@ class EffectiveSlTpResolver:
 
         raw_sl_percent = atr_percent * risk_profile.stop_loss_atr_multiplier
         raw_tp_percent = atr_percent * risk_profile.take_profit_atr_multiplier
-        sl_percent = self._clamp_percent(
-            raw_sl_percent,
-            risk_profile.min_stop_loss_percent,
-            risk_profile.max_stop_loss_percent,
-        )
-        tp_percent = self._clamp_percent(
-            raw_tp_percent,
-            risk_profile.min_take_profit_percent,
-            risk_profile.max_take_profit_percent,
-        )
+        sl_percent = self._clamp_percent(raw_sl_percent, risk_profile.min_stop_loss_percent, risk_profile.max_stop_loss_percent)
+        tp_percent = self._clamp_percent(raw_tp_percent, risk_profile.min_take_profit_percent, risk_profile.max_take_profit_percent)
         return EffectiveSlTp(
             stop_loss_percent=sl_percent,
             take_profit_percent=tp_percent,
             atr_percent=atr_percent,
             mode='dynamic',
-            source=self._dynamic_source(
-                raw_values=(raw_sl_percent, raw_tp_percent),
-                clamped_values=(sl_percent, tp_percent),
-            ),
+            source=self._dynamic_source(raw_values=(raw_sl_percent, raw_tp_percent), clamped_values=(sl_percent, tp_percent)),
             dynamic_sl_raw_percent=raw_sl_percent,
             dynamic_tp_raw_percent=raw_tp_percent,
             dynamic_sl_clamped_percent=sl_percent,
@@ -96,8 +84,8 @@ class EffectiveSlTpResolver:
             },
         )
 
-    def _atr_percent_from_candidate(self, candidate: TradeCandidate) -> float | None:
-        metadata = candidate.signal.metadata or {}
+    def _atr_percent_from_signal(self, signal: Signal) -> float | None:
+        metadata = signal.metadata or {}
         raw_atr_percent = metadata.get('atr_percent')
         if raw_atr_percent is None:
             return None
@@ -114,12 +102,7 @@ class EffectiveSlTpResolver:
             value = min(value, maximum)
         return value
 
-    def _dynamic_source(
-        self,
-        *,
-        raw_values: tuple[float, float],
-        clamped_values: tuple[float, float],
-    ) -> SlTpSource:
+    def _dynamic_source(self, *, raw_values: tuple[float, float], clamped_values: tuple[float, float]) -> SlTpSource:
         floored = any(clamped > raw for raw, clamped in zip(raw_values, clamped_values, strict=True))
         capped = any(clamped < raw for raw, clamped in zip(raw_values, clamped_values, strict=True))
         if floored and capped:
