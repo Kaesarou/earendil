@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
+from app.execution.sl_tp_profile import EffectiveSlTp, EffectiveSlTpResolver
 from app.execution.trade_candidate import TradeCandidate
 from app.instruments.instrument_registry import InstrumentRegistry
 from app.risk.position_sizing import PositionSizingStrategy
@@ -23,12 +24,18 @@ class CandidateEconomics:
     estimated_total_cost_percent: float
     min_expected_net_profit_percent: float
     required_min_expected_net_profit_amount: float
+    effective_take_profit_percent: float
+    effective_stop_loss_percent: float
+    cost_to_tp_ratio: float
+    reward_to_risk_ratio: float
+    net_reward_to_risk_ratio: float
 
 
 @dataclass(frozen=True)
 class EvaluatedTradeCandidate:
     candidate: TradeCandidate
     economics: CandidateEconomics
+    effective_sl_tp: EffectiveSlTp
     tp_feasibility: TpFeasibilityAnalysis | None = None
 
 
@@ -38,10 +45,12 @@ class CandidateEconomicsEstimator:
         position_sizing_strategy: PositionSizingStrategy,
         instrument_registry: InstrumentRegistry,
         trade_cost_model: TradeCostModel | None = None,
+        sl_tp_resolver: EffectiveSlTpResolver | None = None,
     ):
         self.position_sizing_strategy = position_sizing_strategy
         self.instrument_registry = instrument_registry
         self.trade_cost_model = trade_cost_model or TradeCostModel()
+        self.sl_tp_resolver = sl_tp_resolver or EffectiveSlTpResolver()
 
     def evaluate(
         self,
@@ -49,6 +58,10 @@ class CandidateEconomicsEstimator:
         account_equity: float,
     ) -> EvaluatedTradeCandidate:
         risk_profile = self.instrument_registry.risk_profile_for(candidate.symbol)
+        effective_sl_tp = self.sl_tp_resolver.resolve(
+            candidate=candidate,
+            risk_profile=risk_profile,
+        )
         position_value = self.position_sizing_strategy.calculate_amount(
             account_equity=account_equity,
             risk_profile=risk_profile,
@@ -56,11 +69,12 @@ class CandidateEconomicsEstimator:
 
         estimate = self.trade_cost_model.estimate(
             position_value=position_value,
-            expected_move_percent=risk_profile.take_profit_percent,
+            expected_move_percent=effective_sl_tp.take_profit_percent,
             spread_percent=spread_percent(candidate.snapshot),
             config=risk_profile.trade_cost,
         )
 
+        loss_at_sl_percent = effective_sl_tp.stop_loss_percent + estimate.total_estimated_cost_percent
         return EvaluatedTradeCandidate(
             candidate=candidate,
             economics=CandidateEconomics(
@@ -74,5 +88,26 @@ class CandidateEconomicsEstimator:
                 required_min_expected_net_profit_amount=(
                     estimate.required_min_expected_net_profit_amount
                 ),
+                effective_take_profit_percent=effective_sl_tp.take_profit_percent,
+                effective_stop_loss_percent=effective_sl_tp.stop_loss_percent,
+                cost_to_tp_ratio=_safe_ratio(
+                    estimate.total_estimated_cost_percent,
+                    effective_sl_tp.take_profit_percent,
+                ),
+                reward_to_risk_ratio=_safe_ratio(
+                    effective_sl_tp.take_profit_percent,
+                    effective_sl_tp.stop_loss_percent,
+                ),
+                net_reward_to_risk_ratio=_safe_ratio(
+                    estimate.expected_net_profit_percent,
+                    loss_at_sl_percent,
+                ),
             ),
+            effective_sl_tp=effective_sl_tp,
         )
+
+
+def _safe_ratio(numerator: float, denominator: float) -> float:
+    if denominator <= 0:
+        return 0.0
+    return numerator / denominator
