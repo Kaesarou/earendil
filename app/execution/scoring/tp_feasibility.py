@@ -2,6 +2,7 @@ from dataclasses import dataclass, replace
 from typing import Any
 
 from app.execution.candidate_economics import EvaluatedTradeCandidate
+from app.execution.sl_tp_profile import EffectiveSlTpResolver
 from app.execution.trade_candidate import TradeCandidate
 from app.instruments.models import RiskProfile, TpFeasibilityConfig
 
@@ -41,20 +42,18 @@ class TpFeasibilityAnalysis:
 
 
 class TpFeasibilityAnalyzer:
-    def analyze(
-        self,
-        *,
-        evaluated_candidate: EvaluatedTradeCandidate,
-        risk_profile: RiskProfile,
-    ) -> TpFeasibilityAnalysis:
+    def __init__(self, sl_tp_resolver: EffectiveSlTpResolver | None = None):
+        self.sl_tp_resolver = sl_tp_resolver or EffectiveSlTpResolver()
+
+    def analyze(self, *, evaluated_candidate: EvaluatedTradeCandidate, risk_profile: RiskProfile) -> TpFeasibilityAnalysis:
         candidate = evaluated_candidate.candidate
         config = risk_profile.tp_feasibility
         if not config.enabled:
-            return self._disabled_analysis(evaluated_candidate=evaluated_candidate)
+            return self._disabled_analysis(evaluated_candidate=evaluated_candidate, risk_profile=risk_profile)
 
         metadata = candidate.signal.metadata or {}
         side = candidate.signal.action
-        effective_sl_tp = evaluated_candidate.effective_sl_tp
+        effective_sl_tp = evaluated_candidate.effective_sl_tp or self.sl_tp_resolver.resolve_for_signal(signal=candidate.signal, risk_profile=risk_profile)
         effective_take_profit_percent = effective_sl_tp.take_profit_percent
         effective_stop_loss_percent = effective_sl_tp.stop_loss_percent
         atr_percent = effective_sl_tp.atr_percent
@@ -65,9 +64,9 @@ class TpFeasibilityAnalyzer:
         tp_to_atr_ratio = _ratio(effective_take_profit_percent, atr_percent)
         tp_to_snapshot_momentum_ratio = _ratio(effective_take_profit_percent, _positive_float(directional_snapshot_momentum_percent))
         required_net_move_percent = evaluated_candidate.economics.estimated_total_cost_percent + evaluated_candidate.economics.min_expected_net_profit_percent + config.feasibility_buffer_percent
-        cost_to_tp_ratio = evaluated_candidate.economics.cost_to_tp_ratio
-        reward_to_risk_ratio = evaluated_candidate.economics.reward_to_risk_ratio
-        net_reward_to_risk_ratio = evaluated_candidate.economics.net_reward_to_risk_ratio
+        cost_to_tp_ratio = evaluated_candidate.economics.cost_to_tp_ratio or _safe_ratio(evaluated_candidate.economics.estimated_total_cost_percent, effective_take_profit_percent)
+        reward_to_risk_ratio = evaluated_candidate.economics.reward_to_risk_ratio or _safe_ratio(effective_take_profit_percent, effective_stop_loss_percent)
+        net_reward_to_risk_ratio = evaluated_candidate.economics.net_reward_to_risk_ratio or _safe_ratio(evaluated_candidate.economics.expected_net_profit_percent, effective_stop_loss_percent + evaluated_candidate.economics.estimated_total_cost_percent)
         distance_to_trade_extreme_percent = _distance_to_trade_extreme(candidate)
         movement_consumed_percent = max(directional_session_move_percent, 0.0) if directional_session_move_percent is not None else None
 
@@ -121,9 +120,9 @@ class TpFeasibilityAnalyzer:
             reason_components=tuple(components),
         )
 
-    def _disabled_analysis(self, *, evaluated_candidate: EvaluatedTradeCandidate) -> TpFeasibilityAnalysis:
+    def _disabled_analysis(self, *, evaluated_candidate: EvaluatedTradeCandidate, risk_profile: RiskProfile) -> TpFeasibilityAnalysis:
         candidate = evaluated_candidate.candidate
-        effective_sl_tp = evaluated_candidate.effective_sl_tp
+        effective_sl_tp = evaluated_candidate.effective_sl_tp or self.sl_tp_resolver.resolve_for_signal(signal=candidate.signal, risk_profile=risk_profile)
         score = round(candidate.score, 4)
         return TpFeasibilityAnalysis(
             effective_take_profit_percent=round(effective_sl_tp.take_profit_percent, 4),
@@ -137,7 +136,7 @@ class TpFeasibilityAnalyzer:
             tp_to_snapshot_momentum_ratio=None,
             required_net_move_percent=0.0,
             cost_to_tp_ratio=0.0,
-            reward_to_risk_ratio=evaluated_candidate.economics.reward_to_risk_ratio,
+            reward_to_risk_ratio=evaluated_candidate.economics.reward_to_risk_ratio or _safe_ratio(effective_sl_tp.take_profit_percent, effective_sl_tp.stop_loss_percent),
             net_reward_to_risk_ratio=evaluated_candidate.economics.net_reward_to_risk_ratio,
             sl_tp_mode=effective_sl_tp.mode,
             sl_tp_source=effective_sl_tp.source,
@@ -280,15 +279,7 @@ class CandidateTpFeasibilityEvaluator:
     def evaluate(self, *, evaluated_candidate: EvaluatedTradeCandidate, risk_profile: RiskProfile) -> EvaluatedTradeCandidate:
         analysis = self.analyzer.analyze(evaluated_candidate=evaluated_candidate, risk_profile=risk_profile)
         candidate = evaluated_candidate.candidate
-        updated_candidate = replace(
-            candidate,
-            score=analysis.adjusted_score,
-            rank_reason=_append_rank_reason(candidate.rank_reason, analysis),
-            tp_feasibility_metadata=analysis_to_metadata(analysis),
-            tp_feasibility_penalty=analysis.tp_feasibility_penalty,
-            tp_feasibility_score_cap=analysis.score_cap,
-            tp_feasibility_hard_rejection_reason=analysis.tp_feasibility_hard_rejection_reason,
-        )
+        updated_candidate = replace(candidate, score=analysis.adjusted_score, rank_reason=_append_rank_reason(candidate.rank_reason, analysis), tp_feasibility_metadata=analysis_to_metadata(analysis), tp_feasibility_penalty=analysis.tp_feasibility_penalty, tp_feasibility_score_cap=analysis.score_cap, tp_feasibility_hard_rejection_reason=analysis.tp_feasibility_hard_rejection_reason)
         return replace(evaluated_candidate, candidate=updated_candidate, tp_feasibility=analysis)
 
 
@@ -326,14 +317,7 @@ def analysis_to_metadata(analysis: TpFeasibilityAnalysis) -> dict[str, Any]:
 
 
 def _append_rank_reason(rank_reason: str, analysis: TpFeasibilityAnalysis) -> str:
-    suffix = (
-        f'tp_feasibility_penalty={analysis.tp_feasibility_penalty:.2f},'
-        f'runway={analysis.runway_score:.2f},'
-        f'score_before_tp_feasibility={analysis.score_before_tp_feasibility:.2f},'
-        f'score_after_tp_penalty={analysis.score_after_tp_penalty:.2f},'
-        f'sl_tp_mode={analysis.sl_tp_mode},'
-        f'sl_tp_source={analysis.sl_tp_source}'
-    )
+    suffix = f'tp_feasibility_penalty={analysis.tp_feasibility_penalty:.2f},runway={analysis.runway_score:.2f},score_before_tp_feasibility={analysis.score_before_tp_feasibility:.2f},score_after_tp_penalty={analysis.score_after_tp_penalty:.2f},sl_tp_mode={analysis.sl_tp_mode},sl_tp_source={analysis.sl_tp_source}'
     if analysis.score_cap is not None:
         suffix += f',score_cap={analysis.score_cap:.2f}'
     if analysis.tp_feasibility_hard_rejection_reason:
@@ -362,6 +346,12 @@ def _directional_value(side: str, value: float | None) -> float | None:
 def _ratio(numerator: float, denominator: float | None) -> float | None:
     if denominator is None or denominator <= 0:
         return None
+    return numerator / denominator
+
+
+def _safe_ratio(numerator: float, denominator: float) -> float:
+    if denominator <= 0:
+        return float('inf')
     return numerator / denominator
 
 
