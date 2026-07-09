@@ -53,6 +53,10 @@ class ClosedTradeMemoryEntry:
     gross_pnl_percent: float | None = None
     created_at: datetime | None = None
 
+    @property
+    def expires_at(self) -> datetime:
+        return self.cooldown_expires_at
+
     def remaining_seconds(self, now: datetime) -> int:
         return max(0, int((self.cooldown_expires_at - now).total_seconds()))
 
@@ -161,3 +165,7 @@ def build_closed_trade_memory_entry(
         gross_pnl_percent=gross_pnl_percent,
         created_at=actual_created_at,
     )
+
+
+TradeCooldownEntry = ClosedTradeMemoryEntry
+build_trade_cooldown_entry = build_closed_trade_memory_entry
