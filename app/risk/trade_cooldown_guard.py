@@ -111,5 +111,6 @@ class TradeCooldownGuard:
         risk_manager: 'RiskManager',
     ) -> PostTpReentryConfig:
         asset_class = risk_manager.instrument_profile_for(candidate.symbol).asset_class
-        smart_watch_minutes = 120 if str(asset_class) == 'CRYPTO' else 60
+        asset_class_value = getattr(asset_class, 'value', str(asset_class))
+        smart_watch_minutes = 120 if asset_class_value == 'CRYPTO' else 60
         return PostTpReentryConfig(smart_watch_minutes=smart_watch_minutes)
