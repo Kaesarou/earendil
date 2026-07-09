@@ -3,7 +3,9 @@ from datetime import datetime
 from typing import TYPE_CHECKING
 
 from app.persistence.trade_cooldown_store import TradeCooldownStore
-from app.risk.trade_cooldown import TradeCooldownConfig, TradeCooldownEntry
+from app.risk.trade_cooldown import ClosedTradeMemoryEntry, TradeCooldownConfig
+from app.strategies.guards.fixed_trade_cooldown_guard import FixedTradeCooldownGuard
+from app.strategies.guards.post_tp_reentry_guard import PostTpReentryConfig, PostTpReentryGuard
 
 if TYPE_CHECKING:
     from app.execution.trade_candidate import TradeCandidate
@@ -14,8 +16,9 @@ if TYPE_CHECKING:
 class TradeCooldownDecision:
     allowed: bool
     reason: str | None = None
-    active_cooldown: TradeCooldownEntry | None = None
+    active_cooldown: ClosedTradeMemoryEntry | None = None
     remaining_seconds: int | None = None
+    details: dict | None = None
 
 
 @dataclass(frozen=True)
@@ -33,6 +36,8 @@ class TradeCooldownFilterResult:
 class TradeCooldownGuard:
     def __init__(self, store: TradeCooldownStore):
         self.store = store
+        self.fixed_guard = FixedTradeCooldownGuard(store)
+        self.post_tp_reentry_guard = PostTpReentryGuard(store)
 
     def check(
         self,
@@ -42,27 +47,12 @@ class TradeCooldownGuard:
         config: TradeCooldownConfig,
         now: datetime,
     ) -> TradeCooldownDecision:
-        if not config.enabled:
-            return TradeCooldownDecision(allowed=True)
-
-        normalized_side = side.strip().upper()
-        if normalized_side not in ('BUY', 'SELL'):
-            return TradeCooldownDecision(allowed=True)
-
-        active_cooldown = self.store.find_active(
-            symbol=symbol,
-            side=normalized_side,
-            now=now,
-        )
-
-        if active_cooldown is None:
-            return TradeCooldownDecision(allowed=True)
-
+        decision = self.fixed_guard.check(symbol=symbol, side=side, config=config, now=now)
         return TradeCooldownDecision(
-            allowed=False,
-            reason=f'cooldown_after_{active_cooldown.close_reason.value}',
-            active_cooldown=active_cooldown,
-            remaining_seconds=active_cooldown.remaining_seconds(now),
+            allowed=decision.allowed,
+            reason=decision.reason,
+            active_cooldown=decision.active_cooldown,
+            remaining_seconds=decision.remaining_seconds,
         )
 
     def filter_candidates(
@@ -72,30 +62,54 @@ class TradeCooldownGuard:
         risk_manager: 'RiskManager',
         now: datetime,
     ) -> TradeCooldownFilterResult:
-        selected_candidates: list['TradeCandidate'] = []
-        rejected_candidates: list[RejectedCooldownCandidate] = []
-
-        for candidate in candidates:
-            risk_profile = risk_manager.risk_profile_for(candidate.symbol)
-            decision = self.check(
-                symbol=candidate.symbol,
-                side=candidate.signal.action,
-                config=risk_profile.trade_cooldown,
-                now=now,
+        fixed_result = self.fixed_guard.filter_candidates(
+            candidates=candidates,
+            config_for_candidate=lambda candidate: risk_manager.risk_profile_for(
+                candidate.symbol
+            ).trade_cooldown,
+            now=now,
+        )
+        rejected_candidates = [
+            RejectedCooldownCandidate(
+                candidate=rejected.candidate,
+                decision=TradeCooldownDecision(
+                    allowed=False,
+                    reason=rejected.decision.reason,
+                    active_cooldown=rejected.decision.active_cooldown,
+                    remaining_seconds=rejected.decision.remaining_seconds,
+                ),
             )
+            for rejected in fixed_result.rejected_candidates
+        ]
 
-            if decision.allowed:
-                selected_candidates.append(candidate)
-                continue
-
-            rejected_candidates.append(
-                RejectedCooldownCandidate(
-                    candidate=candidate,
-                    decision=decision,
-                )
+        post_tp_result = self.post_tp_reentry_guard.filter_candidates(
+            candidates=fixed_result.selected_candidates,
+            config_for_candidate=lambda candidate: self._post_tp_config_for(candidate, risk_manager),
+            now=now,
+        )
+        rejected_candidates.extend(
+            RejectedCooldownCandidate(
+                candidate=rejected.candidate,
+                decision=TradeCooldownDecision(
+                    allowed=False,
+                    reason=rejected.decision.reason,
+                    active_cooldown=rejected.decision.previous_trade,
+                    details=rejected.decision.details,
+                ),
             )
+            for rejected in post_tp_result.rejected_candidates
+        )
 
         return TradeCooldownFilterResult(
-            selected_candidates=selected_candidates,
+            selected_candidates=post_tp_result.selected_candidates,
             rejected_candidates=rejected_candidates,
         )
+
+    def _post_tp_config_for(
+        self,
+        candidate: 'TradeCandidate',
+        risk_manager: 'RiskManager',
+    ) -> PostTpReentryConfig:
+        asset_class = risk_manager.instrument_profile_for(candidate.symbol).asset_class
+        smart_watch_minutes = 120 if str(asset_class) == 'CRYPTO' else 60
+        return PostTpReentryConfig(smart_watch_minutes=smart_watch_minutes)
