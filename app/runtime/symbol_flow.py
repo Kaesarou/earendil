@@ -99,28 +99,14 @@ def process_closed_candle(
 ) -> TradeCandidate | None:
     candle_journal.write('candle_closed', {'symbol': symbol, 'candle': closed_candle})
 
-    logger.info(
-        'Candle closed | symbol=%s | open=%s | high=%s | low=%s | close=%s | opened_at=%s | closed_at=%s',
-        closed_candle.symbol,
-        closed_candle.open,
-        closed_candle.high,
-        closed_candle.low,
-        closed_candle.close,
-        closed_candle.opened_at.isoformat(),
-        closed_candle.closed_at.isoformat(),
-    )
-
     signal = strategy.on_candle(closed_candle)
-    logger.info(
-        'Strategy signal | symbol=%s | action=%s | confidence=%s | reason=%s | candle_close=%s',
-        symbol,
-        signal.action,
-        signal.confidence,
-        signal.reason,
-        closed_candle.close,
-    )
-
     if signal.action == 'HOLD':
+        logger.debug(
+            'Strategy hold | symbol=%s | reason=%s | candle_close=%s',
+            symbol,
+            signal.reason,
+            closed_candle.close,
+        )
         return _write_rejected_decision(
             symbol=symbol,
             snapshot=snapshot,
@@ -131,6 +117,15 @@ def process_closed_candle(
             trade_journal=trade_journal,
             session_decision=session_decision,
         )
+
+    logger.info(
+        'Strategy candidate signal | symbol=%s | action=%s | confidence=%s | reason=%s | candle_close=%s',
+        symbol,
+        signal.action,
+        signal.confidence,
+        signal.reason,
+        closed_candle.close,
+    )
 
     if session_decision is None or session_decision.session_key is None:
         return _write_rejected_decision(
@@ -220,5 +215,5 @@ def _write_rejected_decision(
             'risk_profile': risk_manager.risk_profile_for(symbol),
         },
     )
-    logger.info('Trade rejected: %s', plan.reason)
+    logger.debug('Trade rejected | symbol=%s | reason=%s', symbol, plan.reason)
     return None

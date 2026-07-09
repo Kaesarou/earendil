@@ -1,9 +1,11 @@
+import gzip
 import json
 import logging
-from dataclasses import asdict, is_dataclass
-from datetime import date, datetime, time, timezone
+from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, TextIO
+
+from app.journal.serialization import serialize_value
 
 logger = logging.getLogger(__name__)
 
@@ -14,14 +16,13 @@ class JsonlJournal:
         self.path.parent.mkdir(parents=True, exist_ok=True)
 
     def write(self, event_type: str, payload: dict[str, Any]) -> None:
-
         try:
             record = {
                 'timestamp': datetime.now(timezone.utc).isoformat(),
                 'event_type': event_type,
-                'payload': self._serialize(payload),
+                'payload': serialize_value(payload),
             }
-            with self.path.open('a', encoding='utf-8') as file:
+            with self._open_append() as file:
                 file.write(json.dumps(record, ensure_ascii=False) + '\n')
 
         except Exception as exc:
@@ -32,15 +33,10 @@ class JsonlJournal:
                 exc,
             )
 
+    def _open_append(self) -> TextIO:
+        if self.path.suffix == '.gz':
+            return gzip.open(self.path, 'at', encoding='utf-8')
+        return self.path.open('a', encoding='utf-8')
+
     def _serialize(self, value: Any) -> Any:
-        if is_dataclass(value) and not isinstance(value, type):
-            return self._serialize(asdict(value))
-        if hasattr(value, '_asdict'):
-            return self._serialize(value._asdict())
-        if isinstance(value, dict):
-            return {key: self._serialize(item) for key, item in value.items()}
-        if isinstance(value, (list, tuple)):
-            return [self._serialize(item) for item in value]
-        if isinstance(value, (datetime, date, time)):
-            return value.isoformat()
-        return value
+        return serialize_value(value)

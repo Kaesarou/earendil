@@ -12,7 +12,7 @@ class TradeExecutor:
 
     def execute(self, plan: TradePlan) -> BrokerOpenPositionResult | None:
         if not plan.approved:
-            logger.info('Trade rejected: %s', plan.reason)
+            logger.debug('Trade rejected before broker execution: %s', plan.reason)
             return None
 
         symbol = self._required(plan.symbol, 'symbol', plan)

@@ -12,8 +12,34 @@ class Settings(BaseSettings):
     app_log_path: str = Field(default='data/logs/earendil.log', alias='APP_LOG_PATH')
     position_store_path: str = Field(default='data/earendil.sqlite', alias='POSITION_STORE_PATH')
     journal_path: str = Field(default='data/logs/trades.jsonl', alias='JOURNAL_PATH')
-    market_log_path: str = Field(default='data/logs/market.jsonl', alias='MARKET_LOG_PATH')
-    candle_journal_path: str = Field(default='data/logs/candles.jsonl', alias='CANDLE_JOURNAL_PATH')
+    market_log_path: str = Field(default='data/logs/market.jsonl.gz', alias='MARKET_LOG_PATH')
+    candle_journal_path: str = Field(
+        default='data/logs/candles.jsonl.gz',
+        alias='CANDLE_JOURNAL_PATH',
+    )
+    errors_journal_path: str = Field(default='data/logs/errors.jsonl', alias='ERRORS_JOURNAL_PATH')
+    debug_decisions_journal_path: str = Field(
+        default='data/logs/debug_decisions.jsonl.gz',
+        alias='DEBUG_DECISIONS_JOURNAL_PATH',
+    )
+    daily_summary_path: str = Field(default='data/logs/daily_summary.json', alias='DAILY_SUMMARY_PATH')
+    partial_daily_summary_path: str = Field(
+        default='data/logs/daily_summary.partial.json',
+        alias='PARTIAL_DAILY_SUMMARY_PATH',
+    )
+    journal_detail_level: str = Field(default='normal', alias='JOURNAL_DETAIL_LEVEL')
+    journal_keep_debug_decisions: bool = Field(
+        default=False,
+        alias='JOURNAL_KEEP_DEBUG_DECISIONS',
+    )
+    journal_write_partial_summary: bool = Field(
+        default=True,
+        alias='JOURNAL_WRITE_PARTIAL_SUMMARY',
+    )
+    journal_partial_summary_interval_minutes: int = Field(
+        default=15,
+        alias='JOURNAL_PARTIAL_SUMMARY_INTERVAL_MINUTES',
+    )
 
     broker: str = Field(default='paper', alias='BROKER')
     log_level: str = Field(default='INFO', alias='LOG_LEVEL')
@@ -22,7 +48,10 @@ class Settings(BaseSettings):
 
     etoro_api_key: str = Field(default='', alias='ETORO_API_KEY')
     etoro_user_key: str = Field(default='', alias='ETORO_USER_KEY')
-    etoro_sellshort_safety_sl_buffer_percent: float = Field(default=0.30, alias='ETORO_SELLSHORT_SAFETY_SL_BUFFER_PERCENT')
+    etoro_sellshort_safety_sl_buffer_percent: float = Field(
+        default=0.30,
+        alias='ETORO_SELLSHORT_SAFETY_SL_BUFFER_PERCENT',
+    )
 
     watchlist: str = Field(default='', alias='WATCHLIST')
     base_currency: str = Field(default='USD', alias='BASE_CURRENCY')

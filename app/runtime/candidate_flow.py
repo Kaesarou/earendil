@@ -155,13 +155,6 @@ def apply_trade_cooldown_guard(
     if not result.rejected_candidates:
         return result.selected_candidates
 
-    trade_journal.write(
-        'trade_cooldown_guard',
-        {
-            'selected_candidates': result.selected_candidates,
-            'rejected_candidates': result.rejected_candidates,
-        },
-    )
     for rejected in result.rejected_candidates:
         candidate = rejected.candidate
         decision = rejected.decision
@@ -172,14 +165,13 @@ def apply_trade_cooldown_guard(
             side=candidate.signal.action,
         )
         trade_journal.write(
-            'decision',
+            'cooldown_blocked',
             {
                 'symbol': candidate.symbol,
                 'snapshot': candidate.snapshot,
                 'candle': candidate.candle,
                 'signal': candidate.signal,
                 'candidate': candidate,
-                'equity': None,
                 'trade_plan': plan,
                 'cooldown': decision.active_cooldown,
                 'cooldown_remaining_seconds': decision.remaining_seconds,
@@ -283,9 +275,7 @@ def _candidate_log_item(
         'effective_take_profit_percent': (
             effective_sl_tp.take_profit_percent if effective_sl_tp else None
         ),
-        'effective_stop_loss_percent': (
-            effective_sl_tp.stop_loss_percent if effective_sl_tp else None
-        ),
+        'effective_stop_loss_percent': effective_sl_tp.stop_loss_percent if effective_sl_tp else None,
         'sl_tp_mode': effective_sl_tp.mode if effective_sl_tp else None,
         'sl_tp_source': effective_sl_tp.source if effective_sl_tp else None,
         'tp_feasibility_penalty': candidate.tp_feasibility_penalty,
@@ -427,7 +417,7 @@ def execute_ranked_candidates(
             'evaluated_candidates': selected_evaluated_candidates,
         },
     )
-    logger.info(
+    logger.debug(
         'Candidate ranking | candidates=%s',
         [
             _candidate_log_item(
@@ -459,17 +449,30 @@ def execute_ranked_candidates(
                 effective_sl_tp=effective_sl_tp,
             )
             candidate_economics = economics_by_id.get(id(candidate))
+            decision_payload = {
+                'symbol': candidate.symbol,
+                'snapshot': candidate.snapshot,
+                'candle': candidate.candle,
+                'signal': candidate.signal,
+                'candidate': candidate,
+                'candidate_economics': candidate_economics,
+                'effective_sl_tp': effective_sl_tp,
+                'equity': equity,
+                'trade_plan': plan,
+                'instrument_profile': instrument_profile,
+                'risk_profile': risk_profile,
+            }
+            trade_journal.write('decision', decision_payload)
+            if not plan.approved:
+                continue
+
             trade_journal.write(
-                'decision',
+                'order_submitted',
                 {
                     'symbol': candidate.symbol,
-                    'snapshot': candidate.snapshot,
-                    'candle': candidate.candle,
-                    'signal': candidate.signal,
                     'candidate': candidate,
                     'candidate_economics': candidate_economics,
                     'effective_sl_tp': effective_sl_tp,
-                    'equity': equity,
                     'trade_plan': plan,
                     'instrument_profile': instrument_profile,
                     'risk_profile': risk_profile,
@@ -477,7 +480,27 @@ def execute_ranked_candidates(
             )
             execution_result = executor.execute(plan)
             if not execution_result:
+                trade_journal.write(
+                    'order_failed',
+                    {
+                        'symbol': candidate.symbol,
+                        'candidate': candidate,
+                        'trade_plan': plan,
+                        'reason': 'broker_returned_no_result',
+                    },
+                )
                 continue
+
+            trade_journal.write(
+                'order_filled',
+                {
+                    'symbol': candidate.symbol,
+                    'position_id': execution_result.position_id,
+                    'execution_result': execution_result,
+                    'candidate': candidate,
+                    'trade_plan': plan,
+                },
+            )
 
             planned_entry_price = candidate.snapshot.last
             executed_entry_price = execution_result.executed_entry_price
@@ -485,9 +508,7 @@ def execute_ranked_candidates(
                 executed_entry_price if executed_entry_price is not None else planned_entry_price
             )
             entry_price_source = (
-                'broker_execution'
-                if executed_entry_price is not None
-                else 'snapshot_fallback'
+                'broker_execution' if executed_entry_price is not None else 'snapshot_fallback'
             )
             adjusted_plan = risk_manager.adjust_trade_plan_to_entry_price(
                 trade_plan=plan,
@@ -556,6 +577,14 @@ def execute_ranked_candidates(
                 candidate.signal.action,
                 candidate.score,
                 exc,
+            )
+            trade_journal.write(
+                'order_failed',
+                {
+                    'symbol': candidate.symbol,
+                    'candidate': candidate,
+                    'message': str(exc),
+                },
             )
             trade_journal.write(
                 'candidate_execution_error',

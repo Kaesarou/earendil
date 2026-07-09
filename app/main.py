@@ -8,6 +8,7 @@ from app.execution.position_tracker import PositionTracker
 from app.execution.trade_candidate import TradeCandidate
 from app.execution.trade_executor import TradeExecutor
 from app.instruments.instrument_registry import InstrumentRegistry
+from app.journal.analysis_journal import build_analysis_journal
 from app.journal.jsonl_journal import JsonlJournal
 from app.market.candle_builder import CandleBuilder
 from app.persistence.position_store import PositionStore
@@ -35,11 +36,20 @@ def is_broker_authorization_error(exc: Exception) -> bool:
 
 
 def build_risk_manager(settings: Settings, instrument_registry: InstrumentRegistry) -> RiskManager:
-    return RiskManager(settings=settings, position_sizing_strategy=FixedPercentPositionSizing(), instrument_registry=instrument_registry)
+    return RiskManager(
+        settings=settings,
+        position_sizing_strategy=FixedPercentPositionSizing(),
+        instrument_registry=instrument_registry,
+    )
 
 
-def build_candidate_economics_estimator(instrument_registry: InstrumentRegistry) -> CandidateEconomicsEstimator:
-    return CandidateEconomicsEstimator(position_sizing_strategy=FixedPercentPositionSizing(), instrument_registry=instrument_registry)
+def build_candidate_economics_estimator(
+    instrument_registry: InstrumentRegistry,
+) -> CandidateEconomicsEstimator:
+    return CandidateEconomicsEstimator(
+        position_sizing_strategy=FixedPercentPositionSizing(),
+        instrument_registry=instrument_registry,
+    )
 
 
 def build_candle_builders(settings: Settings, symbols: list[str]) -> dict[str, CandleBuilder]:
@@ -61,7 +71,13 @@ def main() -> None:
     strategy_profile = build_strategy_profile(settings)
     instrument_registry = InstrumentRegistry(settings, instrument_configs=strategy_profile.instrument_configs)
     instrument_registry.validate_supported_symbols(symbols)
-    logger.info('Starting Eärendil | broker=%s | strategy_profile=%s | watchlist=%s', settings.broker, strategy_profile.name, symbols)
+    logger.info(
+        'Starting Eärendil | broker=%s | strategy_profile=%s | watchlist=%s | journal_detail=%s',
+        settings.broker,
+        strategy_profile.name,
+        symbols,
+        settings.journal_detail_level,
+    )
 
     broker = build_broker(settings)
     strategies = build_strategies(symbols=symbols, instrument_registry=instrument_registry)
@@ -69,66 +85,145 @@ def main() -> None:
     trading_session_service = trading_session_service_from_settings(settings)
     trading_session_state = TradingSessionState()
     risk_manager = build_risk_manager(settings=settings, instrument_registry=instrument_registry)
-    candidate_economics_estimator = build_candidate_economics_estimator(instrument_registry=instrument_registry)
+    candidate_economics_estimator = build_candidate_economics_estimator(
+        instrument_registry=instrument_registry,
+    )
     executor = TradeExecutor(broker)
     position_tracker = PositionTracker()
     position_store = PositionStore(settings.position_store_path)
     cooldown_store = TradeCooldownStore(settings.position_store_path)
     cooldown_guard = TradeCooldownGuard(cooldown_store)
-    trade_journal = JsonlJournal(settings.journal_path)
+    trade_journal = build_analysis_journal(settings)
     market_journal = JsonlJournal(settings.market_log_path)
     candle_journal = JsonlJournal(settings.candle_journal_path)
 
     try:
-        restore_persisted_positions(position_store=position_store, position_tracker=position_tracker, risk_manager=risk_manager, broker=broker, trade_journal=trade_journal, cooldown_store=cooldown_store, is_broker_authorization_error=is_broker_authorization_error)
-    except Exception as exc:
-        if is_broker_authorization_error(exc):
-            logger.critical('Broker authorization failed during startup. Check broker credentials.')
-            return
-        raise
-
-    while True:
         try:
-            cooldown_store.delete_expired(datetime.now(timezone.utc))
-            reconcile_externally_closed_positions(broker=broker, position_tracker=position_tracker, risk_manager=risk_manager, position_store=position_store, cooldown_store=cooldown_store, trade_journal=trade_journal, is_broker_authorization_error=is_broker_authorization_error)
-            candidates: list[TradeCandidate] = []
-            symbols_to_fetch, session_decisions, started_symbols, completed_session_keys = filter_symbols_by_trading_session(symbols=symbols, instrument_registry=instrument_registry, trading_session_service=trading_session_service, trading_session_state=trading_session_state, now=datetime.now(timezone.utc))
-            for session_key in completed_session_keys:
-                risk_manager.reset_session_trades(session_key)
-                trade_journal.write('session_trades_reset', {'session_key': session_key})
-            for symbol in started_symbols:
-                candle_builders[symbol] = CandleBuilder(timeframe_seconds=settings.candle_timeframe_seconds)
-                strategies[symbol] = TrendStrategy(instrument_registry.config_for(symbol).trend)
-                trade_journal.write('session_started', {'symbol': symbol, 'session_decision': session_decisions[symbol]})
-            for symbol, session_decision in session_decisions.items():
-                if not session_decision.collect_snapshots:
-                    trade_journal.write('session_state', {'symbol': symbol, 'session_decision': session_decision})
-            snapshots = broker.get_market_snapshots(symbols_to_fetch) if symbols_to_fetch else {}
-            for symbol in symbols_to_fetch:
-                try:
-                    session_decision = session_decisions[symbol]
-                    snapshot = snapshots[symbol]
-                    candidate = process_symbol(symbol=symbol, broker=broker, strategy=strategies[symbol], risk_manager=risk_manager, executor=executor, position_tracker=position_tracker, candle_builder=candle_builders[symbol], trade_journal=trade_journal, market_journal=market_journal, candle_journal=candle_journal, is_broker_authorization_error=is_broker_authorization_error, position_store=position_store, cooldown_store=cooldown_store, snapshot=snapshot, session_decision=session_decision)
-                    force_close_positions_before_session_end(symbol=symbol, snapshot=snapshot, session_decision=session_decision, executor=executor, position_tracker=position_tracker, risk_manager=risk_manager, trade_journal=trade_journal, position_store=position_store, cooldown_store=cooldown_store, is_broker_authorization_error=is_broker_authorization_error)
-                    if candidate is not None:
-                        candidates.append(candidate)
-                except Exception as exc:
-                    if is_broker_authorization_error(exc):
-                        raise
-                    logger.exception('Symbol processing error | symbol=%s | error=%s', symbol, exc)
-                    trade_journal.write('error', {'symbol': symbol, 'message': str(exc)})
-            execute_ranked_candidates(candidates=candidates, execution_broker=broker, risk_manager=risk_manager, executor=executor, position_tracker=position_tracker, trade_journal=trade_journal, position_store=position_store, strategy_profile=strategy_profile, cooldown_guard=cooldown_guard, candidate_economics_estimator=candidate_economics_estimator, is_broker_authorization_error=is_broker_authorization_error)
-        except KeyboardInterrupt:
-            logger.info('Stopping Eärendil')
-            break
+            restore_persisted_positions(
+                position_store=position_store,
+                position_tracker=position_tracker,
+                risk_manager=risk_manager,
+                broker=broker,
+                trade_journal=trade_journal,
+                cooldown_store=cooldown_store,
+                is_broker_authorization_error=is_broker_authorization_error,
+            )
         except Exception as exc:
             if is_broker_authorization_error(exc):
-                logger.critical('Broker authorization failed. Stopping bot loop.')
-                trade_journal.write('broker_authorization_error', {'stage': 'bot_loop', 'message': str(exc)})
+                logger.critical('Broker authorization failed during startup. Check broker credentials.')
+                return
+            raise
+
+        while True:
+            try:
+                cooldown_store.delete_expired(datetime.now(timezone.utc))
+                reconcile_externally_closed_positions(
+                    broker=broker,
+                    position_tracker=position_tracker,
+                    risk_manager=risk_manager,
+                    position_store=position_store,
+                    cooldown_store=cooldown_store,
+                    trade_journal=trade_journal,
+                    is_broker_authorization_error=is_broker_authorization_error,
+                )
+                candidates: list[TradeCandidate] = []
+                symbols_to_fetch, session_decisions, started_symbols, completed_session_keys = (
+                    filter_symbols_by_trading_session(
+                        symbols=symbols,
+                        instrument_registry=instrument_registry,
+                        trading_session_service=trading_session_service,
+                        trading_session_state=trading_session_state,
+                        now=datetime.now(timezone.utc),
+                    )
+                )
+                for session_key in completed_session_keys:
+                    risk_manager.reset_session_trades(session_key)
+                    trade_journal.write('session_trades_reset', {'session_key': session_key})
+                for symbol in started_symbols:
+                    candle_builders[symbol] = CandleBuilder(
+                        timeframe_seconds=settings.candle_timeframe_seconds,
+                    )
+                    strategies[symbol] = TrendStrategy(instrument_registry.config_for(symbol).trend)
+                    trade_journal.write(
+                        'session_started',
+                        {'symbol': symbol, 'session_decision': session_decisions[symbol]},
+                    )
+                for symbol, session_decision in session_decisions.items():
+                    if not session_decision.collect_snapshots:
+                        trade_journal.write(
+                            'session_state',
+                            {'symbol': symbol, 'session_decision': session_decision},
+                        )
+                snapshots = broker.get_market_snapshots(symbols_to_fetch) if symbols_to_fetch else {}
+                for symbol in symbols_to_fetch:
+                    try:
+                        session_decision = session_decisions[symbol]
+                        snapshot = snapshots[symbol]
+                        candidate = process_symbol(
+                            symbol=symbol,
+                            broker=broker,
+                            strategy=strategies[symbol],
+                            risk_manager=risk_manager,
+                            executor=executor,
+                            position_tracker=position_tracker,
+                            candle_builder=candle_builders[symbol],
+                            trade_journal=trade_journal,
+                            market_journal=market_journal,
+                            candle_journal=candle_journal,
+                            is_broker_authorization_error=is_broker_authorization_error,
+                            position_store=position_store,
+                            cooldown_store=cooldown_store,
+                            snapshot=snapshot,
+                            session_decision=session_decision,
+                        )
+                        force_close_positions_before_session_end(
+                            symbol=symbol,
+                            snapshot=snapshot,
+                            session_decision=session_decision,
+                            executor=executor,
+                            position_tracker=position_tracker,
+                            risk_manager=risk_manager,
+                            trade_journal=trade_journal,
+                            position_store=position_store,
+                            cooldown_store=cooldown_store,
+                            is_broker_authorization_error=is_broker_authorization_error,
+                        )
+                        if candidate is not None:
+                            candidates.append(candidate)
+                    except Exception as exc:
+                        if is_broker_authorization_error(exc):
+                            raise
+                        logger.exception('Symbol processing error | symbol=%s | error=%s', symbol, exc)
+                        trade_journal.write('error', {'symbol': symbol, 'message': str(exc)})
+                execute_ranked_candidates(
+                    candidates=candidates,
+                    execution_broker=broker,
+                    risk_manager=risk_manager,
+                    executor=executor,
+                    position_tracker=position_tracker,
+                    trade_journal=trade_journal,
+                    position_store=position_store,
+                    strategy_profile=strategy_profile,
+                    cooldown_guard=cooldown_guard,
+                    candidate_economics_estimator=candidate_economics_estimator,
+                    is_broker_authorization_error=is_broker_authorization_error,
+                )
+            except KeyboardInterrupt:
+                logger.info('Stopping Eärendil')
                 break
-            logger.exception('Bot loop error: %s', exc)
-            trade_journal.write('error', {'message': str(exc)})
-        time.sleep(settings.poll_interval_seconds)
+            except Exception as exc:
+                if is_broker_authorization_error(exc):
+                    logger.critical('Broker authorization failed. Stopping bot loop.')
+                    trade_journal.write(
+                        'broker_authorization_error',
+                        {'stage': 'bot_loop', 'message': str(exc)},
+                    )
+                    break
+                logger.exception('Bot loop error: %s', exc)
+                trade_journal.write('error', {'message': str(exc)})
+            time.sleep(settings.poll_interval_seconds)
+    finally:
+        trade_journal.finalize()
 
 
 if __name__ == '__main__':
