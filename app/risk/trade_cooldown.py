@@ -34,20 +34,27 @@ class TradeCooldownConfig:
 
 
 @dataclass(frozen=True)
-class TradeCooldownEntry:
+class ClosedTradeMemoryEntry:
     symbol: str
     side: str
     close_reason: CloseReason
     raw_close_reason: str | None
+    opened_at: datetime | None
     closed_at: datetime
-    expires_at: datetime
+    cooldown_expires_at: datetime
     position_id: str | None = None
+    entry_price: float | None = None
+    exit_price: float | None = None
+    stop_loss: float | None = None
+    take_profit: float | None = None
+    highest_price: float | None = None
+    lowest_price: float | None = None
     gross_pnl: float | None = None
     gross_pnl_percent: float | None = None
     created_at: datetime | None = None
 
     def remaining_seconds(self, now: datetime) -> int:
-        return max(0, int((self.expires_at - now).total_seconds()))
+        return max(0, int((self.cooldown_expires_at - now).total_seconds()))
 
 
 MANUAL_CLOSE_REASONS = {
@@ -85,17 +92,13 @@ def close_reason_from_raw(raw_reason: str | None) -> CloseReason:
     return CloseReason.UNKNOWN
 
 
-def close_reason_for_closed_trade(
-    raw_reason: str | None,
-    gross_pnl: float | None = None,
-) -> CloseReason:
+def close_reason_for_closed_trade(raw_reason: str | None, gross_pnl: float | None = None) -> CloseReason:
     normalized_reason = (raw_reason or '').strip().lower()
 
     if normalized_reason in PROTECTED_EXIT_REASONS:
         return close_reason_from_pnl(gross_pnl)
 
     close_reason = close_reason_from_raw(raw_reason)
-
     if close_reason != CloseReason.UNKNOWN:
         return close_reason
 
@@ -115,7 +118,7 @@ def close_reason_from_pnl(gross_pnl: float | None) -> CloseReason:
     return CloseReason.UNKNOWN
 
 
-def build_trade_cooldown_entry(
+def build_closed_trade_memory_entry(
     *,
     symbol: str,
     side: str,
@@ -123,26 +126,37 @@ def build_trade_cooldown_entry(
     raw_close_reason: str | None,
     closed_at: datetime,
     position_id: str | None = None,
+    opened_at: datetime | None = None,
+    entry_price: float | None = None,
+    exit_price: float | None = None,
+    stop_loss: float | None = None,
+    take_profit: float | None = None,
+    highest_price: float | None = None,
+    lowest_price: float | None = None,
     gross_pnl: float | None = None,
     gross_pnl_percent: float | None = None,
     created_at: datetime | None = None,
-) -> TradeCooldownEntry:
-    close_reason = close_reason_for_closed_trade(
-        raw_reason=raw_close_reason,
-        gross_pnl=gross_pnl,
-    )
+) -> ClosedTradeMemoryEntry:
+    close_reason = close_reason_for_closed_trade(raw_reason=raw_close_reason, gross_pnl=gross_pnl)
     normalized_symbol = normalize_symbol(symbol)
     normalized_side = side.strip().upper()
     actual_created_at = created_at or datetime.now(timezone.utc)
 
-    return TradeCooldownEntry(
+    return ClosedTradeMemoryEntry(
         symbol=normalized_symbol,
         side=normalized_side,
         close_reason=close_reason,
         raw_close_reason=raw_close_reason,
+        opened_at=opened_at,
         closed_at=closed_at,
-        expires_at=closed_at + config.duration_for(close_reason),
+        cooldown_expires_at=closed_at + config.duration_for(close_reason),
         position_id=position_id,
+        entry_price=entry_price,
+        exit_price=exit_price,
+        stop_loss=stop_loss,
+        take_profit=take_profit,
+        highest_price=highest_price,
+        lowest_price=lowest_price,
         gross_pnl=gross_pnl,
         gross_pnl_percent=gross_pnl_percent,
         created_at=actual_created_at,
