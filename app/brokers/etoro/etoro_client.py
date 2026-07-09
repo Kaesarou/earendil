@@ -123,7 +123,7 @@ class EtoroClient(BrokerClient):
             take_profit=take_profit,
         )
         logger.warning(
-            'Sending eToro order | env=%s | symbol=%s | side=%s | transaction=%s | instrument_id=%s | amount=%s | stop_loss=%s | take_profit=%s | leverage=%s',
+            'Sending eToro order | env=%s | symbol=%s | side=%s | transaction=%s | instrument_id=%s | amount=%s | bot_stop_loss=%s | take_profit=%s | StopLossRate=%s | TakeProfitRate=%s | leverage=%s | payload=%s',
             self.env,
             symbol,
             normalized_side,
@@ -132,7 +132,10 @@ class EtoroClient(BrokerClient):
             amount,
             stop_loss,
             take_profit,
+            payload.get('StopLossRate'),
+            payload.get('TakeProfitRate'),
             payload.get('leverage'),
+            payload,
         )
         order_response = self._post(self._open_order_path(), payload)
         logger.info('eToro order response: %s', order_response)
@@ -273,7 +276,15 @@ class EtoroClient(BrokerClient):
         ensure_side_is_allowed(side)
 
     def _build_open_order_payload(self, instrument_id: int, side: str, amount: float, stop_loss: float, take_profit: float) -> dict:
-        return build_open_order_payload(instrument_id=instrument_id, side=side, amount=amount, stop_loss=stop_loss, take_profit=take_profit, order_currency=self.settings.base_currency)
+        return build_open_order_payload(
+            instrument_id=instrument_id,
+            side=side,
+            amount=amount,
+            stop_loss=stop_loss,
+            take_profit=take_profit,
+            order_currency=self.settings.base_currency,
+            sellshort_safety_sl_buffer_percent=self.settings.etoro_sellshort_safety_sl_buffer_percent,
+        )
 
     def _open_transaction_for_side(self, side: str) -> str:
         return open_transaction_for_side(side)

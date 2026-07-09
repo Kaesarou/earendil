@@ -22,6 +22,7 @@ class Settings(BaseSettings):
 
     etoro_api_key: str = Field(default='', alias='ETORO_API_KEY')
     etoro_user_key: str = Field(default='', alias='ETORO_USER_KEY')
+    etoro_sellshort_safety_sl_buffer_percent: float = Field(default=0.30, alias='ETORO_SELLSHORT_SAFETY_SL_BUFFER_PERCENT')
 
     watchlist: str = Field(default='', alias='WATCHLIST')
     base_currency: str = Field(default='USD', alias='BASE_CURRENCY')

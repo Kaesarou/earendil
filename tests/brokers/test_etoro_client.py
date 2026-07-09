@@ -184,8 +184,8 @@ def test_etoro_open_position_sends_expected_demo_buy_order_payload(monkeypatch):
     assert client.position_instruments['9001'] == 100000
 
 
-def test_etoro_open_position_sends_expected_demo_sell_order_payload_without_broker_side_exits(monkeypatch):
-    client = EtoroClient(settings=Settings(BROKER='etoro_demo', BASE_CURRENCY='USD', ETORO_API_KEY='api-key', ETORO_USER_KEY='user-key'))
+def test_etoro_open_position_sends_expected_demo_sell_order_payload_with_safety_stop(monkeypatch):
+    client = EtoroClient(settings=Settings(BROKER='etoro_demo', BASE_CURRENCY='USD', ETORO_API_KEY='api-key', ETORO_USER_KEY='user-key', ETORO_SELLSHORT_SAFETY_SL_BUFFER_PERCENT=0.30))
     captured = {}
     monkeypatch.setattr(client, '_find_instrument_id', lambda symbol: 1261)
 
@@ -207,8 +207,8 @@ def test_etoro_open_position_sends_expected_demo_sell_order_payload_without_brok
     assert result.position_id == '9002'
     assert result.executed_entry_price == 238.0
     assert captured['path'] == '/api/v2/trading/execution/demo/orders'
-    assert captured['payload'] == {'action': 'open', 'transaction': 'sellShort', 'InstrumentID': 1261, 'orderType': 'mkt', 'leverage': 1, 'amount': 497.26, 'orderCurrency': 'usd', 'settlementType': 'cfd'}
-    assert 'StopLossRate' not in captured['payload']
+    assert captured['payload'] == {'action': 'open', 'transaction': 'sellShort', 'InstrumentID': 1261, 'orderType': 'mkt', 'leverage': 1, 'amount': 497.26, 'orderCurrency': 'usd', 'settlementType': 'cfd', 'StopLossRate': 338.42143}
+    assert captured['payload']['StopLossRate'] > 337.4092
     assert 'TakeProfitRate' not in captured['payload']
     assert client.position_instruments['9002'] == 1261
 
