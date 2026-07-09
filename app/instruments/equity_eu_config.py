@@ -28,8 +28,8 @@ class EquityEuConfig(InstrumentConfig):
     risk: RiskProfile = RiskProfile(
         asset_class=AssetClass.EQUITY_EU,
         max_position_size_percent=0.75,
-        stop_loss_percent=0.80,
-        take_profit_percent=1.40,
+        stop_loss_percent=0.70,
+        take_profit_percent=1.00,
         force_close_enabled=False,
         force_close_hour=17,
         force_close_minute=25,
