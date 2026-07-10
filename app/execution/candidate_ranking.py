@@ -99,6 +99,7 @@ def _score_breakdown(
 def _entry_quality_metadata(score_breakdown) -> dict[str, Any]:
     exhaustion = score_breakdown.exhaustion
     return {
+        'setup_quality_bonus': score_breakdown.score_metadata.get('setup_quality_bonus', 0.0),
         'late_entry_risk': exhaustion.late_entry_risk,
         'exhaustion_penalty': exhaustion.exhaustion_penalty,
         'late_entry_score_cap': exhaustion.late_entry_score_cap,
@@ -131,6 +132,8 @@ def _rank_reason(
     return (
         f'score={round(score, 4)} | '
         f'base_score={round(base_score, 4)} | '
+        f'setup_quality={signal.setup_quality} | '
+        f'setup_quality_bonus={entry_quality_metadata["setup_quality_bonus"]} | '
         f'exhaustion_penalty={entry_quality_metadata["exhaustion_penalty"]} | '
         f'late_entry_risk={entry_quality_metadata["late_entry_risk"]} | '
         f'late_entry_severity={entry_quality_metadata["late_entry_severity"]} | '
@@ -142,7 +145,6 @@ def _rank_reason(
         f'remaining_move_quality={entry_quality_metadata["remaining_move_quality"]} | '
         f'exhaustion_components={entry_quality_metadata["reason_exhaustion_components"]} | '
         f'action={signal.action} | '
-        f'confidence={signal.confidence} | '
         f'session_move={float_metadata(metadata, "session_move_percent")} | '
         f'trend_strength={float_metadata(metadata, "trend_strength_percent")} | '
         f'breakout={float_metadata(metadata, "breakout_percent")} | '
