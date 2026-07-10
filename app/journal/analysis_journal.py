@@ -28,6 +28,7 @@ class AnalysisJournal:
         strategy: str | None = None,
         profile: str | None = None,
     ):
+        self.run_id = run_id
         self.trade_journal = trade_journal
         self.errors_journal = errors_journal
         self.debug_decisions_journal = debug_decisions_journal
@@ -68,18 +69,59 @@ class AnalysisJournal:
 
         self._maybe_write_partial_summary()
 
-    def finalize(self) -> None:
-        self.summary.finalize()
+    def record_raw_event(
+        self,
+        event_type: str,
+        payload: dict[str, Any],
+        written: bool,
+    ) -> None:
+        if written:
+            self.summary.record(event_type, payload)
+            self._maybe_write_partial_summary()
+            return
+
+        self.write(
+            'raw_journal_error',
+            {
+                'event_type': event_type,
+                'symbol': payload.get('symbol'),
+                'message': 'Raw journal event could not be written.',
+            },
+        )
+
+    def runtime_metrics(self) -> dict[str, Any]:
+        summary = self.summary.to_dict()
+        return {
+            'market_snapshots': summary['market_data']['snapshots'],
+            'candles_closed': summary['market_data']['candles_closed'],
+            'candidates': summary['decisions']['candidate_total'],
+            'selected': summary['decisions']['selected_total'],
+            'orders_submitted': summary['orders']['submitted'],
+            'positions_opened': summary['positions']['opened'],
+            'positions_closed': summary['positions']['closed'],
+            'errors': summary['errors']['total'],
+        }
+
+    def finalize(self) -> dict[str, Any]:
+        summary = self.summary.finalize()
         self.summary.write(self.summary_path)
         if self.partial_summary_path:
             self.summary.write(self.partial_summary_path)
+        return summary
 
-    def _normalize_event(self, event_type: str, payload: dict[str, Any]) -> tuple[str, dict[str, Any]] | None:
+    def _normalize_event(
+        self,
+        event_type: str,
+        payload: dict[str, Any],
+    ) -> tuple[str, dict[str, Any]] | None:
         if event_type != 'session_state':
             return event_type, payload
         return self._session_state_change_event(payload)
 
-    def _session_state_change_event(self, payload: dict[str, Any]) -> tuple[str, dict[str, Any]] | None:
+    def _session_state_change_event(
+        self,
+        payload: dict[str, Any],
+    ) -> tuple[str, dict[str, Any]] | None:
         symbol = payload.get('symbol')
         session_decision = payload.get('session_decision')
         if symbol is None or session_decision is None:
@@ -126,10 +168,24 @@ def build_analysis_journal(settings: Settings, *, run_id: str | None = None) -> 
     detail_level = normalize_detail_level(settings.journal_detail_level)
     debug_enabled = detail_level in {'debug', 'full'} or settings.journal_keep_debug_decisions
     return AnalysisJournal(
-        trade_journal=JsonlJournal(settings.journal_path),
-        errors_journal=JsonlJournal(settings.errors_journal_path),
+        trade_journal=JsonlJournal(
+            settings.journal_path,
+            run_id=run_id,
+            stream_name='trades',
+        ),
+        errors_journal=JsonlJournal(
+            settings.errors_journal_path,
+            run_id=run_id,
+            stream_name='errors',
+        ),
         debug_decisions_journal=(
-            JsonlJournal(settings.debug_decisions_journal_path) if debug_enabled else None
+            JsonlJournal(
+                settings.debug_decisions_journal_path,
+                run_id=run_id,
+                stream_name='debug_decisions',
+            )
+            if debug_enabled
+            else None
         ),
         summary_path=settings.daily_summary_path,
         partial_summary_path=settings.partial_daily_summary_path,
