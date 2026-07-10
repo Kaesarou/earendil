@@ -119,10 +119,10 @@ def process_closed_candle(
         )
 
     logger.info(
-        'Strategy candidate signal | symbol=%s | action=%s | confidence=%s | reason=%s | candle_close=%s',
+        'Strategy candidate signal | symbol=%s | action=%s | setup_quality=%s | reason=%s | candle_close=%s',
         symbol,
         signal.action,
-        signal.confidence,
+        signal.setup_quality,
         signal.reason,
         closed_candle.close,
     )
@@ -192,8 +192,8 @@ def _write_rejected_decision(
     signal,
     reason: str,
     risk_manager: RiskManager,
-    trade_journal: JsonlJournal,
     session_decision: TradingSessionDecision | None,
+    trade_journal: JsonlJournal,
 ) -> None:
     plan = TradePlan(
         approved=False,
