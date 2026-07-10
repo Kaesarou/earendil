@@ -20,6 +20,7 @@ ERROR_EVENT_TYPES = frozenset(
         'position_persistence_error',
         'position_reconciliation_warning',
         'position_restore_warning',
+        'raw_journal_error',
     }
 )
 
