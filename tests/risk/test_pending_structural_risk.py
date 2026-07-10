@@ -1,9 +1,11 @@
+import pytest
+
 from app.execution.sl_tp_profile import EffectiveSlTp
+from app.risk.models import TradePlan
 from app.risk.trade_cost_model import TradeCostConfig
 from tests.risk.test_risk_manager import (
     build_risk_manager,
     buy_signal,
-    evaluate,
     snapshot,
 )
 
@@ -105,3 +107,72 @@ def test_pending_structural_stop_rejects_distance_above_profile_maximum():
 
     assert not plan.approved
     assert plan.reason == 'structural_stop_too_wide'
+
+
+def test_buy_structural_stop_keeps_absolute_invalidation_after_fill():
+    risk_manager = build_risk_manager()
+    plan = TradePlan(
+        approved=True,
+        reason='pending_confirmation',
+        symbol='AAPL',
+        side='BUY',
+        stop_loss=99.0,
+        take_profit=102.0,
+        sl_tp_source='pending_structural',
+        effective_stop_loss_percent=1.0,
+        effective_take_profit_percent=2.0,
+    )
+
+    adjusted = risk_manager.adjust_trade_plan_to_entry_price(
+        trade_plan=plan,
+        entry_price=101.0,
+    )
+
+    assert adjusted.stop_loss == 99.0
+    assert adjusted.take_profit == 103.02
+    assert adjusted.effective_stop_loss_percent == 1.9802
+
+
+def test_sell_structural_stop_keeps_absolute_invalidation_after_fill():
+    risk_manager = build_risk_manager()
+    plan = TradePlan(
+        approved=True,
+        reason='pending_confirmation',
+        symbol='AAPL',
+        side='SELL',
+        stop_loss=101.0,
+        take_profit=98.0,
+        sl_tp_source='pending_structural',
+        effective_stop_loss_percent=1.0,
+        effective_take_profit_percent=2.0,
+    )
+
+    adjusted = risk_manager.adjust_trade_plan_to_entry_price(
+        trade_plan=plan,
+        entry_price=99.0,
+    )
+
+    assert adjusted.stop_loss == 101.0
+    assert adjusted.take_profit == 97.02
+    assert adjusted.effective_stop_loss_percent == 2.0202
+
+
+def test_structural_fill_crossing_stop_is_rejected():
+    risk_manager = build_risk_manager()
+    plan = TradePlan(
+        approved=True,
+        reason='pending_confirmation',
+        symbol='AAPL',
+        side='BUY',
+        stop_loss=99.0,
+        take_profit=102.0,
+        sl_tp_source='pending_structural',
+        effective_stop_loss_percent=1.0,
+        effective_take_profit_percent=2.0,
+    )
+
+    with pytest.raises(ValueError, match='crossed structural stop level'):
+        risk_manager.adjust_trade_plan_to_entry_price(
+            trade_plan=plan,
+            entry_price=98.5,
+        )
