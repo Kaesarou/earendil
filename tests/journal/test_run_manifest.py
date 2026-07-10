@@ -11,7 +11,7 @@ from app.journal.run_manifest import (
 from app.strategies.strategy import strategy_profile_from_name
 
 
-def test_run_manifest_captures_replay_configuration_without_broker_secrets():
+def test_run_manifest_captures_analysis_configuration_without_broker_secrets():
     settings = Settings(
         WATCHLIST='AAPL',
         EQUITY_US_SYMBOLS='AAPL',
@@ -41,12 +41,13 @@ def test_run_manifest_captures_replay_configuration_without_broker_secrets():
     assert 'ETORO_USER_KEY' not in snapshot
     assert manifest['strategy']['profile'] == 'balanced'
     assert manifest['runtime']['watchlist'] == ['AAPL']
-    assert manifest['replay']['filter_by_run_id'] == 'run-test'
+    assert manifest['analysis_sources']['run_id'] == 'run-test'
+    assert manifest['analysis_sources']['raw_market_retained'] is True
     assert manifest['files']['manifest'].endswith('runs/run-test/run_manifest.json')
     assert manifest['code']['source_sha256']
 
 
-def test_sanitized_settings_keeps_non_sensitive_replay_values():
+def test_sanitized_settings_keeps_non_sensitive_analysis_values():
     settings = Settings(
         WATCHLIST='AAPL',
         EQUITY_US_SYMBOLS='AAPL',
