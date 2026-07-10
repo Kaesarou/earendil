@@ -17,8 +17,7 @@ The project currently contains:
 - centralized risk management
 - paper execution engine
 - structured trade, error, market and candle journals
-- daily summaries and reproducible run manifests
-- deterministic market replay and baseline comparison
+- daily summaries and per-run configuration manifests
 
 By default, the bot runs in `paper` mode and does not place real orders.
 
@@ -36,7 +35,7 @@ docker compose up --build
 
 ## Journals and run analysis
 
-Normal mode keeps raw market data for replay while avoiding one JSONL line for every HOLD decision.
+Normal mode keeps enough information for post-session strategic analysis while avoiding one JSONL line for every HOLD decision.
 
 Main files:
 
@@ -49,35 +48,25 @@ data/logs/daily_summary.json
 data/logs/run_manifest.json
 ```
 
-Each run also archives its reproducibility files under:
+Each run also archives its context files under:
 
 ```text
 data/logs/runs/<run_id>/run_manifest.json
 data/logs/runs/<run_id>/daily_summary.json
 ```
 
-The manifest contains the Git commit, the complete non-secret settings snapshot, the strategy profile, the instrument configuration, the watchlist and the paths of the replay sources.
+The manifest contains the Git commit when available, a source fingerprint, the complete non-secret settings snapshot, the strategy profile, the instrument configuration and the watchlist.
 
-Every JSONL record contains a `run_id`, stream name and contiguous sequence. Replay stops with an integrity error if market records are missing or out of order.
+Every JSONL record contains a `run_id`, stream name and sequence number. This makes it possible to isolate one run inside append-only files and to spot missing records during analysis.
 
-## Replay a run
+For a complete post-session analysis, keep or send together:
 
-Run the replay from the archived manifest:
+- the archived `run_manifest.json` and `daily_summary.json` for the run;
+- `trades.jsonl` and `errors.jsonl`;
+- `market.jsonl.gz` and `candles.jsonl.gz`;
+- `debug_decisions.jsonl.gz` only when the run used debug/full detail.
 
-```bash
-python -m app.replay.cli data/logs/runs/<run_id>/run_manifest.json
-```
-
-The command:
-
-- validates the market, candle and trade streams;
-- rebuilds candles and strategy decisions from raw market snapshots;
-- rebuilds candidates and the pre-economics min-score/top-n selection;
-- compares simulated candidates with the real run;
-- lists additional winning and losing counterfactual candidates;
-- writes `replay_report.json` in the run archive and updates the latest report.
-
-The counterfactual TP/SL outcome is a screening tool. It uses `snapshot.last` and static risk-profile percentages. It does not yet reproduce broker slippage, fees, cooldown, account-equity limits or position overlap.
+The raw market and candle streams remain the source material for manual analysis and counterfactual simulations outside the bot. Earendil does not run those simulations as part of this logging US.
 
 ## Project structure
 
@@ -92,7 +81,6 @@ earendil/
 │   ├── risk/
 │   ├── execution/
 │   ├── journal/
-│   ├── replay/
 │   └── utils/
 ├── tests/
 ├── scripts/
