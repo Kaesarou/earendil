@@ -1,10 +1,11 @@
+from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 
 from app.execution.candidate_economics import CandidateEconomics, EvaluatedTradeCandidate
 from app.execution.trade_candidate import TradeCandidate
 from app.market.models import Candle, MarketSnapshot
-from app.runtime.pending_entry import PendingEntryManager
+from app.runtime.pending_entry import PendingEntryManager, PendingEntryState
 from app.strategies.entry_confirmation import EntryConfirmationConfig
 from app.strategies.signals import Signal
 
@@ -112,6 +113,81 @@ def test_pending_expires_after_max_candles():
 
     assert result.events[-1].event_type == 'pending_entry_expired'
     assert manager.snapshot() == []
+
+
+def test_expired_setup_cannot_be_registered_again_in_same_session():
+    manager = PendingEntryManager()
+    original = evaluated()
+    manager.register(evaluated_candidate=original, max_candles=1)
+    manager.observe(
+        symbol='AMD',
+        candle=candle(close=100.0),
+        snapshot=original.candidate.snapshot,
+        signal=Signal.hold('wait'),
+        session_key='US',
+        session_tradable=True,
+        spread_percent=0.05,
+        config=EntryConfirmationConfig(max_candles=1),
+    )
+
+    events = manager.register(
+        evaluated_candidate=evaluated(score=130.0),
+        max_candles=5,
+        detected_at=NOW + timedelta(minutes=1),
+    )
+
+    assert events == ()
+    assert manager.snapshot() == []
+
+
+def test_expired_setup_can_be_registered_in_new_session():
+    manager = PendingEntryManager()
+    original = evaluated()
+    manager.register(evaluated_candidate=original, max_candles=1)
+    manager.observe(
+        symbol='AMD',
+        candle=candle(close=100.0),
+        snapshot=original.candidate.snapshot,
+        signal=Signal.hold('wait'),
+        session_key='US',
+        session_tradable=True,
+        spread_percent=0.05,
+        config=EntryConfirmationConfig(max_candles=1),
+    )
+    manager.invalidate_session('US')
+
+    events = manager.register(
+        evaluated_candidate=evaluated(score=130.0),
+        max_candles=5,
+        detected_at=NOW + timedelta(days=1),
+    )
+
+    assert events[0].event_type == 'pending_entry_registered'
+
+
+def test_confirmed_pending_returns_to_waiting_when_not_executed():
+    manager = PendingEntryManager()
+    manager.register(evaluated_candidate=evaluated(), max_candles=5)
+    pending = manager.snapshot()[0]
+    manager._entries[pending.key] = replace(
+        pending,
+        state=PendingEntryState.CONFIRMED,
+        confirmation_type='persistence',
+    )
+
+    manager.observe(
+        symbol='AMD',
+        candle=candle(close=100.0, minute=1),
+        snapshot=evaluated().candidate.snapshot,
+        signal=Signal.hold('wait'),
+        session_key='US',
+        session_tradable=True,
+        spread_percent=0.05,
+        config=EntryConfirmationConfig(max_candles=5),
+    )
+
+    assert manager.get(pending.key) is not None
+    assert manager.get(pending.key).state != PendingEntryState.CONFIRMED
 
 
 def test_cooldown_invalidates_pending():
