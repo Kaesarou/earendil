@@ -31,10 +31,6 @@ class Settings(BaseSettings):
         default='data/logs/run_manifest.json',
         alias='RUN_MANIFEST_PATH',
     )
-    replay_report_path: str = Field(
-        default='data/logs/replay_report.json',
-        alias='REPLAY_REPORT_PATH',
-    )
     journal_detail_level: str = Field(default='normal', alias='JOURNAL_DETAIL_LEVEL')
     journal_keep_debug_decisions: bool = Field(
         default=False,
