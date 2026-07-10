@@ -4,6 +4,7 @@ from app.config.settings import Settings
 from app.instruments.instrument_registry import InstrumentRegistry
 from app.journal.run_manifest import (
     build_run_manifest,
+    resolve_code_fingerprint,
     run_artifact_path,
     sanitized_settings_snapshot,
 )
@@ -42,6 +43,7 @@ def test_run_manifest_captures_replay_configuration_without_broker_secrets():
     assert manifest['runtime']['watchlist'] == ['AAPL']
     assert manifest['replay']['filter_by_run_id'] == 'run-test'
     assert manifest['files']['manifest'].endswith('runs/run-test/run_manifest.json')
+    assert manifest['code']['source_sha256']
 
 
 def test_sanitized_settings_keeps_non_sensitive_replay_values():
@@ -61,3 +63,16 @@ def test_run_artifact_path_creates_stable_per_run_location():
     assert run_artifact_path('data/logs/daily_summary.json', 'run-123') == (
         'data/logs/runs/run-123/daily_summary.json'
     )
+
+
+def test_code_fingerprint_changes_when_source_changes(tmp_path):
+    source_file = tmp_path / 'module.py'
+    source_file.write_text('VALUE = 1\n', encoding='utf-8')
+    first_fingerprint = resolve_code_fingerprint(tmp_path)
+
+    source_file.write_text('VALUE = 2\n', encoding='utf-8')
+    second_fingerprint = resolve_code_fingerprint(tmp_path)
+
+    assert first_fingerprint
+    assert second_fingerprint
+    assert first_fingerprint != second_fingerprint
