@@ -10,13 +10,15 @@ from app.replay.strategy_replay import StrategyReplayRunner
 
 def main() -> None:
     parser = argparse.ArgumentParser(
-        description='Replay an Earendil run from its market journal and compare it to the real run.',
+        description=(
+            'Replay an Earendil run from its market journal and compare it to the real run.'
+        ),
     )
     parser.add_argument('manifest', help='Path to run_manifest.json')
     parser.add_argument(
         '--output',
         default=None,
-        help='Output JSON path. Defaults to REPLAY_REPORT_PATH stored in the manifest.',
+        help='Optional output JSON path. Defaults to the archived replay report path.',
     )
     args = parser.parse_args()
 
@@ -27,18 +29,33 @@ def main() -> None:
         'replay': replay_report,
         'comparison': comparison,
     }
+    serialized_report = json.dumps(
+        serialize_value(report),
+        ensure_ascii=False,
+        indent=2,
+    ) + '\n'
 
     output_path = Path(
         args.output
-        or dataset.manifest.get('runtime', {})
-        .get('settings', {})
-        .get('REPLAY_REPORT_PATH', 'data/logs/replay_report.json')
+        or dataset.manifest.get('files', {}).get(
+            'replay_report',
+            'data/logs/replay_report.json',
+        )
     )
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    output_path.write_text(
-        json.dumps(serialize_value(report), ensure_ascii=False, indent=2) + '\n',
-        encoding='utf-8',
-    )
+    output_path.write_text(serialized_report, encoding='utf-8')
+
+    if args.output is None:
+        latest_path = Path(
+            dataset.manifest.get('files', {}).get(
+                'latest_replay_report',
+                output_path,
+            )
+        )
+        if latest_path != output_path:
+            latest_path.parent.mkdir(parents=True, exist_ok=True)
+            latest_path.write_text(serialized_report, encoding='utf-8')
+
     print(output_path)
 
 
