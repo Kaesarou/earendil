@@ -6,19 +6,19 @@ The goal is not to let an AI place trades. The trading engine stays deterministi
 
 ## Current stage
 
-This first skeleton contains:
+The project currently contains:
 
 - Docker + Docker Compose setup
-- Python project structure
 - environment-based configuration
-- broker abstraction
-- eToro client placeholder
-- market data service
-- breakout strategy skeleton
-- risk manager
+- broker abstraction and eToro integration
+- market snapshots and candle construction
+- deterministic trend strategy
+- candidate ranking and economic filters
+- centralized risk management
 - paper execution engine
-- trade journal
-- main bot loop
+- structured trade, error, market and candle journals
+- daily summaries and reproducible run manifests
+- deterministic market replay and baseline comparison
 
 By default, the bot runs in `paper` mode and does not place real orders.
 
@@ -34,6 +34,51 @@ Fill your demo API keys in `.env`, then run:
 docker compose up --build
 ```
 
+## Journals and run analysis
+
+Normal mode keeps raw market data for replay while avoiding one JSONL line for every HOLD decision.
+
+Main files:
+
+```text
+data/logs/trades.jsonl
+data/logs/errors.jsonl
+data/logs/market.jsonl.gz
+data/logs/candles.jsonl.gz
+data/logs/daily_summary.json
+data/logs/run_manifest.json
+```
+
+Each run also archives its reproducibility files under:
+
+```text
+data/logs/runs/<run_id>/run_manifest.json
+data/logs/runs/<run_id>/daily_summary.json
+```
+
+The manifest contains the Git commit, the complete non-secret settings snapshot, the strategy profile, the instrument configuration, the watchlist and the paths of the replay sources.
+
+Every JSONL record contains a `run_id`, stream name and contiguous sequence. Replay stops with an integrity error if market records are missing or out of order.
+
+## Replay a run
+
+Run the replay from the archived manifest:
+
+```bash
+python -m app.replay.cli data/logs/runs/<run_id>/run_manifest.json
+```
+
+The command:
+
+- validates the market, candle and trade streams;
+- rebuilds candles and strategy decisions from raw market snapshots;
+- rebuilds candidates and the pre-economics min-score/top-n selection;
+- compares simulated candidates with the real run;
+- lists additional winning and losing counterfactual candidates;
+- writes `replay_report.json` in the run archive and updates the latest report.
+
+The counterfactual TP/SL outcome is a screening tool. It uses `snapshot.last` and static risk-profile percentages. It does not yet reproduce broker slippage, fees, cooldown, account-equity limits or position overlap.
+
 ## Project structure
 
 ```text
@@ -47,8 +92,7 @@ earendil/
 │   ├── risk/
 │   ├── execution/
 │   ├── journal/
-│   ├── backtesting/
-│   ├── ai/
+│   ├── replay/
 │   └── utils/
 ├── tests/
 ├── scripts/
@@ -65,13 +109,4 @@ earendil/
 - Risk rules are centralized in `app/risk/risk_manager.py`.
 - Broker-specific code stays isolated in `app/brokers/`.
 - Strategies must be testable without broker access.
-
-## Next steps
-
-1. Validate eToro authentication.
-2. Fetch a real market price.
-3. Store market snapshots.
-4. Implement first breakout strategy.
-5. Run paper trading.
-6. Add backtests.
-7. Only then consider demo/prod execution.
+- Secrets must never be written into manifests or journals.
