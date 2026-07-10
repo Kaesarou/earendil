@@ -81,7 +81,6 @@ def build_run_manifest(
     }
     actual_manifest_path = manifest_path or settings.run_manifest_path
     actual_summary_path = summary_path or settings.daily_summary_path
-    replay_report_path = run_artifact_path(settings.replay_report_path, run_id)
     return {
         'schema_version': 1,
         'run_id': run_id,
@@ -103,22 +102,20 @@ def build_run_manifest(
             'symbol_profiles': symbol_profiles,
             'settings': sanitized_settings_snapshot(settings),
         },
-        'replay': {
-            'source_of_truth': 'market',
-            'requires_contiguous_sequences': True,
+        'analysis_sources': {
+            'run_id': run_id,
             'market_stream': settings.market_log_path,
             'candle_stream': settings.candle_journal_path,
             'trade_stream': settings.journal_path,
-            'comparison_baseline': settings.journal_path,
-            'filter_by_run_id': run_id,
+            'error_stream': settings.errors_journal_path,
+            'raw_market_retained': True,
+            'raw_candles_retained': True,
         },
         'files': {
             'manifest': actual_manifest_path,
             'latest_manifest': settings.run_manifest_path,
             'summary': actual_summary_path,
             'latest_summary': settings.daily_summary_path,
-            'replay_report': replay_report_path,
-            'latest_replay_report': settings.replay_report_path,
             'partial_summary': settings.partial_daily_summary_path,
             'trades': settings.journal_path,
             'errors': settings.errors_journal_path,
