@@ -265,9 +265,13 @@ class PositionTracker:
 
     def _evaluate_stale_position(self, position: TrackedPosition, snapshot: MarketSnapshot) -> PositionCloseSignal | None:
         decision = self.stale_position_guard.evaluate(
-            position=position,
-            current_price=snapshot.last,
+            side=position.side,
+            entry_price=position.entry_price,
+            highest_price=position.highest_price,
+            lowest_price=position.lowest_price,
+            opened_at=position.opened_at,
             now=snapshot.timestamp,
+            estimated_total_cost_percent=position.estimated_total_cost_percent,
             config=StalePositionConfig(
                 enabled=position.stale_position_enabled,
                 max_age_minutes=position.stale_position_max_age_minutes,
@@ -277,7 +281,21 @@ class PositionTracker:
         )
         if not decision.should_close:
             return None
-        return self._close_signal(position, snapshot, STALE_POSITION_EXIT_REASON, decision.metadata)
+        return self._close_signal(
+            position,
+            snapshot,
+            decision.reason or STALE_POSITION_EXIT_REASON,
+            {
+                'stale_position_action': 'CLOSE',
+                'stale_position_age_minutes': round(decision.age_minutes, 4),
+                'stale_position_mfe_percent': round(decision.mfe_percent, 4),
+                'stale_position_required_mfe_percent': round(decision.required_mfe_percent, 4),
+                'estimated_total_cost_percent': round(decision.estimated_total_cost_percent, 4),
+                'stale_position_max_age_minutes': position.stale_position_max_age_minutes,
+                'stale_position_min_favorable_move_percent': position.stale_position_min_favorable_move_percent,
+                'stale_position_buffer_percent': position.stale_position_buffer_percent,
+            },
+        )
 
     def _close_signal(self, position: TrackedPosition, snapshot: MarketSnapshot, reason: str, metadata: dict[str, float | int | str | bool] | None = None) -> PositionCloseSignal:
         return PositionCloseSignal(
@@ -298,6 +316,8 @@ class PositionTracker:
         return 'stop_loss_hit'
 
     def _calculate_gross_pnl_percent(self, side: str, entry_price: float, exit_price: float) -> float:
+        if entry_price <= 0:
+            raise ValueError(f'Cannot calculate PnL with invalid entry_price={entry_price}')
         if side == 'BUY':
             return ((exit_price - entry_price) / entry_price) * 100
         if side == 'SELL':
