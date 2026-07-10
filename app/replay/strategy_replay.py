@@ -4,11 +4,15 @@ from typing import Any
 
 from app.config.settings import Settings
 from app.execution.candidate_ranking import build_trade_candidate
+from app.execution.trade_candidate import TradeCandidate
 from app.instruments.instrument_registry import InstrumentRegistry
 from app.journal.run_manifest import resolve_git_commit
 from app.market.candle_builder import CandleBuilder
 from app.market.models import MarketSnapshot
 from app.replay.dataset import MarketReplayEvent, ReplayDataset
+from app.risk.position_sizing import FixedPercentPositionSizing
+from app.risk.risk_manager import RiskManager
+from app.runtime.candidate_flow import select_trade_candidates_with_strategy_profile
 from app.runtime.trading_session_window import trading_session_service_from_settings
 from app.strategies.strategy import TrendStrategy, strategy_profile_from_name
 
@@ -28,6 +32,11 @@ class StrategyReplayRunner:
             instrument_configs=self.profile.instrument_configs,
         )
         self.session_service = trading_session_service_from_settings(self.settings)
+        self.risk_manager = RiskManager(
+            settings=self.settings,
+            position_sizing_strategy=FixedPercentPositionSizing(),
+            instrument_registry=self.instrument_registry,
+        )
 
     def run(self) -> dict[str, Any]:
         events = self.dataset.market_events()
@@ -42,7 +51,10 @@ class StrategyReplayRunner:
         active_session_keys: dict[str, str | None] = {}
         hold_reasons: Counter[str] = Counter()
         candidates: list[dict[str, Any]] = []
+        candidate_objects: dict[str, TradeCandidate] = {}
+        candidates_by_loop: dict[int, list[TradeCandidate]] = defaultdict(list)
         snapshots_by_symbol: dict[str, list[MarketReplayEvent]] = defaultdict(list)
+        loop_grouping_complete = True
 
         for event in events:
             snapshot = event.snapshot
@@ -85,13 +97,19 @@ class StrategyReplayRunner:
                 signal=signal,
                 session_key=session_decision.session_key,
             )
+            key = _candidate_key(
+                symbol=candidate.symbol,
+                side=candidate.signal.action,
+                closed_at=candidate.candle.closed_at,
+            )
+            candidate_objects[key] = candidate
+            loop_key = event.loop_id if event.loop_id is not None else event.sequence
+            if event.loop_id is None:
+                loop_grouping_complete = False
+            candidates_by_loop[loop_key].append(candidate)
             candidates.append(
                 {
-                    'key': _candidate_key(
-                        symbol=candidate.symbol,
-                        side=candidate.signal.action,
-                        closed_at=candidate.candle.closed_at,
-                    ),
+                    'key': key,
                     'symbol': candidate.symbol,
                     'side': candidate.signal.action,
                     'score': candidate.score,
@@ -102,10 +120,40 @@ class StrategyReplayRunner:
                     'loop_id': event.loop_id,
                     'session_key': candidate.session_key,
                     'entry_price': candidate.snapshot.last,
+                    'pre_economics_selection': None,
+                    'pre_economics_rejection_reason': None,
                 }
             )
 
+        selected_keys: set[str] = set()
+        rejection_reason_by_key: dict[str, str] = {}
+        for loop_candidates in candidates_by_loop.values():
+            result = select_trade_candidates_with_strategy_profile(
+                loop_candidates,
+                self.risk_manager,
+                self.profile,
+            )
+            selected_keys.update(
+                _candidate_key(
+                    symbol=candidate.symbol,
+                    side=candidate.signal.action,
+                    closed_at=candidate.candle.closed_at,
+                )
+                for candidate in result.selected_candidates
+            )
+            for rejection in result.rejected_candidates:
+                rejection_key = _candidate_key(
+                    symbol=rejection.candidate.symbol,
+                    side=rejection.candidate.signal.action,
+                    closed_at=rejection.candidate.candle.closed_at,
+                )
+                rejection_reason_by_key[rejection_key] = rejection.reason
+
         for candidate in candidates:
+            candidate['pre_economics_selection'] = candidate['key'] in selected_keys
+            candidate['pre_economics_rejection_reason'] = rejection_reason_by_key.get(
+                candidate['key']
+            )
             candidate['counterfactual_outcome'] = self._evaluate_static_outcome(
                 candidate,
                 snapshots_by_symbol[candidate['symbol']],
@@ -128,11 +176,13 @@ class StrategyReplayRunner:
                 ),
                 'profile': self.profile.name,
                 'candle_timeframe_seconds': self.settings.candle_timeframe_seconds,
+                'loop_grouping_complete': loop_grouping_complete,
             },
             'decisions': {
                 'hold_total': sum(hold_reasons.values()),
                 'hold_reasons': dict(hold_reasons),
                 'candidate_total': len(candidates),
+                'pre_economics_selected_total': len(selected_keys),
             },
             'candidates': candidates,
             'outcome_assumptions': {
@@ -140,6 +190,7 @@ class StrategyReplayRunner:
                 'sl_tp_mode': 'static risk profile percentages',
                 'fees_included': False,
                 'position_overlap_enforced': False,
+                'selection_stage': 'score/min-score/top-n before economics, TP feasibility and cooldown',
                 'purpose': 'screening missed strategy opportunities, not broker PnL accounting',
             },
         }
@@ -191,7 +242,11 @@ def _candidate_key(*, symbol: str, side: str, closed_at: datetime) -> str:
     return f'{symbol}|{side}|{closed_at.isoformat()}'
 
 
-def _outcome(status: str, snapshot: MarketSnapshot, gross_percent: float) -> dict[str, Any]:
+def _outcome(
+    status: str,
+    snapshot: MarketSnapshot,
+    gross_percent: float,
+) -> dict[str, Any]:
     return {
         'status': status,
         'closed_at': snapshot.timestamp.isoformat(),
