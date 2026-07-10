@@ -15,6 +15,7 @@ SlTpSource = Literal[
     'dynamic_floor',
     'dynamic_cap',
     'dynamic_floor_and_cap',
+    'eu_micro_scalp_fallback',
 ]
 
 
