@@ -68,8 +68,9 @@ def directional_score_breakdown(
     impulse_percent = max(breakout_percent, breakdown_percent)
     candle_range_percent = float_metadata(metadata, 'candle_range_percent')
 
+    setup_quality_bonus = signal.setup_quality * 100
     base_score = 0.0
-    base_score += signal.confidence * 100
+    base_score += setup_quality_bonus
     base_score += min(session_move_percent * 15, 30)
     base_score += min(trend_strength_percent * 80, 25)
     base_score += min(impulse_percent * 40, 20)
@@ -88,6 +89,7 @@ def directional_score_breakdown(
         exhaustion=exhaustion,
         score_before_late_entry_cap=score_before_cap,
         score_after_late_entry_cap=final_score,
+        score_metadata={'setup_quality_bonus': round(setup_quality_bonus, 4)},
     )
 
 
