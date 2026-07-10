@@ -273,21 +273,14 @@ class TpFeasibilityAnalyzer:
 
 
 class CandidateTpFeasibilityEvaluator:
-    def __init__(
-        self,
-        analyzer: TpFeasibilityAnalyzer | None = None,
-        eu_micro_scalp_fallback_enabled: bool | None = None,
-    ):
+    def __init__(self, analyzer: TpFeasibilityAnalyzer | None = None):
         self.analyzer = analyzer or TpFeasibilityAnalyzer()
-        self.eu_micro_scalp_fallback_enabled = eu_micro_scalp_fallback_enabled
 
     def evaluate(self, *, evaluated_candidate: EvaluatedTradeCandidate, risk_profile: RiskProfile) -> EvaluatedTradeCandidate:
         analysis = self.analyzer.analyze(evaluated_candidate=evaluated_candidate, risk_profile=risk_profile)
         candidate = evaluated_candidate.candidate
         updated_candidate = replace(candidate, score=analysis.adjusted_score, rank_reason=_append_rank_reason(candidate.rank_reason, analysis), tp_feasibility_metadata=analysis_to_metadata(analysis), tp_feasibility_penalty=analysis.tp_feasibility_penalty, tp_feasibility_score_cap=analysis.score_cap, tp_feasibility_hard_rejection_reason=analysis.tp_feasibility_hard_rejection_reason)
         normal_evaluated_candidate = replace(evaluated_candidate, candidate=updated_candidate, tp_feasibility=analysis)
-        if not self._eu_micro_scalp_fallback_enabled():
-            return self._with_tp_probability(normal_evaluated_candidate)
 
         from app.execution.eu_micro_scalp_fallback import EuMicroScalpFallbackAdjuster
 
@@ -298,13 +291,6 @@ class CandidateTpFeasibilityEvaluator:
             normal_analysis=analysis,
         )
         return self._with_tp_probability(fallback_evaluated_candidate)
-
-    def _eu_micro_scalp_fallback_enabled(self) -> bool:
-        if self.eu_micro_scalp_fallback_enabled is not None:
-            return self.eu_micro_scalp_fallback_enabled
-        from app.config.settings import get_settings
-
-        return get_settings().eu_micro_scalp_fallback_enabled
 
     def _with_tp_probability(self, evaluated_candidate: EvaluatedTradeCandidate) -> EvaluatedTradeCandidate:
         from app.execution.scoring.tp_probability import CandidateTpProbabilityEvaluator

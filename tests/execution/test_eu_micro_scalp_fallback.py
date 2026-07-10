@@ -106,8 +106,8 @@ def _risk_profile(asset_class: AssetClass = AssetClass.EQUITY_EU) -> RiskProfile
     )
 
 
-def test_eu_micro_scalp_fallback_applies_to_strong_eu_candidate_penalized_by_normal_tp():
-    result = CandidateTpFeasibilityEvaluator(eu_micro_scalp_fallback_enabled=True).evaluate(
+def test_eu_micro_scalp_fallback_is_default_for_strong_eu_candidate_penalized_by_normal_tp():
+    result = CandidateTpFeasibilityEvaluator().evaluate(
         evaluated_candidate=_evaluated_candidate(),
         risk_profile=_risk_profile(),
     )
@@ -122,19 +122,8 @@ def test_eu_micro_scalp_fallback_applies_to_strong_eu_candidate_penalized_by_nor
     assert result.economics.expected_net_profit_percent == 0.30
 
 
-def test_eu_micro_scalp_fallback_is_disabled_by_default_when_flag_is_false():
-    result = CandidateTpFeasibilityEvaluator(eu_micro_scalp_fallback_enabled=False).evaluate(
-        evaluated_candidate=_evaluated_candidate(),
-        risk_profile=_risk_profile(),
-    )
-
-    assert result.effective_sl_tp is None
-    assert result.candidate.tp_feasibility_metadata.get('adaptation') is None
-    assert result.candidate.score == 110.0
-
-
 def test_eu_micro_scalp_fallback_ignores_non_eu_candidates():
-    result = CandidateTpFeasibilityEvaluator(eu_micro_scalp_fallback_enabled=True).evaluate(
+    result = CandidateTpFeasibilityEvaluator().evaluate(
         evaluated_candidate=_evaluated_candidate(candidate=_candidate(symbol='MSFT')),
         risk_profile=_risk_profile(AssetClass.EQUITY_US),
     )
@@ -144,7 +133,7 @@ def test_eu_micro_scalp_fallback_ignores_non_eu_candidates():
 
 
 def test_eu_micro_scalp_fallback_refuses_weak_raw_score():
-    result = CandidateTpFeasibilityEvaluator(eu_micro_scalp_fallback_enabled=True).evaluate(
+    result = CandidateTpFeasibilityEvaluator().evaluate(
         evaluated_candidate=_evaluated_candidate(candidate=_candidate(score=140.0)),
         risk_profile=_risk_profile(),
     )
