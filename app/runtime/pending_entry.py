@@ -43,6 +43,15 @@ class PendingEntry:
     def key(self) -> str:
         return f'{self.symbol}:{self.side}:{self.session_key}'
 
+    @property
+    def setup_key(self) -> tuple[str, str, str, float]:
+        return (
+            self.symbol,
+            self.side,
+            self.session_key,
+            round(self.breakout_or_breakdown_level, 8),
+        )
+
 
 @dataclass(frozen=True)
 class PendingEntryEvent:
@@ -62,6 +71,7 @@ class PendingEntryManager:
     def __init__(self, evaluator: EntryConfirmationEvaluator | None = None):
         self.evaluator = evaluator or EntryConfirmationEvaluator()
         self._entries: dict[str, PendingEntry] = {}
+        self._expired_setups: set[tuple[str, str, str, float]] = set()
 
     def snapshot(self) -> list[PendingEntry]:
         return list(self._entries.values())
@@ -84,6 +94,10 @@ class PendingEntryManager:
         session_key = candidate.session_key
         level = self._breakout_level(candidate)
         if level is None or level <= 0 or not session_key:
+            return ()
+
+        setup_key = self._setup_key(symbol, side, session_key, level)
+        if setup_key in self._expired_setups:
             return ()
 
         events: list[PendingEntryEvent] = []
@@ -168,9 +182,17 @@ class PendingEntryManager:
         confirmed: PendingEntry | None = None
         confirmation_signal: Signal | None = None
 
-        for pending in list(self._entries.values()):
-            if pending.symbol != normalized_symbol or pending.state == PendingEntryState.CONFIRMED:
+        for stored_pending in list(self._entries.values()):
+            if stored_pending.symbol != normalized_symbol:
                 continue
+            pending = stored_pending
+            if pending.state == PendingEntryState.CONFIRMED:
+                pending = replace(
+                    pending,
+                    state=PendingEntryState.WAITING,
+                    confirmation_type=None,
+                )
+                self._entries[pending.key] = pending
             if not session_tradable or session_key != pending.session_key:
                 events.append(self._invalidate(pending, 'session_not_tradable'))
                 continue
@@ -233,6 +255,7 @@ class PendingEntryManager:
             if observed_candles >= pending.expires_after_candles:
                 expired = replace(updated, state=PendingEntryState.EXPIRED)
                 self._entries.pop(pending.key, None)
+                self._expired_setups.add(expired.setup_key)
                 events.append(
                     PendingEntryEvent(
                         'pending_entry_expired',
@@ -266,11 +289,17 @@ class PendingEntryManager:
         return self._entries.pop(pending_key, None)
 
     def invalidate_session(self, session_key: str) -> tuple[PendingEntryEvent, ...]:
-        return tuple(
+        events = tuple(
             self._invalidate(pending, 'session_closed')
             for pending in list(self._entries.values())
             if pending.session_key == session_key
         )
+        self._expired_setups = {
+            setup_key
+            for setup_key in self._expired_setups
+            if setup_key[2] != session_key
+        }
+        return events
 
     def invalidate_symbol(
         self,
@@ -310,6 +339,15 @@ class PendingEntryManager:
             return float(raw) if raw is not None else None
         except (TypeError, ValueError):
             return None
+
+    def _setup_key(
+        self,
+        symbol: str,
+        side: str,
+        session_key: str,
+        level: float,
+    ) -> tuple[str, str, str, float]:
+        return (symbol, side, session_key, round(level, 8))
 
     def _market_data_valid(
         self,
