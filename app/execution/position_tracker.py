@@ -323,7 +323,12 @@ class PositionTracker:
         snapshot: MarketSnapshot,
     ) -> PositionCloseSignal | None:
         if snapshot.last <= position.stop_loss:
-            return self._close_signal(position, snapshot, self._stop_reason(position))
+            return self._close_signal(
+                position,
+                snapshot,
+                self._stop_reason(position),
+                self._managed_stop_close_metadata(position, snapshot),
+            )
         if snapshot.last >= position.take_profit:
             return self._close_signal(position, snapshot, 'take_profit_hit')
         return None
@@ -334,10 +339,36 @@ class PositionTracker:
         snapshot: MarketSnapshot,
     ) -> PositionCloseSignal | None:
         if snapshot.last >= position.stop_loss:
-            return self._close_signal(position, snapshot, self._stop_reason(position))
+            return self._close_signal(
+                position,
+                snapshot,
+                self._stop_reason(position),
+                self._managed_stop_close_metadata(position, snapshot),
+            )
         if snapshot.last <= position.take_profit:
             return self._close_signal(position, snapshot, 'take_profit_hit')
         return None
+
+    def _managed_stop_close_metadata(
+        self,
+        position: TrackedPosition,
+        snapshot: MarketSnapshot,
+    ) -> dict[str, float | int | str | bool] | None:
+        if position.last_stop_update_metadata is None:
+            return None
+
+        metadata = dict(position.last_stop_update_metadata)
+        metadata.update(
+            {
+                'managed_stop_protection_type': (
+                    position.managed_stop_protection_type or ''
+                ),
+                'stop_loss': round(position.stop_loss, 5),
+                'entry_price': round(position.entry_price, 5),
+                'exit_price': round(snapshot.last, 5),
+            }
+        )
+        return metadata
 
     def _evaluate_stale_position(
         self,
