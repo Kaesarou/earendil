@@ -39,15 +39,36 @@ class ReplayDataset:
 
     def market_records(self) -> list[JournalRecord]:
         path = self._resolve_file('market')
-        return list(read_journal_records(path, run_id=self.run_id, validate_sequences=True))
+        return list(
+            read_journal_records(
+                path,
+                run_id=self.run_id,
+                validate_sequences=True,
+                require_records=True,
+            )
+        )
 
     def trade_records(self) -> list[JournalRecord]:
         path = self._resolve_file('trades')
-        return list(read_journal_records(path, run_id=self.run_id, validate_sequences=True))
+        return list(
+            read_journal_records(
+                path,
+                run_id=self.run_id,
+                validate_sequences=True,
+                require_records=True,
+            )
+        )
 
     def candle_records(self) -> list[JournalRecord]:
         path = self._resolve_file('candles')
-        return list(read_journal_records(path, run_id=self.run_id, validate_sequences=True))
+        return list(
+            read_journal_records(
+                path,
+                run_id=self.run_id,
+                validate_sequences=True,
+                require_records=False,
+            )
+        )
 
     def market_events(self) -> list[MarketReplayEvent]:
         events: list[MarketReplayEvent] = []
@@ -105,6 +126,7 @@ def read_journal_records(
     *,
     run_id: str | None = None,
     validate_sequences: bool = True,
+    require_records: bool = False,
 ) -> Iterator[JournalRecord]:
     expected_sequence = 1
     matched_records = 0
@@ -131,7 +153,8 @@ def read_journal_records(
                     )
                 if sequence != expected_sequence:
                     raise ReplayIntegrityError(
-                        f'Non-contiguous sequence in {path}: expected {expected_sequence}, got {sequence}.'
+                        f'Non-contiguous sequence in {path}: '
+                        f'expected {expected_sequence}, got {sequence}.'
                     )
                 expected_sequence += 1
 
@@ -145,7 +168,7 @@ def read_journal_records(
                 payload=dict(raw_record.get('payload') or {}),
             )
 
-    if run_id is not None and matched_records == 0:
+    if require_records and matched_records == 0:
         raise ReplayIntegrityError(f'No records found for run_id={run_id} in {path}.')
 
 
