@@ -31,3 +31,7 @@ class TradeCandidate:
     tp_feasibility_penalty: float = 0.0
     tp_feasibility_score_cap: float | None = None
     tp_feasibility_hard_rejection_reason: str | None = None
+    tp_before_sl_probability: float | None = None
+    tp_before_sl_probability_band: str | None = None
+    tp_probability_model_version: str | None = None
+    tp_probability_metadata: dict[str, Any] = field(default_factory=dict)
