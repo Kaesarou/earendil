@@ -35,3 +35,25 @@ def test_daily_summary_counts_candidate_selection_and_rejection_reasons():
     assert data['rejections']['by_reason'] == {'cooldown_blocked': 1}
     assert data['selected_candidates'][0]['symbol'] == 'AMZN'
     assert data['rejections']['top_rejected_candidates'][0]['symbol'] == 'AMD'
+    assert 'best_hold_candidates' not in data['rejections']
+
+
+def test_daily_summary_uses_estimated_net_pnl_from_closed_position():
+    summary = DailySummaryAggregator(journal_detail_level='normal')
+
+    summary.record(
+        'position_closed',
+        {
+            'closed_position': SimpleNamespace(
+                gross_pnl=10.0,
+                estimated_total_cost=1.5,
+                net_pnl_estimated=8.5,
+            )
+        },
+    )
+
+    assert summary.to_dict()['pnl'] == {
+        'gross_estimated': 10.0,
+        'estimated_total_cost': 1.5,
+        'net_estimated': 8.5,
+    }
