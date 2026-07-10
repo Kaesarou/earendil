@@ -59,8 +59,9 @@ class DailySummaryAggregator:
         self.candles_closed = 0
 
         self.gross_pnl_estimated = 0.0
-        self.estimated_total_cost: float | None = 0.0
-        self.net_pnl_estimated: float | None = 0.0
+        self.estimated_costs = 0.0
+        self.net_pnl_estimated = 0.0
+        self.net_pnl_available = True
 
         self.top_rejected_candidates: list[dict[str, Any]] = []
         self.selected_candidates: list[dict[str, Any]] = []
@@ -165,16 +166,17 @@ class DailySummaryAggregator:
             },
             'pnl': {
                 'gross_estimated': round(self.gross_pnl_estimated, 4),
-                'estimated_total_cost': (
-                    round(self.estimated_total_cost, 4)
-                    if self.estimated_total_cost is not None
+                'estimated_costs': (
+                    round(self.estimated_costs, 4)
+                    if self.net_pnl_available
                     else None
                 ),
                 'net_estimated': (
                     round(self.net_pnl_estimated, 4)
-                    if self.net_pnl_estimated is not None
+                    if self.net_pnl_available
                     else None
                 ),
+                'net_estimated_available': self.net_pnl_available,
             },
             'cooldown': {
                 'blocked_total': sum(self.cooldowns_by_symbol.values()),
@@ -265,14 +267,11 @@ class DailySummaryAggregator:
                 net_estimated = gross_value - estimated_cost
 
         if estimated_cost is None or net_estimated is None:
-            self.estimated_total_cost = None
-            self.net_pnl_estimated = None
+            self.net_pnl_available = False
             return
 
-        if self.estimated_total_cost is not None:
-            self.estimated_total_cost += float(estimated_cost)
-        if self.net_pnl_estimated is not None:
-            self.net_pnl_estimated += float(net_estimated)
+        self.estimated_costs += float(estimated_cost)
+        self.net_pnl_estimated += float(net_estimated)
 
     def _record_error(self, event_type: str, payload: dict[str, Any]) -> None:
         self.error_types[event_type] += 1
