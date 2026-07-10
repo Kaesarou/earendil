@@ -60,7 +60,8 @@ class DailySummaryAggregator:
 
         self.gross_pnl_estimated = 0.0
         self.net_pnl_estimated = 0.0
-        self.estimated_total_cost = 0.0
+        self.net_pnl_available = True
+        self.estimated_costs = 0.0
 
         self.top_rejected_candidates: list[dict[str, Any]] = []
         self.selected_candidates: list[dict[str, Any]] = []
@@ -126,9 +127,7 @@ class DailySummaryAggregator:
             'journal_detail_level': self.journal_detail_level,
             'started_at': self.started_at,
             'ended_at': self.ended_at,
-            'events': {
-                'by_type': dict(self.event_counts),
-            },
+            'events': {'by_type': dict(self.event_counts)},
             'market_data': {
                 'snapshots': self.market_snapshots,
                 'candles_closed': self.candles_closed,
@@ -164,16 +163,15 @@ class DailySummaryAggregator:
             },
             'pnl': {
                 'gross_estimated': round(self.gross_pnl_estimated, 4),
-                'estimated_total_cost': round(self.estimated_total_cost, 4),
-                'net_estimated': round(self.net_pnl_estimated, 4),
+                'estimated_costs': round(self.estimated_costs, 4) if self.net_pnl_available else None,
+                'net_estimated': round(self.net_pnl_estimated, 4) if self.net_pnl_available else None,
+                'net_estimated_available': self.net_pnl_available,
             },
             'cooldown': {
                 'blocked_total': sum(self.cooldowns_by_symbol.values()),
                 'by_symbol': dict(self.cooldowns_by_symbol),
             },
-            'runtime': {
-                'session_transitions': self.session_transitions,
-            },
+            'runtime': {'session_transitions': self.session_transitions},
             'errors': {
                 'total': sum(self.error_types.values()),
                 'by_type': dict(self.error_types),
@@ -193,7 +191,6 @@ class DailySummaryAggregator:
         rejected = _as_list(payload.get('rejected_candidates'))
         selected_evaluated = _as_list(payload.get('selected_evaluated_candidates'))
         rejected_evaluated = _as_list(payload.get('rejected_evaluated_candidates'))
-
         selected_source = selected_evaluated or selected
         rejected_source = rejected_evaluated or rejected
 
@@ -232,14 +229,21 @@ class DailySummaryAggregator:
     def _record_closed_position_pnl(self, payload: dict[str, Any]) -> None:
         closed_position = payload.get('closed_position')
         gross = _attribute(closed_position, 'gross_pnl')
-        net = _attribute(closed_position, 'net_pnl_estimated')
-        cost = _attribute(closed_position, 'estimated_total_cost')
-        if gross is not None:
-            self.gross_pnl_estimated += float(gross)
-        if net is not None:
-            self.net_pnl_estimated += float(net)
-        if cost is not None:
-            self.estimated_total_cost += float(cost)
+        if gross is None:
+            return
+
+        gross_value = float(gross)
+        self.gross_pnl_estimated += gross_value
+
+        amount = _attribute(closed_position, 'amount')
+        cost_percent = _attribute(closed_position, 'estimated_total_cost_percent')
+        if amount is None or cost_percent is None:
+            self.net_pnl_available = False
+            return
+
+        estimated_cost = float(amount) * (float(cost_percent) / 100)
+        self.estimated_costs += estimated_cost
+        self.net_pnl_estimated += gross_value - estimated_cost
 
     def _record_error(self, event_type: str, payload: dict[str, Any]) -> None:
         self.error_types[event_type] += 1
