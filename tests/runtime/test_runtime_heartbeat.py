@@ -1,5 +1,5 @@
 import logging
-from datetime import datetime, timedelta, timezone
+from datetime import timedelta
 
 from app.runtime.runtime_heartbeat import RuntimeHeartbeat
 
