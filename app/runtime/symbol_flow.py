@@ -39,9 +39,13 @@ def process_symbol(
     cooldown_store: TradeCooldownStore | None = None,
     snapshot: MarketSnapshot | None = None,
     session_decision: TradingSessionDecision | None = None,
+    loop_id: int | None = None,
 ) -> TradeCandidate | None:
     snapshot = snapshot or broker.get_market_snapshot(symbol)
-    market_journal.write('market_snapshot', {'symbol': symbol, 'snapshot': snapshot})
+    market_journal.write(
+        'market_snapshot',
+        {'symbol': symbol, 'snapshot': snapshot, 'loop_id': loop_id},
+    )
     strategy.on_snapshot(snapshot)
 
     close_positions_triggered_by_snapshot(
@@ -83,6 +87,7 @@ def process_symbol(
         trade_journal=trade_journal,
         candle_journal=candle_journal,
         session_decision=session_decision,
+        loop_id=loop_id,
     )
 
 
@@ -96,8 +101,12 @@ def process_closed_candle(
     trade_journal: JsonlJournal,
     candle_journal: JsonlJournal,
     session_decision: TradingSessionDecision | None = None,
+    loop_id: int | None = None,
 ) -> TradeCandidate | None:
-    candle_journal.write('candle_closed', {'symbol': symbol, 'candle': closed_candle})
+    candle_journal.write(
+        'candle_closed',
+        {'symbol': symbol, 'candle': closed_candle, 'loop_id': loop_id},
+    )
 
     signal = strategy.on_candle(closed_candle)
     if signal.action == 'HOLD':
@@ -116,6 +125,7 @@ def process_closed_candle(
             risk_manager=risk_manager,
             trade_journal=trade_journal,
             session_decision=session_decision,
+            loop_id=loop_id,
         )
 
     logger.info(
@@ -137,6 +147,7 @@ def process_closed_candle(
             risk_manager=risk_manager,
             trade_journal=trade_journal,
             session_decision=session_decision,
+            loop_id=loop_id,
         )
 
     if not session_decision.new_entries_allowed:
@@ -149,6 +160,7 @@ def process_closed_candle(
             risk_manager=risk_manager,
             trade_journal=trade_journal,
             session_decision=session_decision,
+            loop_id=loop_id,
         )
 
     candidate = build_trade_candidate(
@@ -170,6 +182,7 @@ def process_closed_candle(
             'session_decision': session_decision,
             'instrument_profile': risk_manager.instrument_profile_for(symbol),
             'risk_profile': risk_manager.risk_profile_for(symbol),
+            'loop_id': loop_id,
         },
     )
 
@@ -194,6 +207,7 @@ def _write_rejected_decision(
     risk_manager: RiskManager,
     session_decision: TradingSessionDecision | None,
     trade_journal: JsonlJournal,
+    loop_id: int | None = None,
 ) -> None:
     plan = TradePlan(
         approved=False,
@@ -213,6 +227,7 @@ def _write_rejected_decision(
             'session_decision': session_decision,
             'instrument_profile': risk_manager.instrument_profile_for(symbol),
             'risk_profile': risk_manager.risk_profile_for(symbol),
+            'loop_id': loop_id,
         },
     )
     logger.debug('Trade rejected | symbol=%s | reason=%s', symbol, plan.reason)
