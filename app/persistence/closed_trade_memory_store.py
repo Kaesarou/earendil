@@ -39,9 +39,10 @@ class ClosedTradeMemoryStore:
                     lowest_price,
                     gross_pnl,
                     gross_pnl_percent,
-                    created_at
+                    created_at,
+                    session_key
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     normalize_symbol(entry.symbol),
@@ -61,6 +62,7 @@ class ClosedTradeMemoryStore:
                     entry.gross_pnl,
                     entry.gross_pnl_percent,
                     entry.created_at.isoformat() if entry.created_at is not None else None,
+                    entry.session_key,
                 ),
             )
 
@@ -90,7 +92,8 @@ class ClosedTradeMemoryStore:
                     lowest_price,
                     gross_pnl,
                     gross_pnl_percent,
-                    created_at
+                    created_at,
+                    session_key
                 FROM closed_trade_memory
                 WHERE symbol = ?
                   AND side = ?
@@ -130,7 +133,8 @@ class ClosedTradeMemoryStore:
                     lowest_price,
                     gross_pnl,
                     gross_pnl_percent,
-                    created_at
+                    created_at,
+                    session_key
                 FROM closed_trade_memory
                 WHERE symbol = ?
                   AND close_reason = ?
@@ -214,9 +218,15 @@ class ClosedTradeMemoryStore:
                     gross_pnl REAL,
                     gross_pnl_percent REAL,
                     created_at TEXT,
+                    session_key TEXT,
                     PRIMARY KEY (symbol, side)
                 )
                 """
+            )
+            self._ensure_column(
+                connection,
+                column_name='session_key',
+                column_type='TEXT',
             )
             connection.execute(
                 """
@@ -237,6 +247,24 @@ class ClosedTradeMemoryStore:
                 """
             )
             self._migrate_legacy_trade_cooldowns(connection)
+
+    def _ensure_column(
+        self,
+        connection: sqlite3.Connection,
+        *,
+        column_name: str,
+        column_type: str,
+    ) -> None:
+        columns = {
+            str(row[1])
+            for row in connection.execute(
+                'PRAGMA table_info(closed_trade_memory)'
+            ).fetchall()
+        }
+        if column_name not in columns:
+            connection.execute(
+                f'ALTER TABLE closed_trade_memory ADD COLUMN {column_name} {column_type}'
+            )
 
     def _migrate_legacy_trade_cooldowns(self, connection: sqlite3.Connection) -> None:
         legacy_table = connection.execute(
@@ -269,7 +297,8 @@ class ClosedTradeMemoryStore:
                 lowest_price,
                 gross_pnl,
                 gross_pnl_percent,
-                created_at
+                created_at,
+                session_key
             )
             SELECT
                 symbol,
@@ -288,7 +317,8 @@ class ClosedTradeMemoryStore:
                 NULL,
                 gross_pnl,
                 gross_pnl_percent,
-                created_at
+                created_at,
+                NULL
             FROM trade_cooldowns
             """
         )
@@ -313,6 +343,7 @@ class ClosedTradeMemoryStore:
             gross_pnl,
             gross_pnl_percent,
             created_at,
+            session_key,
         ) = row
 
         return ClosedTradeMemoryEntry(
@@ -337,6 +368,7 @@ class ClosedTradeMemoryStore:
             created_at=(
                 datetime.fromisoformat(str(created_at)) if created_at is not None else None
             ),
+            session_key=str(session_key) if session_key is not None else None,
         )
 
     def _optional_float(self, value: Any) -> float | None:

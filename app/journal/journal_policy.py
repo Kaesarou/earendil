@@ -2,12 +2,7 @@ from typing import Any
 
 DETAIL_LEVELS = {'minimal', 'normal', 'debug', 'full'}
 
-RAW_EVENT_TYPES = frozenset(
-    {
-        'market_snapshot',
-        'candle_closed',
-    }
-)
+RAW_EVENT_TYPES = frozenset({'market_snapshot', 'candle_closed'})
 
 ERROR_EVENT_TYPES = frozenset(
     {
@@ -25,11 +20,7 @@ ERROR_EVENT_TYPES = frozenset(
     }
 )
 
-DEBUG_ONLY_EVENT_TYPES = frozenset(
-    {
-        'candidate_ranking',
-    }
-)
+DEBUG_ONLY_EVENT_TYPES = frozenset({'candidate_ranking'})
 
 MINIMAL_TRADE_EVENT_TYPES = frozenset(
     {
@@ -54,6 +45,14 @@ MINIMAL_TRADE_EVENT_TYPES = frozenset(
         'force_close',
         'cooldown_blocked',
         'trade_cooldown_registered',
+        'symbol_lock_registered',
+        'symbol_lock_expired',
+        'pending_entry_registered',
+        'pending_entry_updated',
+        'pending_entry_retest_detected',
+        'pending_entry_confirmed',
+        'pending_entry_invalidated',
+        'pending_entry_expired',
     }
 )
 
@@ -65,13 +64,8 @@ def normalize_detail_level(detail_level: str | None) -> str:
     return normalized
 
 
-def should_write_to_trade_journal(
-    event_type: str,
-    payload: dict[str, Any],
-    detail_level: str | None,
-) -> bool:
+def should_write_to_trade_journal(event_type: str, payload: dict[str, Any], detail_level: str | None) -> bool:
     level = normalize_detail_level(detail_level)
-
     if event_type in RAW_EVENT_TYPES or event_type in ERROR_EVENT_TYPES:
         return False
     if event_type == 'session_state':
@@ -85,11 +79,7 @@ def should_write_to_trade_journal(
     return True
 
 
-def should_write_to_debug_journal(
-    event_type: str,
-    payload: dict[str, Any],
-    detail_level: str | None,
-) -> bool:
+def should_write_to_debug_journal(event_type: str, payload: dict[str, Any], detail_level: str | None) -> bool:
     level = normalize_detail_level(detail_level)
     if level not in {'debug', 'full'}:
         return False
@@ -109,8 +99,7 @@ def is_hold_decision(event_type: str, payload: dict[str, Any]) -> bool:
 def is_rejected_decision(event_type: str, payload: dict[str, Any]) -> bool:
     if event_type != 'decision':
         return False
-    plan = payload.get('trade_plan')
-    return _attribute(plan, 'approved') is False
+    return _attribute(payload.get('trade_plan'), 'approved') is False
 
 
 def decision_reason(payload: dict[str, Any]) -> str | None:
@@ -127,11 +116,8 @@ def decision_symbol(payload: dict[str, Any]) -> str | None:
     symbol = payload.get('symbol')
     if symbol:
         return str(symbol)
-    candidate = payload.get('candidate')
-    candidate_symbol = _attribute(candidate, 'symbol')
-    if candidate_symbol:
-        return str(candidate_symbol)
-    return None
+    candidate_symbol = _attribute(payload.get('candidate'), 'symbol')
+    return str(candidate_symbol) if candidate_symbol else None
 
 
 def decision_side(payload: dict[str, Any]) -> str | None:
@@ -140,9 +126,7 @@ def decision_side(payload: dict[str, Any]) -> str | None:
     if side:
         return str(side)
     plan_side = _attribute(payload.get('trade_plan'), 'side')
-    if plan_side:
-        return str(plan_side)
-    return None
+    return str(plan_side) if plan_side else None
 
 
 def _attribute(value: Any, name: str) -> Any:
@@ -154,6 +138,4 @@ def _attribute(value: Any, name: str) -> Any:
 
 
 def _upper(value: Any) -> str | None:
-    if value is None:
-        return None
-    return str(value).upper()
+    return None if value is None else str(value).upper()

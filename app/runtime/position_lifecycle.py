@@ -10,11 +10,30 @@ from app.market.models import MarketSnapshot
 from app.persistence.position_store import PositionStore
 from app.persistence.trade_cooldown_store import TradeCooldownStore
 from app.risk.risk_manager import RiskManager
-from app.risk.trade_cooldown import build_trade_cooldown_entry
+from app.risk.trade_cooldown import CloseReason, build_trade_cooldown_entry
 
 logger = logging.getLogger(__name__)
 
 BrokerAuthorizationErrorChecker = Callable[[Exception], bool]
+
+
+def _cooldown_payload(
+    *,
+    entry,
+    cooldown_config,
+) -> dict:
+    symbol_lock_expires_at = None
+    if entry.close_reason == CloseReason.STOP_LOSS:
+        symbol_lock_expires_at = entry.symbol_lock_expires_at(cooldown_config)
+    return {
+        'entry': entry,
+        'session_key': entry.session_key,
+        'lock_scope': entry.lock_scope,
+        'blocked_sides': list(entry.blocked_sides),
+        'registered_at': entry.registered_at,
+        'expires_at': entry.expires_at,
+        'symbol_lock_expires_at': symbol_lock_expires_at,
+    }
 
 
 def register_trade_cooldown_for_closed_position(
@@ -23,6 +42,7 @@ def register_trade_cooldown_for_closed_position(
     risk_manager: RiskManager,
     cooldown_store: TradeCooldownStore,
     trade_journal: JsonlJournal,
+    session_key: str | None = None,
 ) -> None:
     if closed_position is None:
         return
@@ -40,6 +60,7 @@ def register_trade_cooldown_for_closed_position(
         position_id=closed_position.position_id,
         gross_pnl=closed_position.gross_pnl,
         gross_pnl_percent=closed_position.gross_pnl_percent,
+        session_key=session_key,
     )
     saved_entry = cooldown_store.save_or_extend(entry)
 
@@ -47,15 +68,20 @@ def register_trade_cooldown_for_closed_position(
         'trade_cooldown_registered',
         {
             'source': 'bot_close',
-            'entry': saved_entry,
+            **_cooldown_payload(
+                entry=saved_entry,
+                cooldown_config=cooldown_config,
+            ),
             'closed_position': closed_position,
         },
     )
     logger.info(
-        'Trade cooldown registered | source=bot_close | symbol=%s | side=%s | reason=%s | expires_at=%s',
+        'Trade cooldown registered | source=bot_close | symbol=%s | side=%s | '
+        'reason=%s | lock_scope=%s | expires_at=%s',
         saved_entry.symbol,
         saved_entry.side,
         saved_entry.close_reason.value,
+        saved_entry.lock_scope,
         saved_entry.expires_at.isoformat(),
     )
 
@@ -67,6 +93,7 @@ def register_trade_cooldown_for_missing_position(
     risk_manager: RiskManager,
     cooldown_store: TradeCooldownStore,
     trade_journal: JsonlJournal,
+    session_key: str | None = None,
 ) -> None:
     cooldown_config = risk_manager.risk_profile_for(position.symbol).trade_cooldown
     if not cooldown_config.enabled:
@@ -79,6 +106,7 @@ def register_trade_cooldown_for_missing_position(
         raw_close_reason='broker_position_missing',
         closed_at=closed_at,
         position_id=position.position_id,
+        session_key=session_key,
     )
     saved_entry = cooldown_store.save_or_extend(entry)
 
@@ -86,15 +114,20 @@ def register_trade_cooldown_for_missing_position(
         'trade_cooldown_registered',
         {
             'source': 'broker_reconciliation',
-            'entry': saved_entry,
+            **_cooldown_payload(
+                entry=saved_entry,
+                cooldown_config=cooldown_config,
+            ),
             'position': position,
         },
     )
     logger.info(
-        'Trade cooldown registered | source=broker_reconciliation | symbol=%s | side=%s | reason=%s | expires_at=%s',
+        'Trade cooldown registered | source=broker_reconciliation | symbol=%s | '
+        'side=%s | reason=%s | lock_scope=%s | expires_at=%s',
         saved_entry.symbol,
         saved_entry.side,
         saved_entry.close_reason.value,
+        saved_entry.lock_scope,
         saved_entry.expires_at.isoformat(),
     )
 
@@ -116,7 +149,7 @@ def close_positions_triggered_by_snapshot(
         try:
             executor.close(close_signal.position_id)
             closed_position = position_tracker.record_closed_position(close_signal)
-            risk_manager.record_close_position(close_signal.symbol)
+            closed_session_key = risk_manager.record_close_position(close_signal.symbol)
 
             if position_store is not None:
                 try:
@@ -142,6 +175,7 @@ def close_positions_triggered_by_snapshot(
                     risk_manager=risk_manager,
                     cooldown_store=cooldown_store,
                     trade_journal=trade_journal,
+                    session_key=closed_session_key,
                 )
 
             trade_journal.write(
@@ -158,7 +192,8 @@ def close_positions_triggered_by_snapshot(
                 raise
 
             logger.exception(
-                'Position close error | symbol=%s | position_id=%s | reason=%s | error=%s',
+                'Position close error | symbol=%s | position_id=%s | reason=%s | '
+                'error=%s',
                 symbol,
                 close_signal.position_id,
                 close_signal.reason,
@@ -193,7 +228,8 @@ def reconcile_externally_closed_positions(
                 raise
 
             logger.exception(
-                'Position reconciliation check failed | position_id=%s | symbol=%s | error=%s',
+                'Position reconciliation check failed | position_id=%s | '
+                'symbol=%s | error=%s',
                 position.position_id,
                 position.symbol,
                 exc,
@@ -209,7 +245,7 @@ def reconcile_externally_closed_positions(
             continue
 
         closed_at = datetime.now(timezone.utc)
-        risk_manager.record_close_position(removed_position.symbol)
+        closed_session_key = risk_manager.record_close_position(removed_position.symbol)
 
         try:
             position_store.delete_open_position(removed_position.position_id)
@@ -234,10 +270,12 @@ def reconcile_externally_closed_positions(
             risk_manager=risk_manager,
             cooldown_store=cooldown_store,
             trade_journal=trade_journal,
+            session_key=closed_session_key,
         )
 
         logger.warning(
-            'Tracked position no longer open at broker | position_id=%s | symbol=%s | side=%s',
+            'Tracked position no longer open at broker | position_id=%s | '
+            'symbol=%s | side=%s',
             removed_position.position_id,
             removed_position.symbol,
             removed_position.side,
@@ -277,7 +315,8 @@ def restore_persisted_positions(
             if not broker.is_position_open(position.position_id):
                 closed_at = datetime.now(timezone.utc)
                 logger.warning(
-                    'Persisted position no longer open at broker | position_id=%s | symbol=%s',
+                    'Persisted position no longer open at broker | position_id=%s | '
+                    'symbol=%s',
                     position.position_id,
                     position.symbol,
                 )
@@ -305,7 +344,9 @@ def restore_persisted_positions(
         except Exception as exc:
             if is_broker_authorization_error(exc):
                 logger.critical(
-                    'Broker authorization failed during position reconciliation. Stopping before restoring unverified positions | position_id=%s | symbol=%s | error=%s',
+                    'Broker authorization failed during position reconciliation. '
+                    'Stopping before restoring unverified positions | position_id=%s | '
+                    'symbol=%s | error=%s',
                     position.position_id,
                     position.symbol,
                     exc,
@@ -321,7 +362,8 @@ def restore_persisted_positions(
                 raise
 
             logger.exception(
-                'Position reconciliation check failed | position_id=%s | symbol=%s | error=%s',
+                'Position reconciliation check failed | position_id=%s | '
+                'symbol=%s | error=%s',
                 position.position_id,
                 position.symbol,
                 exc,
@@ -343,7 +385,9 @@ def restore_persisted_positions(
             except Exception as exc:
                 if is_broker_authorization_error(exc):
                     logger.critical(
-                        'Broker authorization failed during position restore. Stopping before continuing | position_id=%s | symbol=%s | error=%s',
+                        'Broker authorization failed during position restore. '
+                        'Stopping before continuing | position_id=%s | symbol=%s | '
+                        'error=%s',
                         position.position_id,
                         position.symbol,
                         exc,
@@ -357,9 +401,9 @@ def restore_persisted_positions(
                         },
                     )
                     raise
-
                 logger.exception(
-                    'Failed to restore broker instrument mapping | position_id=%s | symbol=%s | error=%s',
+                    'Failed to restore broker instrument mapping | position_id=%s | '
+                    'symbol=%s | error=%s',
                     position.position_id,
                     position.symbol,
                     exc,
@@ -373,7 +417,9 @@ def restore_persisted_positions(
             'position_restored',
             {
                 'position': position,
-                'instrument_profile': risk_manager.instrument_profile_for(position.symbol),
+                'instrument_profile': risk_manager.instrument_profile_for(
+                    position.symbol
+                ),
                 'risk_profile': risk_manager.risk_profile_for(position.symbol),
             },
         )

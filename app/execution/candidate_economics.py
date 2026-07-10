@@ -7,7 +7,7 @@ from app.execution.candidate_readiness import CandidateReadiness
 from app.execution.sl_tp_profile import EffectiveSlTp, EffectiveSlTpResolver
 from app.execution.trade_candidate import TradeCandidate
 from app.instruments.instrument_registry import InstrumentRegistry
-from app.risk.position_sizing import PositionSizingStrategy
+from app.risk.position_sizing import PositionSizingStrategy, constant_risk_position_value
 from app.risk.trade_cost_model import TradeCostModel
 from app.utils.commons import spread_percent
 
@@ -64,15 +64,20 @@ class CandidateEconomicsEstimator:
             account_equity=account_equity,
             risk_profile=risk_profile,
         )
+        baseline_stop_loss = effective_sl_tp.metadata.get('constant_risk_baseline_stop_loss_percent')
+        if baseline_stop_loss is not None:
+            position_value = constant_risk_position_value(
+                baseline_position_value=position_value,
+                baseline_stop_loss_percent=float(baseline_stop_loss),
+                effective_stop_loss_percent=effective_sl_tp.stop_loss_percent,
+            )
         estimate = self.trade_cost_model.estimate(
             position_value=position_value,
             expected_move_percent=effective_sl_tp.take_profit_percent,
             spread_percent=spread_percent(candidate.snapshot),
             config=risk_profile.trade_cost,
         )
-        loss_at_sl_percent = (
-            effective_sl_tp.stop_loss_percent + estimate.total_estimated_cost_percent
-        )
+        loss_at_sl_percent = effective_sl_tp.stop_loss_percent + estimate.total_estimated_cost_percent
         return EvaluatedTradeCandidate(
             candidate=candidate,
             economics=CandidateEconomics(
@@ -83,23 +88,12 @@ class CandidateEconomicsEstimator:
                 estimated_total_cost=estimate.total_estimated_cost,
                 estimated_total_cost_percent=estimate.total_estimated_cost_percent,
                 min_expected_net_profit_percent=estimate.min_expected_net_profit_percent,
-                required_min_expected_net_profit_amount=(
-                    estimate.required_min_expected_net_profit_amount
-                ),
+                required_min_expected_net_profit_amount=estimate.required_min_expected_net_profit_amount,
                 effective_take_profit_percent=effective_sl_tp.take_profit_percent,
                 effective_stop_loss_percent=effective_sl_tp.stop_loss_percent,
-                cost_to_tp_ratio=_safe_ratio(
-                    estimate.total_estimated_cost_percent,
-                    effective_sl_tp.take_profit_percent,
-                ),
-                reward_to_risk_ratio=_safe_ratio(
-                    effective_sl_tp.take_profit_percent,
-                    effective_sl_tp.stop_loss_percent,
-                ),
-                net_reward_to_risk_ratio=_safe_ratio(
-                    estimate.expected_net_profit_percent,
-                    loss_at_sl_percent,
-                ),
+                cost_to_tp_ratio=_safe_ratio(estimate.total_estimated_cost_percent, effective_sl_tp.take_profit_percent),
+                reward_to_risk_ratio=_safe_ratio(effective_sl_tp.take_profit_percent, effective_sl_tp.stop_loss_percent),
+                net_reward_to_risk_ratio=_safe_ratio(estimate.expected_net_profit_percent, loss_at_sl_percent),
             ),
             effective_sl_tp=effective_sl_tp,
         )

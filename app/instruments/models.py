@@ -4,6 +4,7 @@ from enum import StrEnum
 from app.risk.stale_position_guard import StalePositionConfig
 from app.risk.trade_cooldown import TradeCooldownConfig
 from app.risk.trade_cost_model import TradeCostConfig
+from app.strategies.entry_confirmation import EntryConfirmationConfig
 
 
 class AssetClass(StrEnum):
@@ -72,6 +73,7 @@ class RiskProfile:
     trade_cooldown: TradeCooldownConfig = field(default_factory=TradeCooldownConfig)
     trade_cost: TradeCostConfig = field(default_factory=TradeCostConfig)
     tp_feasibility: TpFeasibilityConfig = field(default_factory=TpFeasibilityConfig)
+    entry_confirmation: EntryConfirmationConfig = field(default_factory=EntryConfirmationConfig)
 
 
 @dataclass(frozen=True)
