@@ -65,7 +65,12 @@ class AnalysisJournal:
             self.debug_decisions_journal.write(routed_event_type, routed_payload)
 
         if should_write_to_trade_journal(routed_event_type, routed_payload, self.detail_level):
-            self.trade_journal.write(routed_event_type, routed_payload)
+            written = self.trade_journal.write(routed_event_type, routed_payload)
+            if written is False:
+                self._record_trade_journal_write_failure(
+                    routed_event_type,
+                    routed_payload,
+                )
 
         self._maybe_write_partial_summary()
 
@@ -108,6 +113,19 @@ class AnalysisJournal:
         if self.partial_summary_path:
             self.summary.write(self.partial_summary_path)
         return summary
+
+    def _record_trade_journal_write_failure(
+        self,
+        failed_event_type: str,
+        payload: dict[str, Any],
+    ) -> None:
+        failure_payload = {
+            'failed_event_type': failed_event_type,
+            'symbol': payload.get('symbol'),
+            'message': 'Trade journal event could not be written.',
+        }
+        self.summary.record('journal_write_error', failure_payload)
+        self.errors_journal.write('journal_write_error', failure_payload)
 
     def _normalize_event(
         self,
