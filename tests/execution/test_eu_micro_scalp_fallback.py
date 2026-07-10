@@ -1,3 +1,4 @@
+from dataclasses import replace
 from datetime import datetime, timezone
 from types import SimpleNamespace
 
@@ -200,7 +201,7 @@ def test_pending_eu_micro_scalp_keeps_structural_stop_and_reduced_position_size(
         },
     )
     normal_evaluated = _evaluated_candidate(
-        candidate=replace_score(raw_candidate, 108.0),
+        candidate=replace(raw_candidate, score=108.0),
         economics=_economics(position_value=500.0),
         effective_sl_tp=structural_sl_tp,
     )
@@ -230,27 +231,3 @@ def test_pending_eu_micro_scalp_keeps_structural_stop_and_reduced_position_size(
     assert fallback_sl_tp.metadata['adaptation'] == 'eu_micro_scalp_fallback'
     assert fallback_evaluated.candidate.score == 155.0
     assert fallback_evaluated.economics.position_value == 500.0
-
-
-def replace_score(candidate: TradeCandidate, score: float) -> TradeCandidate:
-    return TradeCandidate(
-        symbol=candidate.symbol,
-        snapshot=candidate.snapshot,
-        candle=candidate.candle,
-        signal=candidate.signal,
-        score=score,
-        rank_reason=candidate.rank_reason,
-        session_key=candidate.session_key,
-        base_score=candidate.base_score,
-        entry_quality_metadata=candidate.entry_quality_metadata,
-        late_entry_penalty=candidate.late_entry_penalty,
-        late_entry_rejection_reason=candidate.late_entry_rejection_reason,
-        sell_penalty=candidate.sell_penalty,
-        sell_rejection_reason=candidate.sell_rejection_reason,
-        tp_feasibility_metadata=candidate.tp_feasibility_metadata,
-        tp_feasibility_penalty=candidate.tp_feasibility_penalty,
-        tp_feasibility_score_cap=candidate.tp_feasibility_score_cap,
-        tp_feasibility_hard_rejection_reason=(
-            candidate.tp_feasibility_hard_rejection_reason
-        ),
-    )
