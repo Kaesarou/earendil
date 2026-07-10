@@ -21,6 +21,11 @@ def build_run_id(started_at: datetime | None = None) -> str:
     return actual_started_at.strftime('run_%Y%m%dT%H%M%S_%fZ')
 
 
+def run_artifact_path(base_path: str, run_id: str) -> str:
+    path = Path(base_path)
+    return str(path.parent / 'runs' / run_id / path.name)
+
+
 def resolve_git_commit() -> str | None:
     for variable_name in ('GIT_COMMIT', 'GITHUB_SHA', 'SOURCE_VERSION'):
         value = os.getenv(variable_name)
@@ -50,11 +55,15 @@ def build_run_manifest(
     symbols: list[str],
     run_id: str,
     started_at: datetime,
+    manifest_path: str | None = None,
+    summary_path: str | None = None,
 ) -> dict[str, Any]:
     symbol_profiles = {
         symbol: instrument_registry.resolve(symbol)
         for symbol in symbols
     }
+    actual_manifest_path = manifest_path or settings.run_manifest_path
+    actual_summary_path = summary_path or settings.daily_summary_path
     return {
         'schema_version': 1,
         'run_id': run_id,
@@ -82,10 +91,13 @@ def build_run_manifest(
             'candle_stream': settings.candle_journal_path,
             'trade_stream': settings.journal_path,
             'comparison_baseline': settings.journal_path,
+            'filter_by_run_id': run_id,
         },
         'files': {
-            'manifest': settings.run_manifest_path,
-            'summary': settings.daily_summary_path,
+            'manifest': actual_manifest_path,
+            'latest_manifest': settings.run_manifest_path,
+            'summary': actual_summary_path,
+            'latest_summary': settings.daily_summary_path,
             'partial_summary': settings.partial_daily_summary_path,
             'trades': settings.journal_path,
             'errors': settings.errors_journal_path,
