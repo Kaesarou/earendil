@@ -10,7 +10,7 @@ from app.strategies.signals import Signal
 SESSION_KEY = 'test-session'
 
 
-class TestInstrumentRegistry(InstrumentRegistry):
+class StubInstrumentRegistry(InstrumentRegistry):
     def __init__(self, risk_profile: RiskProfile):
         self.risk_profile = risk_profile
 
@@ -46,15 +46,23 @@ def risk_profile() -> RiskProfile:
         trailing_stop_trigger_percent=1.0,
         trailing_stop_distance_percent=0.45,
         trailing_stop_net_buffer_percent=0.1,
-        trade_cost=TradeCostConfig(open_fee_percent=0.15, close_fee_percent=0.15, include_spread_cost=False),
+        trade_cost=TradeCostConfig(
+            open_fee_percent=0.15,
+            close_fee_percent=0.15,
+            include_spread_cost=False,
+        ),
     )
 
 
 def build_risk_manager(profile: RiskProfile) -> RiskManager:
     return RiskManager(
-        settings=Settings(MAX_OPEN_POSITIONS=10, MAX_OPEN_POSITIONS_PER_SYMBOL=10, MAX_TRADES_PER_SESSION=10),
+        settings=Settings(
+            MAX_OPEN_POSITIONS=10,
+            MAX_OPEN_POSITIONS_PER_SYMBOL=10,
+            MAX_TRADES_PER_SESSION=10,
+        ),
         position_sizing_strategy=FixedPercentPositionSizing(),
-        instrument_registry=TestInstrumentRegistry(profile),
+        instrument_registry=StubInstrumentRegistry(profile),
     )
 
 
@@ -63,7 +71,12 @@ def test_risk_manager_keeps_breakeven_cost_aware_and_propagates_trailing_net_buf
 
     plan = manager.evaluate(
         signal=Signal(action='BUY', confidence=0.8, reason='test'),
-        snapshot=MarketSnapshot.now(symbol='AAPL', bid=99.95, ask=100.05, last=100.0),
+        snapshot=MarketSnapshot.now(
+            symbol='AAPL',
+            bid=99.95,
+            ask=100.05,
+            last=100.0,
+        ),
         account_equity=100_000.0,
         session_key=SESSION_KEY,
     )
