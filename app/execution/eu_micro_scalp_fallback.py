@@ -6,6 +6,7 @@ from typing import TYPE_CHECKING
 
 from app.execution.candidate_economics import CandidateEconomics, EvaluatedTradeCandidate
 from app.execution.sl_tp_profile import EffectiveSlTp
+from app.execution.trade_candidate import TradeCandidate
 from app.instruments.models import AssetClass, RiskProfile
 from app.risk.trade_cost_model import TradeCostModel
 from app.utils.commons import spread_percent
@@ -75,6 +76,7 @@ class EuMicroScalpFallbackAdjuster:
         )
         fallback_evaluated_candidate = self._with_fallback_economics(
             source_evaluated_candidate=normal_evaluated_candidate,
+            fallback_candidate=raw_evaluated_candidate.candidate,
             risk_profile=risk_profile,
             effective_sl_tp=fallback_effective_sl_tp,
         )
@@ -193,13 +195,14 @@ class EuMicroScalpFallbackAdjuster:
         self,
         *,
         source_evaluated_candidate: EvaluatedTradeCandidate,
+        fallback_candidate: TradeCandidate,
         risk_profile: RiskProfile,
         effective_sl_tp: EffectiveSlTp,
     ) -> EvaluatedTradeCandidate:
         estimate = self.trade_cost_model.estimate(
             position_value=source_evaluated_candidate.economics.position_value,
             expected_move_percent=effective_sl_tp.take_profit_percent,
-            spread_percent=spread_percent(source_evaluated_candidate.candidate.snapshot),
+            spread_percent=spread_percent(fallback_candidate.snapshot),
             config=risk_profile.trade_cost,
         )
         loss_at_sl_percent = (
@@ -233,10 +236,7 @@ class EuMicroScalpFallbackAdjuster:
             ),
         )
         return EvaluatedTradeCandidate(
-            candidate=replace(
-                source_evaluated_candidate.candidate,
-                score=source_evaluated_candidate.candidate.score,
-            ),
+            candidate=replace(fallback_candidate, score=fallback_candidate.score),
             economics=economics,
             effective_sl_tp=effective_sl_tp,
         )
