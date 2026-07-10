@@ -60,10 +60,10 @@ class DailySummaryAggregator:
 
         self.gross_pnl_estimated = 0.0
         self.net_pnl_estimated = 0.0
+        self.estimated_total_cost = 0.0
 
         self.top_rejected_candidates: list[dict[str, Any]] = []
         self.selected_candidates: list[dict[str, Any]] = []
-        self.best_hold_candidates: list[dict[str, Any]] = []
         self.session_transitions: list[dict[str, Any]] = []
         self.errors: list[dict[str, Any]] = []
 
@@ -148,7 +148,6 @@ class DailySummaryAggregator:
                 'total': self.rejected_total,
                 'by_reason': dict(self.rejection_reasons),
                 'top_rejected_candidates': self.top_rejected_candidates,
-                'best_hold_candidates': self.best_hold_candidates,
             },
             'selected_candidates': self.selected_candidates,
             'orders': {
@@ -165,6 +164,7 @@ class DailySummaryAggregator:
             },
             'pnl': {
                 'gross_estimated': round(self.gross_pnl_estimated, 4),
+                'estimated_total_cost': round(self.estimated_total_cost, 4),
                 'net_estimated': round(self.net_pnl_estimated, 4),
             },
             'cooldown': {
@@ -215,7 +215,6 @@ class DailySummaryAggregator:
         if is_hold_decision('decision', payload):
             self.hold_total += 1
             self.hold_reasons[reason] += 1
-            self._remember_best_hold(payload, reason)
             return
 
         if is_rejected_decision('decision', payload):
@@ -233,9 +232,14 @@ class DailySummaryAggregator:
     def _record_closed_position_pnl(self, payload: dict[str, Any]) -> None:
         closed_position = payload.get('closed_position')
         gross = _attribute(closed_position, 'gross_pnl')
+        net = _attribute(closed_position, 'net_pnl_estimated')
+        cost = _attribute(closed_position, 'estimated_total_cost')
         if gross is not None:
             self.gross_pnl_estimated += float(gross)
-            self.net_pnl_estimated += float(gross)
+        if net is not None:
+            self.net_pnl_estimated += float(net)
+        if cost is not None:
+            self.estimated_total_cost += float(cost)
 
     def _record_error(self, event_type: str, payload: dict[str, Any]) -> None:
         self.error_types[event_type] += 1
@@ -249,15 +253,6 @@ class DailySummaryAggregator:
                 'message': payload.get('message'),
             },
         )
-
-    def _remember_best_hold(self, payload: dict[str, Any], reason: str) -> None:
-        item = {
-            'symbol': decision_symbol(payload),
-            'side': decision_side(payload),
-            'score': _candidate_score(payload.get('candidate')),
-            'reason': reason,
-        }
-        self._append_ranked(self.best_hold_candidates, item)
 
     def _remember_top_rejected_decision(self, payload: dict[str, Any], reason: str) -> None:
         item = {
