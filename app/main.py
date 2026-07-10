@@ -15,6 +15,7 @@ from app.journal.run_manifest import (
     build_run_id,
     build_run_manifest,
     finalize_run_manifest,
+    run_artifact_path,
     write_run_manifest,
 )
 from app.market.candle_builder import CandleBuilder
@@ -102,6 +103,8 @@ def main() -> None:
     run_id = build_run_id(started_at)
     run_status = 'running'
     settings = get_settings()
+    archived_manifest_path = run_artifact_path(settings.run_manifest_path, run_id)
+    archived_summary_path = run_artifact_path(settings.daily_summary_path, run_id)
     configure_logging(level=settings.log_level, log_file_path=settings.app_log_path)
     symbols = settings.watchlist_symbols()
     strategy_profile = build_strategy_profile(settings)
@@ -118,7 +121,10 @@ def main() -> None:
         symbols=symbols,
         run_id=run_id,
         started_at=started_at,
+        manifest_path=archived_manifest_path,
+        summary_path=archived_summary_path,
     )
+    write_run_manifest(archived_manifest_path, manifest)
     write_run_manifest(settings.run_manifest_path, manifest)
 
     logger.info(
@@ -383,6 +389,12 @@ def main() -> None:
             {'run_id': run_id, 'status': run_status, 'loop_id': loop_id},
         )
         summary = trade_journal.finalize()
+        write_run_manifest(archived_summary_path, summary)
+        finalize_run_manifest(
+            archived_manifest_path,
+            status=run_status,
+            summary=summary,
+        )
         finalize_run_manifest(
             settings.run_manifest_path,
             status=run_status,
