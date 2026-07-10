@@ -46,6 +46,11 @@ def build_replay_comparison(
         },
         'simulation': {
             'candidate_total': len(simulated_candidates),
+            'pre_economics_selected_total': sum(
+                1
+                for candidate in simulated_candidates.values()
+                if _is_selected_counterfactual(candidate)
+            ),
         },
         'comparison': {
             'matched_candidates': len(matched_keys),
@@ -60,14 +65,16 @@ def build_replay_comparison(
             'potential_missed_opportunities': [
                 simulated_candidates[key]
                 for key in additional_keys
-                if simulated_candidates[key]
+                if _is_selected_counterfactual(simulated_candidates[key])
+                and simulated_candidates[key]
                 .get('counterfactual_outcome', {})
                 .get('status') == 'TP'
             ],
             'additional_simulated_losses': [
                 simulated_candidates[key]
                 for key in additional_keys
-                if simulated_candidates[key]
+                if _is_selected_counterfactual(simulated_candidates[key])
+                and simulated_candidates[key]
                 .get('counterfactual_outcome', {})
                 .get('status') == 'SL'
             ],
@@ -98,6 +105,10 @@ def _candidate_from_payload(value: Any) -> dict[str, Any] | None:
         'closed_at': closed_at,
         'reason': value.get('rank_reason'),
     }
+
+
+def _is_selected_counterfactual(candidate: dict[str, Any]) -> bool:
+    return candidate.get('pre_economics_selection') is not False
 
 
 def _attribute(value: Any, name: str) -> Any:
