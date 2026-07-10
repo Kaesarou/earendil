@@ -107,7 +107,54 @@ class ClosedTradeMemoryStore:
 
         return self._to_entry(row)
 
-    def find_active_cooldown(self, *, symbol: str, side: str, now: datetime) -> ClosedTradeMemoryEntry | None:
+    def find_latest_stop_loss(self, *, symbol: str) -> ClosedTradeMemoryEntry | None:
+        normalized_symbol = normalize_symbol(symbol)
+
+        with self._connect() as connection:
+            row = connection.execute(
+                """
+                SELECT
+                    symbol,
+                    side,
+                    close_reason,
+                    raw_close_reason,
+                    opened_at,
+                    closed_at,
+                    cooldown_expires_at,
+                    position_id,
+                    entry_price,
+                    exit_price,
+                    stop_loss,
+                    take_profit,
+                    highest_price,
+                    lowest_price,
+                    gross_pnl,
+                    gross_pnl_percent,
+                    created_at
+                FROM closed_trade_memory
+                WHERE symbol = ?
+                  AND close_reason = ?
+                ORDER BY closed_at DESC
+                LIMIT 1
+                """,
+                (
+                    normalized_symbol,
+                    CloseReason.STOP_LOSS.value,
+                ),
+            ).fetchone()
+
+        if row is None:
+            return None
+
+        return self._to_entry(row)
+
+    def find_active_cooldown(
+        self,
+        *,
+        symbol: str,
+        side: str,
+        now: datetime,
+    ) -> ClosedTradeMemoryEntry | None:
         entry = self.find_latest(symbol=symbol, side=side)
         if entry is None or entry.cooldown_expires_at <= now:
             return None
@@ -181,6 +228,12 @@ class ClosedTradeMemoryStore:
                 """
                 CREATE INDEX IF NOT EXISTS idx_closed_trade_memory_closed_at
                 ON closed_trade_memory(closed_at)
+                """
+            )
+            connection.execute(
+                """
+                CREATE INDEX IF NOT EXISTS idx_closed_trade_memory_symbol_close_reason
+                ON closed_trade_memory(symbol, close_reason, closed_at)
                 """
             )
             self._migrate_legacy_trade_cooldowns(connection)
@@ -267,7 +320,9 @@ class ClosedTradeMemoryStore:
             side=str(side),
             close_reason=CloseReason(str(close_reason)),
             raw_close_reason=str(raw_close_reason) if raw_close_reason is not None else None,
-            opened_at=datetime.fromisoformat(str(opened_at)) if opened_at is not None else None,
+            opened_at=(
+                datetime.fromisoformat(str(opened_at)) if opened_at is not None else None
+            ),
             closed_at=datetime.fromisoformat(str(closed_at)),
             cooldown_expires_at=datetime.fromisoformat(str(cooldown_expires_at)),
             position_id=str(position_id) if position_id is not None else None,
@@ -279,7 +334,9 @@ class ClosedTradeMemoryStore:
             lowest_price=self._optional_float(lowest_price),
             gross_pnl=self._optional_float(gross_pnl),
             gross_pnl_percent=self._optional_float(gross_pnl_percent),
-            created_at=datetime.fromisoformat(str(created_at)) if created_at is not None else None,
+            created_at=(
+                datetime.fromisoformat(str(created_at)) if created_at is not None else None
+            ),
         )
 
     def _optional_float(self, value: Any) -> float | None:

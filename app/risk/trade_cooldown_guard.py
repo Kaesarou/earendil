@@ -19,6 +19,8 @@ class TradeCooldownDecision:
     active_cooldown: ClosedTradeMemoryEntry | None = None
     remaining_seconds: int | None = None
     details: dict | None = None
+    lock_scope: str | None = None
+    blocked_sides: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -47,12 +49,19 @@ class TradeCooldownGuard:
         config: TradeCooldownConfig,
         now: datetime,
     ) -> TradeCooldownDecision:
-        decision = self.fixed_guard.check(symbol=symbol, side=side, config=config, now=now)
+        decision = self.fixed_guard.check(
+            symbol=symbol,
+            side=side,
+            config=config,
+            now=now,
+        )
         return TradeCooldownDecision(
             allowed=decision.allowed,
             reason=decision.reason,
             active_cooldown=decision.active_cooldown,
             remaining_seconds=decision.remaining_seconds,
+            lock_scope=decision.lock_scope,
+            blocked_sides=decision.blocked_sides,
         )
 
     def filter_candidates(
@@ -77,6 +86,12 @@ class TradeCooldownGuard:
                     reason=rejected.decision.reason,
                     active_cooldown=rejected.decision.active_cooldown,
                     remaining_seconds=rejected.decision.remaining_seconds,
+                    lock_scope=rejected.decision.lock_scope,
+                    blocked_sides=rejected.decision.blocked_sides,
+                    details={
+                        'lock_scope': rejected.decision.lock_scope,
+                        'blocked_sides': list(rejected.decision.blocked_sides),
+                    },
                 ),
             )
             for rejected in fixed_result.rejected_candidates
@@ -84,7 +99,10 @@ class TradeCooldownGuard:
 
         post_tp_result = self.post_tp_reentry_guard.filter_candidates(
             candidates=fixed_result.selected_candidates,
-            config_for_candidate=lambda candidate: self._post_tp_config_for(candidate, risk_manager),
+            config_for_candidate=lambda candidate: self._post_tp_config_for(
+                candidate,
+                risk_manager,
+            ),
             now=now,
         )
         rejected_candidates.extend(
