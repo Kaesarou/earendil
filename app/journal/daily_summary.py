@@ -59,9 +59,8 @@ class DailySummaryAggregator:
         self.candles_closed = 0
 
         self.gross_pnl_estimated = 0.0
-        self.net_pnl_estimated = 0.0
-        self.net_pnl_available = True
-        self.estimated_costs = 0.0
+        self.estimated_total_cost: float | None = 0.0
+        self.net_pnl_estimated: float | None = 0.0
 
         self.top_rejected_candidates: list[dict[str, Any]] = []
         self.selected_candidates: list[dict[str, Any]] = []
@@ -102,7 +101,10 @@ class DailySummaryAggregator:
         elif event_type in {'force_close_requested', 'force_close_completed', 'force_close'}:
             self.force_closed += 1
         elif event_type == 'session_state_changed':
-            self._append_limited(self.session_transitions, self._session_transition_summary(payload))
+            self._append_limited(
+                self.session_transitions,
+                self._session_transition_summary(payload),
+            )
         elif self._is_error_event(event_type):
             self._record_error(event_type, payload)
 
@@ -163,9 +165,16 @@ class DailySummaryAggregator:
             },
             'pnl': {
                 'gross_estimated': round(self.gross_pnl_estimated, 4),
-                'estimated_costs': round(self.estimated_costs, 4) if self.net_pnl_available else None,
-                'net_estimated': round(self.net_pnl_estimated, 4) if self.net_pnl_available else None,
-                'net_estimated_available': self.net_pnl_available,
+                'estimated_total_cost': (
+                    round(self.estimated_total_cost, 4)
+                    if self.estimated_total_cost is not None
+                    else None
+                ),
+                'net_estimated': (
+                    round(self.net_pnl_estimated, 4)
+                    if self.net_pnl_estimated is not None
+                    else None
+                ),
             },
             'cooldown': {
                 'blocked_total': sum(self.cooldowns_by_symbol.values()),
@@ -198,7 +207,10 @@ class DailySummaryAggregator:
         self.rejected_total += len(rejected_source)
 
         for selected_item in selected_source:
-            self._append_limited(self.selected_candidates, self._selected_candidate_summary(selected_item))
+            self._append_limited(
+                self.selected_candidates,
+                self._selected_candidate_summary(selected_item),
+            )
 
         for rejected_item in rejected_source:
             reason = _attribute(rejected_item, 'reason') or 'unknown_rejection'
@@ -223,7 +235,11 @@ class DailySummaryAggregator:
         symbol = payload.get('symbol') or _attribute(payload.get('candidate'), 'symbol')
         if symbol:
             self.cooldowns_by_symbol[str(symbol)] += 1
-        reason = payload.get('reason') or _attribute(payload.get('trade_plan'), 'reason') or 'cooldown_blocked'
+        reason = (
+            payload.get('reason')
+            or _attribute(payload.get('trade_plan'), 'reason')
+            or 'cooldown_blocked'
+        )
         self.rejection_reasons[str(reason)] += 1
 
     def _record_closed_position_pnl(self, payload: dict[str, Any]) -> None:
@@ -235,15 +251,28 @@ class DailySummaryAggregator:
         gross_value = float(gross)
         self.gross_pnl_estimated += gross_value
 
-        amount = _attribute(closed_position, 'amount')
-        cost_percent = _attribute(closed_position, 'estimated_total_cost_percent')
-        if amount is None or cost_percent is None:
-            self.net_pnl_available = False
+        estimated_cost = _attribute(closed_position, 'estimated_total_cost')
+        net_estimated = _attribute(closed_position, 'net_pnl_estimated')
+
+        if estimated_cost is None or net_estimated is None:
+            amount = _attribute(closed_position, 'amount')
+            cost_percent = _attribute(
+                closed_position,
+                'estimated_total_cost_percent',
+            )
+            if amount is not None and cost_percent is not None:
+                estimated_cost = float(amount) * (float(cost_percent) / 100)
+                net_estimated = gross_value - estimated_cost
+
+        if estimated_cost is None or net_estimated is None:
+            self.estimated_total_cost = None
+            self.net_pnl_estimated = None
             return
 
-        estimated_cost = float(amount) * (float(cost_percent) / 100)
-        self.estimated_costs += estimated_cost
-        self.net_pnl_estimated += gross_value - estimated_cost
+        if self.estimated_total_cost is not None:
+            self.estimated_total_cost += float(estimated_cost)
+        if self.net_pnl_estimated is not None:
+            self.net_pnl_estimated += float(net_estimated)
 
     def _record_error(self, event_type: str, payload: dict[str, Any]) -> None:
         self.error_types[event_type] += 1
@@ -258,7 +287,11 @@ class DailySummaryAggregator:
             },
         )
 
-    def _remember_top_rejected_decision(self, payload: dict[str, Any], reason: str) -> None:
+    def _remember_top_rejected_decision(
+        self,
+        payload: dict[str, Any],
+        reason: str,
+    ) -> None:
         item = {
             'symbol': decision_symbol(payload),
             'side': decision_side(payload),
@@ -267,7 +300,11 @@ class DailySummaryAggregator:
         }
         self._append_ranked(self.top_rejected_candidates, item)
 
-    def _remember_top_rejected_candidate(self, rejected_item: Any, reason: str) -> None:
+    def _remember_top_rejected_candidate(
+        self,
+        rejected_item: Any,
+        reason: str,
+    ) -> None:
         candidate = _candidate_from_selection_item(rejected_item)
         item = _candidate_summary(candidate)
         item['reason'] = reason
@@ -285,16 +322,28 @@ class DailySummaryAggregator:
             'session_key': payload.get('session_key'),
         }
 
-    def _increment_symbol_counter(self, counter: Counter[str], payload: dict[str, Any]) -> None:
+    def _increment_symbol_counter(
+        self,
+        counter: Counter[str],
+        payload: dict[str, Any],
+    ) -> None:
         symbol = payload.get('symbol')
         if symbol:
             counter[str(symbol)] += 1
 
-    def _append_limited(self, items: list[dict[str, Any]], item: dict[str, Any]) -> None:
+    def _append_limited(
+        self,
+        items: list[dict[str, Any]],
+        item: dict[str, Any],
+    ) -> None:
         if len(items) < self.max_items:
             items.append(item)
 
-    def _append_ranked(self, items: list[dict[str, Any]], item: dict[str, Any]) -> None:
+    def _append_ranked(
+        self,
+        items: list[dict[str, Any]],
+        item: dict[str, Any],
+    ) -> None:
         items.append(item)
         items.sort(key=lambda value: value.get('score') or 0.0, reverse=True)
         del items[self.max_items :]
