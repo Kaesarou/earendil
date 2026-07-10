@@ -91,13 +91,39 @@ class RiskManager:
             raise ValueError(f'Cannot adjust trade plan without effective_stop_loss_percent: {trade_plan}')
         if trade_plan.effective_take_profit_percent is None:
             raise ValueError(f'Cannot adjust trade plan without effective_take_profit_percent: {trade_plan}')
+
+        preserve_structural_stop = (
+            trade_plan.sl_tp_source == 'pending_structural'
+            and trade_plan.stop_loss is not None
+        )
         if trade_plan.side == 'BUY':
-            stop_loss = entry_price * (1 - trade_plan.effective_stop_loss_percent / 100)
+            stop_loss = (
+                trade_plan.stop_loss
+                if preserve_structural_stop
+                else entry_price * (1 - trade_plan.effective_stop_loss_percent / 100)
+            )
             take_profit = entry_price * (1 + trade_plan.effective_take_profit_percent / 100)
+            effective_stop_loss_percent = ((entry_price - stop_loss) / entry_price) * 100
         else:
-            stop_loss = entry_price * (1 + trade_plan.effective_stop_loss_percent / 100)
+            stop_loss = (
+                trade_plan.stop_loss
+                if preserve_structural_stop
+                else entry_price * (1 + trade_plan.effective_stop_loss_percent / 100)
+            )
             take_profit = entry_price * (1 - trade_plan.effective_take_profit_percent / 100)
-        return replace(trade_plan, stop_loss=round(stop_loss, 5), take_profit=round(take_profit, 5))
+            effective_stop_loss_percent = ((stop_loss - entry_price) / entry_price) * 100
+
+        if effective_stop_loss_percent <= 0:
+            raise ValueError(
+                'Broker fill crossed structural stop level: '
+                f'entry_price={entry_price}, stop_loss={stop_loss}, side={trade_plan.side}'
+            )
+        return replace(
+            trade_plan,
+            stop_loss=round(stop_loss, 5),
+            take_profit=round(take_profit, 5),
+            effective_stop_loss_percent=round(effective_stop_loss_percent, 4),
+        )
 
     def instrument_profile_for(self, symbol: str) -> InstrumentProfile:
         return self.instrument_registry.resolve(symbol)
