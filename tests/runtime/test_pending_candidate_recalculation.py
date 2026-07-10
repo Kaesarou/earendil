@@ -40,6 +40,7 @@ def evaluated_candidate(
     expected_net_profit_percent=0.5,
     min_expected_net_profit_percent=0.1,
     pending_key=None,
+    hard_rejection_reason=None,
 ):
     metadata = {
         'range_high': 100.0,
@@ -74,6 +75,7 @@ def evaluated_candidate(
     feasibility = SimpleNamespace(
         raw_runway_score=20.0,
         raw_tp_feasibility_penalty=39.98,
+        tp_feasibility_hard_rejection_reason=hard_rejection_reason,
     )
     return EvaluatedTradeCandidate(
         candidate=candidate,
@@ -114,7 +116,7 @@ def test_wait_candidate_registers_pending_and_stays_out_of_tradable_set():
     assert journal.events[0][0] == 'pending_entry_registered'
 
 
-def test_confirmed_candidate_recalculated_wait_returns_to_waiting():
+def test_confirmed_candidate_does_not_wait_for_the_same_confirmation_twice():
     manager = PendingEntryManager()
     journal = FakeJournal()
     pending_key = confirmed_pending(manager)
@@ -127,10 +129,33 @@ def test_confirmed_candidate_recalculated_wait_returns_to_waiting():
         trade_journal=journal,
     )
 
+    assert recalculated.readiness == CandidateReadiness.TRADABLE_NOW
+    assert recalculated.readiness_reason == 'pending_confirmation_obtained'
+    assert tradable == [recalculated]
+    assert rejected == []
+    assert manager.get(pending_key).state == PendingEntryState.CONFIRMED
+    assert manager.get(pending_key).observed_candles == 2
+
+
+def test_pending_confirmation_does_not_override_hard_rejection():
+    manager = PendingEntryManager()
+    journal = FakeJournal()
+    pending_key = confirmed_pending(manager)
+    recalculated = evaluated_candidate(
+        pending_key=pending_key,
+        hard_rejection_reason='candidate_selection_tp_feasibility_cost_to_tp_absurd',
+    )
+
+    tradable, rejected = route_candidate_readiness(
+        evaluated_candidates=[recalculated],
+        risk_manager=FakeRiskManager(),
+        pending_entry_manager=manager,
+        trade_journal=journal,
+    )
+
+    assert recalculated.readiness == CandidateReadiness.WAIT_CONFIRMATION
     assert tradable == []
     assert rejected[0].reason == 'insufficient_runway'
-    assert manager.get(pending_key).state == PendingEntryState.WAITING
-    assert manager.get(pending_key).observed_candles == 2
 
 
 def test_confirmed_candidate_recalculated_reject_is_removed():
