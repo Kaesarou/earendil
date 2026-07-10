@@ -38,22 +38,42 @@ def test_daily_summary_counts_candidate_selection_and_rejection_reasons():
     assert 'best_hold_candidates' not in data['rejections']
 
 
-def test_daily_summary_uses_estimated_net_pnl_from_closed_position():
+def test_daily_summary_calculates_net_pnl_when_estimated_costs_are_available():
     summary = DailySummaryAggregator(journal_detail_level='normal')
 
     summary.record(
         'position_closed',
         {
             'closed_position': SimpleNamespace(
-                gross_pnl=10.0,
-                estimated_total_cost=1.5,
-                net_pnl_estimated=8.5,
+                amount=1_000.0,
+                gross_pnl=12.0,
+                estimated_total_cost_percent=0.35,
             )
         },
     )
 
-    assert summary.to_dict()['pnl'] == {
-        'gross_estimated': 10.0,
-        'estimated_total_cost': 1.5,
-        'net_estimated': 8.5,
-    }
+    pnl = summary.to_dict()['pnl']
+    assert pnl['gross_estimated'] == 12.0
+    assert pnl['estimated_costs'] == 3.5
+    assert pnl['net_estimated'] == 8.5
+    assert pnl['net_estimated_available'] is True
+
+
+def test_daily_summary_does_not_fake_net_pnl_when_costs_are_unavailable():
+    summary = DailySummaryAggregator(journal_detail_level='normal')
+
+    summary.record(
+        'position_closed',
+        {
+            'closed_position': SimpleNamespace(
+                amount=1_000.0,
+                gross_pnl=12.0,
+            )
+        },
+    )
+
+    pnl = summary.to_dict()['pnl']
+    assert pnl['gross_estimated'] == 12.0
+    assert pnl['estimated_costs'] is None
+    assert pnl['net_estimated'] is None
+    assert pnl['net_estimated_available'] is False
