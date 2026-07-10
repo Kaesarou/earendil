@@ -27,6 +27,14 @@ class Settings(BaseSettings):
         default='data/logs/daily_summary.partial.json',
         alias='PARTIAL_DAILY_SUMMARY_PATH',
     )
+    run_manifest_path: str = Field(
+        default='data/logs/run_manifest.json',
+        alias='RUN_MANIFEST_PATH',
+    )
+    replay_report_path: str = Field(
+        default='data/logs/replay_report.json',
+        alias='REPLAY_REPORT_PATH',
+    )
     journal_detail_level: str = Field(default='normal', alias='JOURNAL_DETAIL_LEVEL')
     journal_keep_debug_decisions: bool = Field(
         default=False,
@@ -39,6 +47,10 @@ class Settings(BaseSettings):
     journal_partial_summary_interval_minutes: int = Field(
         default=15,
         alias='JOURNAL_PARTIAL_SUMMARY_INTERVAL_MINUTES',
+    )
+    runtime_heartbeat_minutes: int = Field(
+        default=5,
+        alias='RUNTIME_HEARTBEAT_MINUTES',
     )
 
     broker: str = Field(default='paper', alias='BROKER')
