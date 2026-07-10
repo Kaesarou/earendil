@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING
 
 from app.execution.candidate_readiness import CandidateReadiness
@@ -42,6 +42,42 @@ class EvaluatedTradeCandidate:
     tp_probability: TpBeforeSlProbabilityEstimate | None = None
     readiness: CandidateReadiness | None = None
     readiness_reason: str | None = None
+
+    def __post_init__(self) -> None:
+        self._promote_confirmed_pending_candidate()
+
+    def _promote_confirmed_pending_candidate(self) -> None:
+        if self.readiness != CandidateReadiness.WAIT_CONFIRMATION:
+            return
+        metadata = self.candidate.signal.metadata or {}
+        if metadata.get('entry_origin') != 'pending_confirmation':
+            return
+        if not metadata.get('pending_entry_id'):
+            return
+
+        feasibility = self.tp_feasibility
+        hard_rejection_reason = getattr(
+            feasibility,
+            'tp_feasibility_hard_rejection_reason',
+            None,
+        )
+        if hard_rejection_reason is not None:
+            return
+
+        reason = 'pending_confirmation_obtained'
+        object.__setattr__(self, 'readiness', CandidateReadiness.TRADABLE_NOW)
+        object.__setattr__(self, 'readiness_reason', reason)
+
+        if feasibility is not None and hasattr(feasibility, 'readiness'):
+            object.__setattr__(
+                self,
+                'tp_feasibility',
+                replace(
+                    feasibility,
+                    readiness=CandidateReadiness.TRADABLE_NOW,
+                    readiness_reason=reason,
+                ),
+            )
 
 
 class CandidateEconomicsEstimator:
