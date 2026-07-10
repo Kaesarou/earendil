@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import replace
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 from app.execution.candidate_economics import CandidateEconomics, EvaluatedTradeCandidate
 from app.execution.sl_tp_profile import EffectiveSlTp
@@ -65,7 +65,10 @@ class EuMicroScalpFallbackAdjuster:
             )
             return normal_evaluated_candidate
 
-        fallback_effective_sl_tp = self._fallback_effective_sl_tp(normal_analysis)
+        fallback_effective_sl_tp = self._fallback_effective_sl_tp(
+            normal_analysis=normal_analysis,
+            normal_evaluated_candidate=normal_evaluated_candidate,
+        )
         fallback_evaluated_candidate = self._with_fallback_economics(
             raw_evaluated_candidate=raw_evaluated_candidate,
             risk_profile=risk_profile,
@@ -75,7 +78,10 @@ class EuMicroScalpFallbackAdjuster:
             evaluated_candidate=fallback_evaluated_candidate,
             risk_profile=risk_profile,
         )
-        fallback_rejection_reason = self._fallback_rejection_reason(fallback_evaluated_candidate, fallback_analysis)
+        fallback_rejection_reason = self._fallback_rejection_reason(
+            fallback_evaluated_candidate,
+            fallback_analysis,
+        )
         if fallback_rejection_reason is not None:
             logger.info(
                 'EU micro-scalp fallback rejected | symbol=%s | side=%s | reason=%s | '
@@ -102,7 +108,7 @@ class EuMicroScalpFallbackAdjuster:
             normal_analysis.effective_take_profit_percent,
             normal_analysis.effective_stop_loss_percent,
             FALLBACK_TP_PERCENT,
-            FALLBACK_SL_PERCENT,
+            fallback_effective_sl_tp.stop_loss_percent,
             normal_analysis.adjusted_score,
             fallback_analysis.adjusted_score,
             fallback_evaluated_candidate.economics.expected_net_profit_percent,
@@ -135,7 +141,34 @@ class EuMicroScalpFallbackAdjuster:
             return 'normal_analysis_has_disqualifying_component'
         return None
 
-    def _fallback_effective_sl_tp(self, normal_analysis: 'TpFeasibilityAnalysis') -> EffectiveSlTp:
+    def _fallback_effective_sl_tp(
+        self,
+        *,
+        normal_analysis: 'TpFeasibilityAnalysis',
+        normal_evaluated_candidate: EvaluatedTradeCandidate,
+    ) -> EffectiveSlTp:
+        current = normal_evaluated_candidate.effective_sl_tp
+        if current is not None and current.source == 'pending_structural':
+            return EffectiveSlTp(
+                stop_loss_percent=current.stop_loss_percent,
+                take_profit_percent=FALLBACK_TP_PERCENT,
+                atr_percent=current.atr_percent,
+                mode=current.mode,
+                source='pending_structural',
+                dynamic_sl_raw_percent=current.dynamic_sl_raw_percent,
+                dynamic_tp_raw_percent=current.dynamic_tp_raw_percent,
+                dynamic_sl_clamped_percent=current.dynamic_sl_clamped_percent,
+                dynamic_tp_clamped_percent=FALLBACK_TP_PERCENT,
+                metadata={
+                    **current.metadata,
+                    'adaptation': 'eu_micro_scalp_fallback',
+                    'selection_min_score': FALLBACK_SELECTION_MIN_SCORE,
+                    'original_take_profit_percent': normal_analysis.effective_take_profit_percent,
+                    'original_stop_loss_percent': normal_analysis.effective_stop_loss_percent,
+                    'normal_adjusted_score': normal_analysis.adjusted_score,
+                    'micro_scalp_take_profit_percent': FALLBACK_TP_PERCENT,
+                },
+            )
         return EffectiveSlTp(
             stop_loss_percent=FALLBACK_SL_PERCENT,
             take_profit_percent=FALLBACK_TP_PERCENT,
