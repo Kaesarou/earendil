@@ -39,6 +39,8 @@ class TpFeasibilityConfig:
     max_penalty_points: float = 45.0
     moderate_score_cap: float = 110.0
     severe_score_cap: float = 95.0
+    wait_confirmation_min_runway_score: float = 25.0
+    wait_confirmation_severe_penalty: float = 40.0
 
 
 @dataclass(frozen=True)

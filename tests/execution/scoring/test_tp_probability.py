@@ -1,6 +1,7 @@
 from datetime import datetime, timezone
 
 from app.execution.candidate_economics import CandidateEconomics, EvaluatedTradeCandidate
+from app.execution.candidate_readiness import CandidateReadiness
 from app.execution.scoring.tp_feasibility import TpFeasibilityAnalysis
 from app.execution.scoring.tp_probability import (
     CandidateTpProbabilityEvaluator,
@@ -101,12 +102,16 @@ def _feasibility(
         distance_to_trade_extreme_percent=0.20,
         movement_consumed_percent=movement_consumed_percent,
         runway_score=runway_score,
+        raw_runway_score=runway_score,
         score_before_tp_feasibility=130.0,
         score_after_tp_penalty=130.0,
         tp_feasibility_penalty=0.0,
+        raw_tp_feasibility_penalty=0.0,
         score_cap=None,
         adjusted_score=130.0,
         tp_feasibility_hard_rejection_reason=None,
+        readiness=CandidateReadiness.TRADABLE_NOW,
+        readiness_reason='tp_feasibility_ready',
         penalty_components=(),
         cap_components=(),
         hard_rejection_components=(),
