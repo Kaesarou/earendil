@@ -1,3 +1,4 @@
+import hashlib
 import json
 import os
 import platform
@@ -47,6 +48,22 @@ def resolve_git_commit() -> str | None:
     return commit or None
 
 
+def resolve_code_fingerprint(source_root: str | Path | None = None) -> str | None:
+    root = Path(source_root) if source_root is not None else Path(__file__).resolve().parents[1]
+    source_files = sorted(path for path in root.rglob('*.py') if path.is_file())
+    if not source_files:
+        return None
+
+    digest = hashlib.sha256()
+    for source_file in source_files:
+        relative_path = source_file.relative_to(root).as_posix()
+        digest.update(relative_path.encode('utf-8'))
+        digest.update(b'\0')
+        digest.update(source_file.read_bytes())
+        digest.update(b'\0')
+    return digest.hexdigest()
+
+
 def build_run_manifest(
     *,
     settings: Settings,
@@ -73,6 +90,7 @@ def build_run_manifest(
         'ended_at': None,
         'code': {
             'git_commit': resolve_git_commit(),
+            'source_sha256': resolve_code_fingerprint(),
             'python_version': platform.python_version(),
         },
         'strategy': {
