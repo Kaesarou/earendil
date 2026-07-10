@@ -6,7 +6,7 @@ from app.config.settings import Settings
 from app.execution.candidate_ranking import build_trade_candidate
 from app.execution.trade_candidate import TradeCandidate
 from app.instruments.instrument_registry import InstrumentRegistry
-from app.journal.run_manifest import resolve_git_commit
+from app.journal.run_manifest import resolve_code_fingerprint, resolve_git_commit
 from app.market.candle_builder import CandleBuilder
 from app.market.models import MarketSnapshot
 from app.replay.dataset import MarketReplayEvent, ReplayDataset
@@ -51,7 +51,6 @@ class StrategyReplayRunner:
         active_session_keys: dict[str, str | None] = {}
         hold_reasons: Counter[str] = Counter()
         candidates: list[dict[str, Any]] = []
-        candidate_objects: dict[str, TradeCandidate] = {}
         candidates_by_loop: dict[int, list[TradeCandidate]] = defaultdict(list)
         snapshots_by_symbol: dict[str, list[MarketReplayEvent]] = defaultdict(list)
         loop_grouping_complete = True
@@ -102,7 +101,6 @@ class StrategyReplayRunner:
                 side=candidate.signal.action,
                 closed_at=candidate.candle.closed_at,
             )
-            candidate_objects[key] = candidate
             loop_key = event.loop_id if event.loop_id is not None else event.sequence
             if event.loop_id is None:
                 loop_grouping_complete = False
@@ -159,8 +157,21 @@ class StrategyReplayRunner:
                 snapshots_by_symbol[candidate['symbol']],
             )
 
-        manifest_commit = self.dataset.manifest.get('code', {}).get('git_commit')
+        manifest_code = self.dataset.manifest.get('code', {})
+        manifest_commit = manifest_code.get('git_commit')
+        manifest_fingerprint = manifest_code.get('source_sha256')
         current_commit = resolve_git_commit()
+        current_fingerprint = resolve_code_fingerprint()
+        commit_matches = (
+            manifest_commit is not None
+            and current_commit is not None
+            and manifest_commit == current_commit
+        )
+        fingerprint_matches = (
+            manifest_fingerprint is not None
+            and current_fingerprint is not None
+            and manifest_fingerprint == current_fingerprint
+        )
         return {
             'schema_version': 1,
             'run_id': self.dataset.run_id,
@@ -169,11 +180,11 @@ class StrategyReplayRunner:
             'reproducibility': {
                 'manifest_git_commit': manifest_commit,
                 'current_git_commit': current_commit,
-                'code_commit_matches': (
-                    manifest_commit is not None
-                    and current_commit is not None
-                    and manifest_commit == current_commit
-                ),
+                'git_commit_matches': commit_matches,
+                'manifest_source_sha256': manifest_fingerprint,
+                'current_source_sha256': current_fingerprint,
+                'source_fingerprint_matches': fingerprint_matches,
+                'exact_code_match': fingerprint_matches or commit_matches,
                 'profile': self.profile.name,
                 'candle_timeframe_seconds': self.settings.candle_timeframe_seconds,
                 'loop_grouping_complete': loop_grouping_complete,
@@ -190,8 +201,12 @@ class StrategyReplayRunner:
                 'sl_tp_mode': 'static risk profile percentages',
                 'fees_included': False,
                 'position_overlap_enforced': False,
-                'selection_stage': 'score/min-score/top-n before economics, TP feasibility and cooldown',
-                'purpose': 'screening missed strategy opportunities, not broker PnL accounting',
+                'selection_stage': (
+                    'score/min-score/top-n before economics, TP feasibility and cooldown'
+                ),
+                'purpose': (
+                    'screening missed strategy opportunities, not broker PnL accounting'
+                ),
             },
         }
 
