@@ -80,7 +80,10 @@ class SellSignalScorer:
             exhaustion=base_breakdown.exhaustion,
             score_before_late_entry_cap=base_breakdown.score_before_late_entry_cap,
             score_after_late_entry_cap=base_breakdown.score_after_late_entry_cap,
-            score_metadata={'sell_score': self._metadata(analysis, final_score)},
+            score_metadata={
+                **base_breakdown.score_metadata,
+                'sell_score': self._metadata(analysis, final_score),
+            },
             sell_specific_penalty=analysis.sell_specific_penalty,
             sell_score_cap=analysis.sell_score_cap,
             sell_rejection_reason=analysis.sell_rejection_reason,
