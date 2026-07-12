@@ -25,7 +25,7 @@ def memory_entry() -> ClosedTradeMemoryEntry:
 
 
 def test_store_loads_active_cooldown(tmp_path):
-    store = ClosedTradeMemoryStore(str(tmp_path / 'earendil.sqlite'))
+    store = ClosedTradeMemoryStore(str(tmp_path / 'goblin.sqlite'))
     entry = memory_entry()
     store.save_or_replace(entry)
 
@@ -42,7 +42,7 @@ def test_store_loads_active_cooldown(tmp_path):
 
 
 def test_store_keeps_recent_tp_after_fixed_cooldown_expiry(tmp_path):
-    store = ClosedTradeMemoryStore(str(tmp_path / 'earendil.sqlite'))
+    store = ClosedTradeMemoryStore(str(tmp_path / 'goblin.sqlite'))
     entry = memory_entry()
     store.save_or_replace(entry)
     now = entry.closed_at + timedelta(minutes=45)
