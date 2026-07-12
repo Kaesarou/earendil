@@ -9,8 +9,8 @@ class Settings(BaseSettings):
         extra='ignore',
     )
 
-    app_log_path: str = Field(default='data/logs/earendil.log', alias='APP_LOG_PATH')
-    position_store_path: str = Field(default='data/earendil.sqlite', alias='POSITION_STORE_PATH')
+    app_log_path: str = Field(default='data/logs/goblin.log', alias='APP_LOG_PATH')
+    position_store_path: str = Field(default='data/goblin.sqlite', alias='POSITION_STORE_PATH')
     journal_path: str = Field(default='data/logs/trades.jsonl', alias='JOURNAL_PATH')
     market_log_path: str = Field(default='data/logs/market.jsonl.gz', alias='MARKET_LOG_PATH')
     candle_journal_path: str = Field(

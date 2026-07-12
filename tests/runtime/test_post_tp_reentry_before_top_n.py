@@ -52,7 +52,7 @@ def save_consumed_sell(store: TradeCooldownStore, symbol: str) -> None:
 
 
 def test_post_tp_reentries_do_not_take_top_n_slots(tmp_path):
-    store = TradeCooldownStore(str(tmp_path / 'earendil.sqlite'))
+    store = TradeCooldownStore(str(tmp_path / 'goblin.sqlite'))
     save_consumed_sell(store, 'AMD')
     save_consumed_sell(store, 'AVGO')
 

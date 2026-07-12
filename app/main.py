@@ -75,7 +75,7 @@ def main() -> None:
     manifest = build_run_manifest(settings=settings, strategy_profile=strategy_profile, instrument_registry=instrument_registry, symbols=symbols, run_id=run_id, started_at=started_at, manifest_path=archived_manifest_path, summary_path=archived_summary_path)
     write_run_manifest(archived_manifest_path, manifest)
     write_run_manifest(settings.run_manifest_path, manifest)
-    logger.info('Starting Eärendil | run_id=%s | broker=%s | strategy_profile=%s | watchlist=%s | journal_detail=%s', run_id, settings.broker, strategy_profile.name, symbols, settings.journal_detail_level)
+    logger.info('Starting Goblin! | run_id=%s | broker=%s | strategy_profile=%s | watchlist=%s | journal_detail=%s', run_id, settings.broker, strategy_profile.name, symbols, settings.journal_detail_level)
 
     broker = build_broker(settings)
     strategies = build_strategies(symbols, instrument_registry)
@@ -163,7 +163,7 @@ def main() -> None:
             except KeyboardInterrupt:
                 run_status = 'stopped'
                 trade_journal.write('runtime_interrupted', {'run_id': run_id, 'loop_id': loop_id})
-                logger.info('Stopping Eärendil')
+                logger.info('Stopping Goblin!')
                 break
             except Exception as exc:
                 if is_broker_authorization_error(exc):

@@ -5,7 +5,7 @@ from app.persistence.position_store import PositionStore
 
 
 def test_position_store_persists_stale_position_fields(tmp_path):
-    store = PositionStore(str(tmp_path / 'earendil.sqlite'))
+    store = PositionStore(str(tmp_path / 'goblin.sqlite'))
     opened_at = datetime(2026, 7, 5, 12, 0, tzinfo=timezone.utc)
 
     store.save_open_position(

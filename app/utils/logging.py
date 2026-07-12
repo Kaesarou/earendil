@@ -6,7 +6,7 @@ from pathlib import Path
 
 def configure_logging(
     level: str = 'INFO',
-    log_file_path: str = 'data/logs/earendil.log',
+    log_file_path: str = 'data/logs/goblin.log',
 ) -> None:
     resolved_level = getattr(logging, level.upper(), logging.INFO)
 

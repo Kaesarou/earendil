@@ -41,7 +41,7 @@ def _entry(
 
 
 def _guard(tmp_path, entry: ClosedTradeMemoryEntry) -> FixedTradeCooldownGuard:
-    store = ClosedTradeMemoryStore(str(tmp_path / 'earendil.sqlite'))
+    store = ClosedTradeMemoryStore(str(tmp_path / 'goblin.sqlite'))
     store.save_or_replace(entry)
     return FixedTradeCooldownGuard(store)
 
@@ -130,7 +130,7 @@ def test_symbol_lock_does_not_affect_other_symbols(tmp_path):
 
 
 def test_persisted_stop_loss_lock_survives_restart(tmp_path):
-    path = str(tmp_path / 'earendil.sqlite')
+    path = str(tmp_path / 'goblin.sqlite')
     first_store = ClosedTradeMemoryStore(path)
     first_store.save_or_replace(_entry(side='SELL'))
 

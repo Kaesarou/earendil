@@ -25,7 +25,7 @@ def save_tp(store: ClosedTradeMemoryStore) -> ClosedTradeMemoryEntry:
 
 
 def test_fixed_trade_cooldown_blocks_same_symbol_and_side(tmp_path):
-    store = ClosedTradeMemoryStore(str(tmp_path / 'earendil.sqlite'))
+    store = ClosedTradeMemoryStore(str(tmp_path / 'goblin.sqlite'))
     entry = save_tp(store)
     guard = FixedTradeCooldownGuard(store)
 
@@ -42,7 +42,7 @@ def test_fixed_trade_cooldown_blocks_same_symbol_and_side(tmp_path):
 
 
 def test_fixed_trade_cooldown_allows_opposite_side(tmp_path):
-    store = ClosedTradeMemoryStore(str(tmp_path / 'earendil.sqlite'))
+    store = ClosedTradeMemoryStore(str(tmp_path / 'goblin.sqlite'))
     entry = save_tp(store)
     guard = FixedTradeCooldownGuard(store)
 

@@ -48,7 +48,7 @@ def candidate(side: str, price: float) -> TradeCandidate:
 
 
 def test_blocks_same_side_after_tp_without_reset(tmp_path):
-    store = ClosedTradeMemoryStore(str(tmp_path / 'earendil.sqlite'))
+    store = ClosedTradeMemoryStore(str(tmp_path / 'goblin.sqlite'))
     save_tp(store)
 
     decision = PostTpReentryGuard(store).check(
@@ -62,7 +62,7 @@ def test_blocks_same_side_after_tp_without_reset(tmp_path):
 
 
 def test_allows_same_side_after_pullback_reset(tmp_path):
-    store = ClosedTradeMemoryStore(str(tmp_path / 'earendil.sqlite'))
+    store = ClosedTradeMemoryStore(str(tmp_path / 'goblin.sqlite'))
     save_tp(store)
 
     decision = PostTpReentryGuard(store).check(
@@ -76,7 +76,7 @@ def test_allows_same_side_after_pullback_reset(tmp_path):
 
 
 def test_does_not_block_opposite_side(tmp_path):
-    store = ClosedTradeMemoryStore(str(tmp_path / 'earendil.sqlite'))
+    store = ClosedTradeMemoryStore(str(tmp_path / 'goblin.sqlite'))
     save_tp(store)
 
     decision = PostTpReentryGuard(store).check(

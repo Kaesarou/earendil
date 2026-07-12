@@ -25,7 +25,7 @@ def position(
 
 
 def test_position_store_saves_loads_and_deletes_open_positions(tmp_path):
-    store = PositionStore(str(tmp_path / 'earendil.sqlite'))
+    store = PositionStore(str(tmp_path / 'goblin.sqlite'))
 
     store.save_open_position(position('position-1', 'MSFT'))
     store.save_open_position(position('position-2', 'NVDA'))
@@ -48,7 +48,7 @@ def test_position_store_saves_loads_and_deletes_open_positions(tmp_path):
 
 
 def test_position_store_persists_adjusted_execution_price_levels(tmp_path):
-    store = PositionStore(str(tmp_path / 'earendil.sqlite'))
+    store = PositionStore(str(tmp_path / 'goblin.sqlite'))
 
     store.save_open_position(position('position-1', 'HO.PA', entry_price=238.0, stop_loss=236.096, take_profit=241.332))
 
@@ -60,7 +60,7 @@ def test_position_store_persists_adjusted_execution_price_levels(tmp_path):
 
 
 def test_position_store_persists_managed_stop_fields(tmp_path):
-    store = PositionStore(str(tmp_path / 'earendil.sqlite'))
+    store = PositionStore(str(tmp_path / 'goblin.sqlite'))
     managed_position = position('position-1')
     managed_position = TrackedPosition(
         **{
@@ -80,7 +80,7 @@ def test_position_store_persists_managed_stop_fields(tmp_path):
 
 
 def test_position_store_migrates_existing_open_positions_table(tmp_path):
-    db_path = tmp_path / 'earendil.sqlite'
+    db_path = tmp_path / 'goblin.sqlite'
     with sqlite3.connect(db_path) as connection:
         connection.execute(
             """
@@ -120,7 +120,7 @@ def test_position_store_migrates_existing_open_positions_table(tmp_path):
 
 
 def test_position_store_replaces_existing_position(tmp_path):
-    store = PositionStore(str(tmp_path / 'earendil.sqlite'))
+    store = PositionStore(str(tmp_path / 'goblin.sqlite'))
 
     store.save_open_position(position('position-1', 'MSFT'))
     store.save_open_position(position('position-1', 'AAPL'))
