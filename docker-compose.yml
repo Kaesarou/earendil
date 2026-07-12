@@ -1,7 +1,7 @@
 services:
-  earendil:
+  goblin:
     build: .
-    container_name: earendil-bot
+    container_name: goblin-bot
     env_file:
       - .env
     volumes:
