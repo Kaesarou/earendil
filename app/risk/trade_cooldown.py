@@ -19,6 +19,7 @@ class TradeCooldownConfig:
     after_stop_loss_minutes: int = 45
     after_manual_close_minutes: int = 15
     after_unknown_close_minutes: int = 15
+    stop_loss_symbol_lock_minutes: int = 15
 
     def duration_minutes_for(self, close_reason: CloseReason) -> int:
         if close_reason == CloseReason.TAKE_PROFIT:
@@ -31,6 +32,9 @@ class TradeCooldownConfig:
 
     def duration_for(self, close_reason: CloseReason) -> timedelta:
         return timedelta(minutes=self.duration_minutes_for(close_reason))
+
+    def stop_loss_symbol_lock_duration(self) -> timedelta:
+        return timedelta(minutes=max(0, self.stop_loss_symbol_lock_minutes))
 
 
 @dataclass(frozen=True)
@@ -52,13 +56,41 @@ class ClosedTradeMemoryEntry:
     gross_pnl: float | None = None
     gross_pnl_percent: float | None = None
     created_at: datetime | None = None
+    session_key: str | None = None
 
     @property
     def expires_at(self) -> datetime:
         return self.cooldown_expires_at
 
+    @property
+    def registered_at(self) -> datetime:
+        return self.created_at or self.closed_at
+
+    @property
+    def lock_scope(self) -> str:
+        if self.close_reason == CloseReason.STOP_LOSS:
+            return 'symbol_both_sides'
+        return 'symbol_side'
+
+    @property
+    def blocked_sides(self) -> tuple[str, ...]:
+        if self.close_reason == CloseReason.STOP_LOSS:
+            return ('BUY', 'SELL')
+        return (self.side,)
+
     def remaining_seconds(self, now: datetime) -> int:
         return max(0, int((self.cooldown_expires_at - now).total_seconds()))
+
+    def symbol_lock_expires_at(self, config: TradeCooldownConfig) -> datetime:
+        return self.closed_at + config.stop_loss_symbol_lock_duration()
+
+    def symbol_lock_remaining_seconds(
+        self,
+        *,
+        config: TradeCooldownConfig,
+        now: datetime,
+    ) -> int:
+        return max(0, int((self.symbol_lock_expires_at(config) - now).total_seconds()))
 
 
 MANUAL_CLOSE_REASONS = {
@@ -96,7 +128,10 @@ def close_reason_from_raw(raw_reason: str | None) -> CloseReason:
     return CloseReason.UNKNOWN
 
 
-def close_reason_for_closed_trade(raw_reason: str | None, gross_pnl: float | None = None) -> CloseReason:
+def close_reason_for_closed_trade(
+    raw_reason: str | None,
+    gross_pnl: float | None = None,
+) -> CloseReason:
     normalized_reason = (raw_reason or '').strip().lower()
 
     if normalized_reason in PROTECTED_EXIT_REASONS:
@@ -140,8 +175,12 @@ def build_closed_trade_memory_entry(
     gross_pnl: float | None = None,
     gross_pnl_percent: float | None = None,
     created_at: datetime | None = None,
+    session_key: str | None = None,
 ) -> ClosedTradeMemoryEntry:
-    close_reason = close_reason_for_closed_trade(raw_reason=raw_close_reason, gross_pnl=gross_pnl)
+    close_reason = close_reason_for_closed_trade(
+        raw_reason=raw_close_reason,
+        gross_pnl=gross_pnl,
+    )
     normalized_symbol = normalize_symbol(symbol)
     normalized_side = side.strip().upper()
     actual_created_at = created_at or datetime.now(timezone.utc)
@@ -164,6 +203,7 @@ def build_closed_trade_memory_entry(
         gross_pnl=gross_pnl,
         gross_pnl_percent=gross_pnl_percent,
         created_at=actual_created_at,
+        session_key=session_key,
     )
 
 

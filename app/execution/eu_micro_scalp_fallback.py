@@ -2,10 +2,11 @@ from __future__ import annotations
 
 import logging
 from dataclasses import replace
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 from app.execution.candidate_economics import CandidateEconomics, EvaluatedTradeCandidate
 from app.execution.sl_tp_profile import EffectiveSlTp
+from app.execution.trade_candidate import TradeCandidate
 from app.instruments.models import AssetClass, RiskProfile
 from app.risk.trade_cost_model import TradeCostModel
 from app.utils.commons import spread_percent
@@ -41,7 +42,11 @@ _DISQUALIFYING_COMPONENT_PREFIXES = (
 
 
 class EuMicroScalpFallbackAdjuster:
-    def __init__(self, analyzer: 'TpFeasibilityAnalyzer', trade_cost_model: TradeCostModel | None = None):
+    def __init__(
+        self,
+        analyzer: 'TpFeasibilityAnalyzer',
+        trade_cost_model: TradeCostModel | None = None,
+    ):
         self.analyzer = analyzer
         self.trade_cost_model = trade_cost_model or TradeCostModel()
 
@@ -65,9 +70,13 @@ class EuMicroScalpFallbackAdjuster:
             )
             return normal_evaluated_candidate
 
-        fallback_effective_sl_tp = self._fallback_effective_sl_tp(normal_analysis)
+        fallback_effective_sl_tp = self._fallback_effective_sl_tp(
+            normal_analysis=normal_analysis,
+            normal_evaluated_candidate=normal_evaluated_candidate,
+        )
         fallback_evaluated_candidate = self._with_fallback_economics(
-            raw_evaluated_candidate=raw_evaluated_candidate,
+            source_evaluated_candidate=normal_evaluated_candidate,
+            fallback_candidate=raw_evaluated_candidate.candidate,
             risk_profile=risk_profile,
             effective_sl_tp=fallback_effective_sl_tp,
         )
@@ -75,7 +84,10 @@ class EuMicroScalpFallbackAdjuster:
             evaluated_candidate=fallback_evaluated_candidate,
             risk_profile=risk_profile,
         )
-        fallback_rejection_reason = self._fallback_rejection_reason(fallback_evaluated_candidate, fallback_analysis)
+        fallback_rejection_reason = self._fallback_rejection_reason(
+            fallback_evaluated_candidate,
+            fallback_analysis,
+        )
         if fallback_rejection_reason is not None:
             logger.info(
                 'EU micro-scalp fallback rejected | symbol=%s | side=%s | reason=%s | '
@@ -102,7 +114,7 @@ class EuMicroScalpFallbackAdjuster:
             normal_analysis.effective_take_profit_percent,
             normal_analysis.effective_stop_loss_percent,
             FALLBACK_TP_PERCENT,
-            FALLBACK_SL_PERCENT,
+            fallback_effective_sl_tp.stop_loss_percent,
             normal_analysis.adjusted_score,
             fallback_analysis.adjusted_score,
             fallback_evaluated_candidate.economics.expected_net_profit_percent,
@@ -135,7 +147,34 @@ class EuMicroScalpFallbackAdjuster:
             return 'normal_analysis_has_disqualifying_component'
         return None
 
-    def _fallback_effective_sl_tp(self, normal_analysis: 'TpFeasibilityAnalysis') -> EffectiveSlTp:
+    def _fallback_effective_sl_tp(
+        self,
+        *,
+        normal_analysis: 'TpFeasibilityAnalysis',
+        normal_evaluated_candidate: EvaluatedTradeCandidate,
+    ) -> EffectiveSlTp:
+        current = normal_evaluated_candidate.effective_sl_tp
+        if current is not None and current.source == 'pending_structural':
+            return EffectiveSlTp(
+                stop_loss_percent=current.stop_loss_percent,
+                take_profit_percent=FALLBACK_TP_PERCENT,
+                atr_percent=current.atr_percent,
+                mode=current.mode,
+                source='pending_structural',
+                dynamic_sl_raw_percent=current.dynamic_sl_raw_percent,
+                dynamic_tp_raw_percent=current.dynamic_tp_raw_percent,
+                dynamic_sl_clamped_percent=current.dynamic_sl_clamped_percent,
+                dynamic_tp_clamped_percent=FALLBACK_TP_PERCENT,
+                metadata={
+                    **current.metadata,
+                    'adaptation': 'eu_micro_scalp_fallback',
+                    'selection_min_score': FALLBACK_SELECTION_MIN_SCORE,
+                    'original_take_profit_percent': normal_analysis.effective_take_profit_percent,
+                    'original_stop_loss_percent': normal_analysis.effective_stop_loss_percent,
+                    'normal_adjusted_score': normal_analysis.adjusted_score,
+                    'micro_scalp_take_profit_percent': FALLBACK_TP_PERCENT,
+                },
+            )
         return EffectiveSlTp(
             stop_loss_percent=FALLBACK_SL_PERCENT,
             take_profit_percent=FALLBACK_TP_PERCENT,
@@ -155,17 +194,21 @@ class EuMicroScalpFallbackAdjuster:
     def _with_fallback_economics(
         self,
         *,
-        raw_evaluated_candidate: EvaluatedTradeCandidate,
+        source_evaluated_candidate: EvaluatedTradeCandidate,
+        fallback_candidate: TradeCandidate,
         risk_profile: RiskProfile,
         effective_sl_tp: EffectiveSlTp,
     ) -> EvaluatedTradeCandidate:
         estimate = self.trade_cost_model.estimate(
-            position_value=raw_evaluated_candidate.economics.position_value,
+            position_value=source_evaluated_candidate.economics.position_value,
             expected_move_percent=effective_sl_tp.take_profit_percent,
-            spread_percent=spread_percent(raw_evaluated_candidate.candidate.snapshot),
+            spread_percent=spread_percent(fallback_candidate.snapshot),
             config=risk_profile.trade_cost,
         )
-        loss_at_sl_percent = effective_sl_tp.stop_loss_percent + estimate.total_estimated_cost_percent
+        loss_at_sl_percent = (
+            effective_sl_tp.stop_loss_percent
+            + estimate.total_estimated_cost_percent
+        )
         economics = CandidateEconomics(
             position_value=estimate.position_value,
             expected_gross_profit=estimate.expected_gross_profit,
@@ -174,16 +217,26 @@ class EuMicroScalpFallbackAdjuster:
             estimated_total_cost=estimate.total_estimated_cost,
             estimated_total_cost_percent=estimate.total_estimated_cost_percent,
             min_expected_net_profit_percent=estimate.min_expected_net_profit_percent,
-            required_min_expected_net_profit_amount=estimate.required_min_expected_net_profit_amount,
+            required_min_expected_net_profit_amount=(
+                estimate.required_min_expected_net_profit_amount
+            ),
             effective_take_profit_percent=effective_sl_tp.take_profit_percent,
             effective_stop_loss_percent=effective_sl_tp.stop_loss_percent,
-            cost_to_tp_ratio=_safe_ratio(estimate.total_estimated_cost_percent, effective_sl_tp.take_profit_percent),
-            reward_to_risk_ratio=_safe_ratio(effective_sl_tp.take_profit_percent, effective_sl_tp.stop_loss_percent),
-            net_reward_to_risk_ratio=_safe_ratio(estimate.expected_net_profit_percent, loss_at_sl_percent),
+            cost_to_tp_ratio=_safe_ratio(
+                estimate.total_estimated_cost_percent,
+                effective_sl_tp.take_profit_percent,
+            ),
+            reward_to_risk_ratio=_safe_ratio(
+                effective_sl_tp.take_profit_percent,
+                effective_sl_tp.stop_loss_percent,
+            ),
+            net_reward_to_risk_ratio=_safe_ratio(
+                estimate.expected_net_profit_percent,
+                loss_at_sl_percent,
+            ),
         )
-        raw_candidate = raw_evaluated_candidate.candidate
         return EvaluatedTradeCandidate(
-            candidate=replace(raw_candidate, score=raw_candidate.score),
+            candidate=replace(fallback_candidate, score=fallback_candidate.score),
             economics=economics,
             effective_sl_tp=effective_sl_tp,
         )
@@ -195,7 +248,10 @@ class EuMicroScalpFallbackAdjuster:
     ) -> str | None:
         if fallback_analysis.tp_feasibility_hard_rejection_reason is not None:
             return fallback_analysis.tp_feasibility_hard_rejection_reason
-        if evaluated_candidate.economics.expected_net_profit_percent < MIN_EXPECTED_NET_PROFIT_PERCENT:
+        if (
+            evaluated_candidate.economics.expected_net_profit_percent
+            < MIN_EXPECTED_NET_PROFIT_PERCENT
+        ):
             return 'fallback_expected_net_profit_too_low'
         if fallback_analysis.adjusted_score < FALLBACK_SELECTION_MIN_SCORE:
             return 'fallback_score_too_low'
@@ -225,7 +281,10 @@ def _candidate_with_fallback_analysis(
         }
     )
     rank_reason = _append_rank_reason(candidate.rank_reason, fallback_analysis)
-    rank_reason = f'{rank_reason};adaptation=eu_micro_scalp_fallback,normal_adjusted_score={normal_analysis.adjusted_score:.2f}'
+    rank_reason = (
+        f'{rank_reason};adaptation=eu_micro_scalp_fallback,'
+        f'normal_adjusted_score={normal_analysis.adjusted_score:.2f}'
+    )
     return replace(
         candidate,
         score=fallback_analysis.adjusted_score,
@@ -233,7 +292,9 @@ def _candidate_with_fallback_analysis(
         tp_feasibility_metadata=metadata,
         tp_feasibility_penalty=fallback_analysis.tp_feasibility_penalty,
         tp_feasibility_score_cap=fallback_analysis.score_cap,
-        tp_feasibility_hard_rejection_reason=fallback_analysis.tp_feasibility_hard_rejection_reason,
+        tp_feasibility_hard_rejection_reason=(
+            fallback_analysis.tp_feasibility_hard_rejection_reason
+        ),
     )
 
 
@@ -249,7 +310,10 @@ def _has_disqualifying_component(components: tuple[str, ...]) -> bool:
     for component in components:
         if component in _DISQUALIFYING_COMPONENTS:
             return True
-        if any(component.startswith(prefix) for prefix in _DISQUALIFYING_COMPONENT_PREFIXES):
+        if any(
+            component.startswith(prefix)
+            for prefix in _DISQUALIFYING_COMPONENT_PREFIXES
+        ):
             return True
     return False
 

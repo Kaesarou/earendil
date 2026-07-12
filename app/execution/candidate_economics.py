@@ -1,12 +1,13 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING
 
+from app.execution.candidate_readiness import CandidateReadiness
 from app.execution.sl_tp_profile import EffectiveSlTp, EffectiveSlTpResolver
 from app.execution.trade_candidate import TradeCandidate
 from app.instruments.instrument_registry import InstrumentRegistry
-from app.risk.position_sizing import PositionSizingStrategy
+from app.risk.position_sizing import PositionSizingStrategy, constant_risk_position_value
 from app.risk.trade_cost_model import TradeCostModel
 from app.utils.commons import spread_percent
 
@@ -39,6 +40,44 @@ class EvaluatedTradeCandidate:
     effective_sl_tp: EffectiveSlTp | None = None
     tp_feasibility: TpFeasibilityAnalysis | None = None
     tp_probability: TpBeforeSlProbabilityEstimate | None = None
+    readiness: CandidateReadiness | None = None
+    readiness_reason: str | None = None
+
+    def __post_init__(self) -> None:
+        self._promote_confirmed_pending_candidate()
+
+    def _promote_confirmed_pending_candidate(self) -> None:
+        if self.readiness != CandidateReadiness.WAIT_CONFIRMATION:
+            return
+        metadata = self.candidate.signal.metadata or {}
+        if metadata.get('entry_origin') != 'pending_confirmation':
+            return
+        if not metadata.get('pending_entry_id'):
+            return
+
+        feasibility = self.tp_feasibility
+        hard_rejection_reason = getattr(
+            feasibility,
+            'tp_feasibility_hard_rejection_reason',
+            None,
+        )
+        if hard_rejection_reason is not None:
+            return
+
+        reason = 'pending_confirmation_obtained'
+        object.__setattr__(self, 'readiness', CandidateReadiness.TRADABLE_NOW)
+        object.__setattr__(self, 'readiness_reason', reason)
+
+        if feasibility is not None and hasattr(feasibility, 'readiness'):
+            object.__setattr__(
+                self,
+                'tp_feasibility',
+                replace(
+                    feasibility,
+                    readiness=CandidateReadiness.TRADABLE_NOW,
+                    readiness_reason=reason,
+                ),
+            )
 
 
 class CandidateEconomicsEstimator:
@@ -57,8 +96,23 @@ class CandidateEconomicsEstimator:
     def evaluate(self, candidate: TradeCandidate, account_equity: float) -> EvaluatedTradeCandidate:
         risk_profile = self.instrument_registry.risk_profile_for(candidate.symbol)
         effective_sl_tp = self.sl_tp_resolver.resolve(candidate=candidate, risk_profile=risk_profile)
-        position_value = self.position_sizing_strategy.calculate_amount(account_equity=account_equity, risk_profile=risk_profile)
-        estimate = self.trade_cost_model.estimate(position_value=position_value, expected_move_percent=effective_sl_tp.take_profit_percent, spread_percent=spread_percent(candidate.snapshot), config=risk_profile.trade_cost)
+        position_value = self.position_sizing_strategy.calculate_amount(
+            account_equity=account_equity,
+            risk_profile=risk_profile,
+        )
+        baseline_stop_loss = effective_sl_tp.metadata.get('constant_risk_baseline_stop_loss_percent')
+        if baseline_stop_loss is not None:
+            position_value = constant_risk_position_value(
+                baseline_position_value=position_value,
+                baseline_stop_loss_percent=float(baseline_stop_loss),
+                effective_stop_loss_percent=effective_sl_tp.stop_loss_percent,
+            )
+        estimate = self.trade_cost_model.estimate(
+            position_value=position_value,
+            expected_move_percent=effective_sl_tp.take_profit_percent,
+            spread_percent=spread_percent(candidate.snapshot),
+            config=risk_profile.trade_cost,
+        )
         loss_at_sl_percent = effective_sl_tp.stop_loss_percent + estimate.total_estimated_cost_percent
         return EvaluatedTradeCandidate(
             candidate=candidate,

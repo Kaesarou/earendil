@@ -11,7 +11,10 @@ from app.runtime.position_lifecycle import (
     BrokerAuthorizationErrorChecker,
     register_trade_cooldown_for_closed_position,
 )
-from app.runtime.trading_session_window import FORCE_CLOSE_BEFORE_SESSION_END, TradingSessionDecision
+from app.runtime.trading_session_window import (
+    FORCE_CLOSE_BEFORE_SESSION_END,
+    TradingSessionDecision,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -45,14 +48,16 @@ def force_close_positions_before_session_end(
             detected_at=snapshot.timestamp,
             metadata={
                 'session_decision': session_decision.reason,
-                'time_until_session_end_minutes': session_decision.time_until_session_end_minutes,
+                'time_until_session_end_minutes': (
+                    session_decision.time_until_session_end_minutes
+                ),
             },
         )
 
         try:
             executor.close(close_signal.position_id)
             closed_position = position_tracker.record_closed_position(close_signal)
-            risk_manager.record_close_position(close_signal.symbol)
+            closed_session_key = risk_manager.record_close_position(close_signal.symbol)
 
             if position_store is not None:
                 position_store.delete_open_position(close_signal.position_id)
@@ -63,6 +68,7 @@ def force_close_positions_before_session_end(
                     risk_manager=risk_manager,
                     cooldown_store=cooldown_store,
                     trade_journal=trade_journal,
+                    session_key=closed_session_key,
                 )
 
             trade_journal.write(
@@ -75,7 +81,8 @@ def force_close_positions_before_session_end(
                 },
             )
             logger.info(
-                'Position force-closed before session end | symbol=%s | position_id=%s',
+                'Position force-closed before session end | symbol=%s | '
+                'position_id=%s',
                 symbol,
                 close_signal.position_id,
             )
