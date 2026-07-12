@@ -23,7 +23,7 @@ def entry():
 
 
 def test_session_key_is_persisted_across_restart(tmp_path):
-    path = str(tmp_path / 'earendil.sqlite')
+    path = str(tmp_path / 'goblin.sqlite')
     ClosedTradeMemoryStore(path).save_or_replace(entry())
 
     restored = ClosedTradeMemoryStore(path).find_latest(
@@ -36,7 +36,7 @@ def test_session_key_is_persisted_across_restart(tmp_path):
 
 
 def test_existing_schema_is_migrated_with_session_key_column(tmp_path):
-    path = str(tmp_path / 'earendil.sqlite')
+    path = str(tmp_path / 'goblin.sqlite')
     with sqlite3.connect(path) as connection:
         connection.execute(
             """
