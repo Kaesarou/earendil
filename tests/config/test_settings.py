@@ -37,6 +37,6 @@ def test_watchlist_symbols_raises_when_no_symbol_can_be_resolved():
         settings.watchlist_symbols()
 
 
-def test_removed_strategy_aggressiveness_setting_is_rejected():
+def test_unknown_runtime_setting_is_rejected():
     with pytest.raises(ValidationError, match='Extra inputs are not permitted'):
-        Settings(STRATEGY_AGGRESSIVENESS='balanced')
+        Settings(UNSUPPORTED_SETTING='value')
