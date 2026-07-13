@@ -8,7 +8,7 @@ from app.journal.run_manifest import (
     run_artifact_path,
     sanitized_settings_snapshot,
 )
-from app.strategies.strategy import strategy_profile_from_name
+from app.strategies.balanced_strategy_config import BalancedStrategyConfig
 
 
 def test_run_manifest_captures_analysis_configuration_without_broker_secrets():
@@ -18,7 +18,7 @@ def test_run_manifest_captures_analysis_configuration_without_broker_secrets():
         ETORO_API_KEY='secret-api',
         ETORO_USER_KEY='secret-user',
     )
-    profile = strategy_profile_from_name('balanced')
+    profile = BalancedStrategyConfig()
     registry = InstrumentRegistry(
         settings,
         instrument_configs=profile.instrument_configs,

@@ -47,7 +47,7 @@ def _candidate(
         candle=_candle(symbol),
         signal=Signal(
             action=side,
-            confidence=0.8,
+            setup_quality=0.8,
             reason='trend_bullish_breakout',
             metadata=metadata
             or {

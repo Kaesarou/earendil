@@ -55,7 +55,7 @@ def candidate(*, action: str = 'BUY', atr_percent: float | None = 0.8) -> TradeC
         symbol='AAPL',
         snapshot=snapshot,
         candle=candle,
-        signal=Signal(action=action, confidence=0.8, reason='test', metadata=metadata),
+        signal=Signal(action=action, setup_quality=0.8, reason='test', metadata=metadata),
         score=120.0,
         rank_reason='test',
     )

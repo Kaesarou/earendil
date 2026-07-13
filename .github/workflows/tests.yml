@@ -4,9 +4,11 @@ on:
   push:
     branches:
       - main
+      - develop
   pull_request:
     branches:
       - main
+      - develop
 
 jobs:
   pytest:
@@ -27,4 +29,19 @@ jobs:
         run: python -m pip install -e ".[dev]"
 
       - name: Run tests
-        run: python -m pytest tests -v
+        id: tests
+        continue-on-error: true
+        run: python -m pytest tests -q --tb=short > pytest.log 2>&1
+
+      - name: Upload pytest diagnostics
+        if: steps.tests.outcome == 'failure'
+        uses: actions/upload-artifact@v4
+        with:
+          name: pytest-diagnostics
+          path: pytest.log
+
+      - name: Report test result
+        if: always()
+        run: |
+          cat pytest.log
+          test "${{ steps.tests.outcome }}" = "success"

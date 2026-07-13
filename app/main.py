@@ -28,7 +28,8 @@ from app.runtime.session_force_close import force_close_positions_before_session
 from app.runtime.session_runtime import filter_symbols_by_trading_session
 from app.runtime.symbol_flow import process_symbol
 from app.runtime.trading_session_window import TradingSessionState, trading_session_service_from_settings
-from app.strategies.strategy import StrategyProfileConfig, TrendStrategy, strategy_profile_from_name
+from app.strategies.balanced_strategy_config import BalancedStrategyConfig
+from app.strategies.strategy import TrendStrategy
 from app.utils.logging import configure_logging
 
 logger = logging.getLogger(__name__)
@@ -51,10 +52,6 @@ def build_candle_builders(settings: Settings, symbols: list[str]) -> dict[str, C
     return {symbol: CandleBuilder(timeframe_seconds=settings.candle_timeframe_seconds) for symbol in symbols}
 
 
-def build_strategy_profile(settings: Settings) -> StrategyProfileConfig:
-    return strategy_profile_from_name(settings.strategy_aggressiveness)
-
-
 def build_strategies(symbols: list[str], instrument_registry: InstrumentRegistry) -> dict[str, TrendStrategy]:
     return {symbol: TrendStrategy(instrument_registry.config_for(symbol).trend) for symbol in symbols}
 
@@ -68,7 +65,7 @@ def main() -> None:
     archived_summary_path = run_artifact_path(settings.daily_summary_path, run_id)
     configure_logging(level=settings.log_level, log_file_path=settings.app_log_path)
     symbols = settings.watchlist_symbols()
-    strategy_profile = build_strategy_profile(settings)
+    strategy_profile = BalancedStrategyConfig()
     instrument_registry = InstrumentRegistry(settings, instrument_configs=strategy_profile.instrument_configs)
     instrument_registry.validate_supported_symbols(symbols)
 
@@ -90,7 +87,11 @@ def main() -> None:
     cooldown_store = TradeCooldownStore(settings.position_store_path)
     cooldown_guard = TradeCooldownGuard(cooldown_store)
     pending_entry_manager = PendingEntryManager()
-    trade_journal = build_analysis_journal(settings, run_id=run_id)
+    trade_journal = build_analysis_journal(
+        settings,
+        run_id=run_id,
+        profile=strategy_profile.name,
+    )
     market_journal = RawDataJournal(JsonlJournal(settings.market_log_path, run_id=run_id, stream_name='market'), trade_journal.record_raw_event)
     candle_journal = RawDataJournal(JsonlJournal(settings.candle_journal_path, run_id=run_id, stream_name='candles'), trade_journal.record_raw_event)
     heartbeat = RuntimeHeartbeat(settings.runtime_heartbeat_minutes)

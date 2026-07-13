@@ -25,7 +25,7 @@ def candidate(symbol: str, side: str, score: float, price: float) -> TradeCandid
         symbol=symbol,
         snapshot=snapshot,
         candle=candle,
-        signal=Signal(action=side, confidence=0.8, reason='test', metadata={}),
+        signal=Signal(action=side, setup_quality=0.8, reason='test', metadata={}),
         score=score,
         rank_reason='test',
     )

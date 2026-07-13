@@ -21,7 +21,7 @@ class FakeJournal:
 
 class BuyStrategy:
     def on_candle(self, candle):
-        return Signal(action='BUY', confidence=0.8, reason='test_buy')
+        return Signal(action='BUY', setup_quality=0.8, reason='test_buy')
 
 
 def build_risk_manager() -> RiskManager:

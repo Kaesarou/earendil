@@ -17,7 +17,7 @@ def test_risk_manager_adds_stale_position_settings_to_trade_plan():
     )
 
     plan = risk_manager.evaluate(
-        signal=Signal(action='BUY', confidence=0.8, reason='test_buy'),
+        signal=Signal(action='BUY', setup_quality=0.8, reason='test_buy'),
         snapshot=MarketSnapshot.now(symbol='AAPL', bid=99.95, ask=100.05, last=100.0),
         account_equity=100000.0,
         session_key=SESSION_KEY,

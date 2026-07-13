@@ -37,7 +37,7 @@ def make_candidate(symbol: str, score: float) -> TradeCandidate:
     )
     signal = Signal(
         action='BUY',
-        confidence=0.8,
+        setup_quality=0.8,
         reason='test_signal',
         metadata={
             'session_move_percent': 1.0,

@@ -45,7 +45,7 @@ def build_risk_manager_with_spread_limit() -> RiskManager:
 def buy_signal() -> Signal:
     return Signal(
         action='BUY',
-        confidence=0.65,
+        setup_quality=0.65,
         reason='test_buy',
     )
 

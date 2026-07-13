@@ -41,7 +41,7 @@ def candidate(side: str, price: float) -> TradeCandidate:
         symbol='META',
         snapshot=snapshot,
         candle=candle,
-        signal=Signal(action=side, confidence=0.8, reason='test', metadata={}),
+        signal=Signal(action=side, setup_quality=0.8, reason='test', metadata={}),
         score=150.0,
         rank_reason='test',
     )

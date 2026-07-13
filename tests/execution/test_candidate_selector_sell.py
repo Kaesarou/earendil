@@ -23,7 +23,7 @@ def candidate(score: float = 150.0, sell_rejection_reason: str | None = REASON) 
         symbol='AMD',
         snapshot=snapshot(),
         candle=candle(),
-        signal=Signal(action='SELL', confidence=0.8, reason='test'),
+        signal=Signal(action='SELL', setup_quality=0.8, reason='test'),
         score=score,
         rank_reason='test',
         sell_rejection_reason=sell_rejection_reason,

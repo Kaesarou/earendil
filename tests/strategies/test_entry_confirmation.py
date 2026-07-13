@@ -13,7 +13,7 @@ def candle(open_, high, low, close):
 
 
 def signal(side, momentum):
-    return Signal(action=side, confidence=0.8, reason='test', metadata={'snapshot_momentum_percent': momentum, 'atr_percent': 0.2})
+    return Signal(action=side, setup_quality=0.8, reason='test', metadata={'snapshot_momentum_percent': momentum, 'atr_percent': 0.2})
 
 
 def evaluate(side, current_candle, current_signal, state='waiting', closes=0, retest=None, structure=None):

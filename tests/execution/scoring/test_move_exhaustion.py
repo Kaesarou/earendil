@@ -56,7 +56,7 @@ def signal(action: str = 'BUY', **metadata) -> Signal:
     base_metadata.update(metadata)
     return Signal(
         action=action,
-        confidence=0.8,
+        setup_quality=0.8,
         reason='test_signal',
         metadata=base_metadata,
     )

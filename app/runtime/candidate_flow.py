@@ -35,7 +35,7 @@ from app.runtime.pending_candidate_lifecycle import (
 )
 from app.runtime.pending_entry import PendingEntryManager
 from app.runtime.pending_entry_flow import write_pending_events
-from app.strategies.strategy import StrategyProfileConfig
+from app.strategies.models import StrategyProfileConfig
 
 logger = logging.getLogger(__name__)
 BrokerAuthorizationErrorChecker = Callable[[Exception], bool]

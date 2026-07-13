@@ -114,11 +114,11 @@ def snapshot(symbol: str = 'AAPL', bid: float = 99.0, ask: float = 101.0, last: 
 
 def buy_signal(atr_percent: float | None = None) -> Signal:
     metadata = {'atr_percent': atr_percent} if atr_percent is not None else None
-    return Signal(action='BUY', confidence=0.65, reason='test_buy', metadata=metadata)
+    return Signal(action='BUY', setup_quality=0.65, reason='test_buy', metadata=metadata)
 
 
 def sell_signal() -> Signal:
-    return Signal(action='SELL', confidence=0.65, reason='test_sell')
+    return Signal(action='SELL', setup_quality=0.65, reason='test_sell')
 
 
 def evaluate(risk_manager: RiskManager, *, signal: Signal, snapshot: MarketSnapshot, account_equity: float, session_key: str = SESSION_A):

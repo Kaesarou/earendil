@@ -1,7 +1,7 @@
 from dataclasses import dataclass, field
 
 from app.execution.candidate_selector import CandidateSelectionConfig
-from app.instruments.models import AssetClass, InstrumentConfig, RiskProfile, TrendStrategyConfig
+from app.instruments.models import AssetClass, InstrumentConfig
 
 
 @dataclass(frozen=True)
@@ -28,19 +28,10 @@ class StrategyProfileConfig:
         except KeyError as exc:
             raise ValueError(f'Unsupported asset class: {asset_class}') from exc
 
-    def trend_config_for_asset_class(self, asset_class: AssetClass) -> TrendStrategyConfig:
-        return self.instrument_config_for_asset_class(asset_class).trend
-
-    def risk_profile_for_asset_class(self, asset_class: AssetClass) -> RiskProfile:
-        return self.instrument_config_for_asset_class(asset_class).risk
-
-    def risk_profiles(self) -> dict[AssetClass, RiskProfile]:
-        return {
-            asset_class: instrument_config.risk
-            for asset_class, instrument_config in self.instrument_configs.items()
-        }
-
-    def candidate_selection_config_for_asset_class(self, asset_class: AssetClass) -> CandidateSelectionConfig:
+    def candidate_selection_config_for_asset_class(
+        self,
+        asset_class: AssetClass,
+    ) -> CandidateSelectionConfig:
         self.instrument_config_for_asset_class(asset_class)
         return CandidateSelectionConfig(
             top_n=self.candidate_selection_top_n,
