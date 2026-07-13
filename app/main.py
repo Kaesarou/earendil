@@ -29,7 +29,6 @@ from app.runtime.session_runtime import filter_symbols_by_trading_session
 from app.runtime.symbol_flow import process_symbol
 from app.runtime.trading_session_window import TradingSessionState, trading_session_service_from_settings
 from app.strategies.balanced_strategy_config import BalancedStrategyConfig
-from app.strategies.models import StrategyProfileConfig
 from app.strategies.strategy import TrendStrategy
 from app.utils.logging import configure_logging
 
@@ -53,10 +52,6 @@ def build_candle_builders(settings: Settings, symbols: list[str]) -> dict[str, C
     return {symbol: CandleBuilder(timeframe_seconds=settings.candle_timeframe_seconds) for symbol in symbols}
 
 
-def build_strategy_profile() -> StrategyProfileConfig:
-    return BalancedStrategyConfig()
-
-
 def build_strategies(symbols: list[str], instrument_registry: InstrumentRegistry) -> dict[str, TrendStrategy]:
     return {symbol: TrendStrategy(instrument_registry.config_for(symbol).trend) for symbol in symbols}
 
@@ -70,7 +65,7 @@ def main() -> None:
     archived_summary_path = run_artifact_path(settings.daily_summary_path, run_id)
     configure_logging(level=settings.log_level, log_file_path=settings.app_log_path)
     symbols = settings.watchlist_symbols()
-    strategy_profile = build_strategy_profile()
+    strategy_profile = BalancedStrategyConfig()
     instrument_registry = InstrumentRegistry(settings, instrument_configs=strategy_profile.instrument_configs)
     instrument_registry.validate_supported_symbols(symbols)
 
