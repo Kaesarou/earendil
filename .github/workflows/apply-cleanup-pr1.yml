@@ -32,6 +32,24 @@ jobs:
       - name: Install dependencies
         run: python -m pip install -e ".[dev]"
 
+      - name: Remove remaining profile factory usage
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          path = Path('tests/journal/test_run_manifest.py')
+          content = path.read_text(encoding='utf-8')
+          content = content.replace(
+              'from app.strategies.strategy import strategy_profile_from_name\n',
+              'from app.strategies.balanced_strategy_config import BalancedStrategyConfig\n',
+          )
+          content = content.replace(
+              "    profile = strategy_profile_from_name('balanced')\n",
+              '    profile = BalancedStrategyConfig()\n',
+          )
+          path.write_text(content, encoding='utf-8')
+          PY
+
       - name: Apply structural cleanup
         id: cleanup
         continue-on-error: true
