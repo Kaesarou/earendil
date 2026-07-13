@@ -37,8 +37,8 @@ jobs:
           python - <<'PY'
           from pathlib import Path
 
-          path = Path('tests/journal/test_run_manifest.py')
-          content = path.read_text(encoding='utf-8')
+          manifest_test = Path('tests/journal/test_run_manifest.py')
+          content = manifest_test.read_text(encoding='utf-8')
           content = content.replace(
               'from app.strategies.strategy import strategy_profile_from_name\n',
               'from app.strategies.balanced_strategy_config import BalancedStrategyConfig\n',
@@ -47,7 +47,15 @@ jobs:
               "    profile = strategy_profile_from_name('balanced')\n",
               '    profile = BalancedStrategyConfig()\n',
           )
-          path.write_text(content, encoding='utf-8')
+          manifest_test.write_text(content, encoding='utf-8')
+
+          candidate_flow = Path('app/runtime/candidate_flow.py')
+          content = candidate_flow.read_text(encoding='utf-8')
+          content = content.replace(
+              'from app.strategies.strategy import StrategyProfileConfig\n',
+              'from app.strategies.models import StrategyProfileConfig\n',
+          )
+          candidate_flow.write_text(content, encoding='utf-8')
           PY
 
       - name: Apply structural cleanup
