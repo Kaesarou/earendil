@@ -6,7 +6,7 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(
         env_file='.env',
         env_file_encoding='utf-8',
-        extra='ignore',
+        extra='forbid',
     )
 
     app_log_path: str = Field(default='data/logs/goblin.log', alias='APP_LOG_PATH')
