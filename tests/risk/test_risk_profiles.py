@@ -1,9 +1,10 @@
 from app.instruments.models import AssetClass
-from app.risk.profiles import DEFAULT_RISK_PROFILES
+from app.strategies.balanced_strategy_config import BalancedStrategyConfig
 
 
-def test_default_risk_profiles_use_balanced_trade_cooldown():
-    cooldown = DEFAULT_RISK_PROFILES[AssetClass.EQUITY_US].trade_cooldown
+def test_balanced_profile_uses_expected_trade_cooldown():
+    profiles = BalancedStrategyConfig().risk_profiles()
+    cooldown = profiles[AssetClass.EQUITY_US].trade_cooldown
 
     assert cooldown.after_take_profit_minutes == 30
     assert cooldown.after_stop_loss_minutes == 45
