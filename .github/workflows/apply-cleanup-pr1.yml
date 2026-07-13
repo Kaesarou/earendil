@@ -74,18 +74,34 @@ jobs:
         run: python -m compileall -q app
 
       - name: Run tests
+        id: tests
         if: steps.cleanup.outcome == 'success'
-        run: python -m pytest tests -q
+        continue-on-error: true
+        run: python -m pytest tests -q > pytest-pr1.log 2>&1
+
+      - name: Show test output
+        if: steps.cleanup.outcome == 'success'
+        run: cat pytest-pr1.log
+
+      - name: Persist test diagnostics
+        if: steps.cleanup.outcome == 'success' && steps.tests.outcome == 'failure'
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add pytest-pr1.log
+          git commit -m "Record cleanup test failure [cleanup-diagnostic]"
+          git push origin HEAD:refactor/cleanup-historical
+          exit 1
 
       - name: Remove one-shot migration files
-        if: steps.cleanup.outcome == 'success'
+        if: steps.cleanup.outcome == 'success' && steps.tests.outcome == 'success'
         run: |
           rm scripts/apply_cleanup_pr1.py
           rm .github/workflows/apply-cleanup-pr1.yml
-          rm cleanup-pr1.log
+          rm -f cleanup-pr1.log pytest-pr1.log
 
       - name: Commit cleanup
-        if: steps.cleanup.outcome == 'success'
+        if: steps.cleanup.outcome == 'success' && steps.tests.outcome == 'success'
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
