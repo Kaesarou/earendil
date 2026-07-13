@@ -101,12 +101,12 @@ jobs:
           git push origin HEAD:refactor/cleanup-historical
           exit 1
 
-      - name: Remove one-shot migration files
+      - name: Prepare cleanup commit
         if: steps.cleanup.outcome == 'success' && steps.tests.outcome == 'success'
         run: |
           rm scripts/apply_cleanup_pr1.py
-          rm .github/workflows/apply-cleanup-pr1.yml
           rm -f cleanup-pr1.log pytest-pr1.log
+          git checkout -- .github/workflows/tests.yml
 
       - name: Commit cleanup
         if: steps.cleanup.outcome == 'success' && steps.tests.outcome == 'success'
