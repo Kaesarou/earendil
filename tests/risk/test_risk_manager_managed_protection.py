@@ -70,7 +70,7 @@ def test_risk_manager_keeps_breakeven_cost_aware_and_propagates_trailing_net_buf
     manager = build_risk_manager(risk_profile())
 
     plan = manager.evaluate(
-        signal=Signal(action='BUY', confidence=0.8, reason='test'),
+        signal=Signal(action='BUY', setup_quality=0.8, reason='test'),
         snapshot=MarketSnapshot.now(
             symbol='AAPL',
             bid=99.95,

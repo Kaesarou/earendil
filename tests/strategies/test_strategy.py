@@ -1,14 +1,9 @@
 from datetime import datetime, timedelta, timezone
 
-import pytest
-
-from app.instruments.models import AssetClass
 from app.market.models import Candle, MarketSnapshot
-from app.strategies.aggressive_strategy_config import AggressiveStrategyConfig
-from app.strategies.balanced_strategy_config import BalancedStrategyConfig
 from app.strategies.models import TrendStrategyConfig
 from app.strategies.signals import Signal
-from app.strategies.strategy import TrendStrategy, strategy_profile_from_name
+from app.strategies.strategy import TrendStrategy
 
 
 BASE_TIME = datetime(2026, 6, 26, 15, 30, tzinfo=timezone.utc)
@@ -136,7 +131,7 @@ def test_strategy_emits_buy_on_bullish_breakout():
 
     assert signal.action == 'BUY'
     assert signal.reason == 'trend_bullish_breakout'
-    assert signal.confidence > 0
+    assert signal.setup_quality > 0
     assert signal.metadata is not None
     assert signal.metadata['session_move_percent'] > 0
     assert signal.metadata['breakout_percent'] > 0
@@ -149,7 +144,7 @@ def test_strategy_emits_sell_on_bearish_breakdown():
 
     assert signal.action == 'SELL'
     assert signal.reason == 'trend_bearish_breakdown'
-    assert signal.confidence > 0
+    assert signal.setup_quality > 0
     assert signal.metadata is not None
     assert signal.metadata['session_move_percent'] < 0
     assert signal.metadata['breakdown_percent'] > 0
@@ -358,50 +353,3 @@ def test_strategy_holds_when_market_regime_filter_detects_noisy():
     assert signal.reason == 'market_regime_volatile_noisy'
     assert signal.metadata is not None
     assert signal.metadata['market_regime'] == 'VOLATILE_NOISY'
-
-
-def test_strategy_profile_from_name_resolves_balanced_profile():
-    profile = strategy_profile_from_name('balanced')
-
-    assert isinstance(profile, BalancedStrategyConfig)
-    assert profile.name == 'balanced'
-
-    crypto_trend = profile.trend_config_for_asset_class(AssetClass.CRYPTO)
-    equity_us_trend = profile.trend_config_for_asset_class(AssetClass.EQUITY_US)
-    equity_eu_trend = profile.trend_config_for_asset_class(AssetClass.EQUITY_EU)
-    crypto_candidate_selection = profile.candidate_selection_config_for_asset_class(AssetClass.CRYPTO)
-
-    assert crypto_trend.min_session_move_percent == 0.30
-    assert crypto_trend.snapshot_momentum_window_seconds == 180
-    assert crypto_trend.min_snapshot_momentum_percent == 0.25
-    assert equity_us_trend.snapshot_momentum_window_seconds == 180
-    assert equity_us_trend.min_snapshot_momentum_percent == 0.20
-    assert equity_eu_trend.snapshot_momentum_window_seconds == 180
-    assert equity_eu_trend.min_snapshot_momentum_percent == 0.20
-    assert crypto_candidate_selection.top_n == 2
-
-
-def test_strategy_profile_from_name_resolves_aggressive_profile():
-    profile = strategy_profile_from_name('aggressive')
-
-    assert isinstance(profile, AggressiveStrategyConfig)
-    assert profile.name == 'aggressive'
-
-    crypto_trend = profile.trend_config_for_asset_class(AssetClass.CRYPTO)
-    equity_us_trend = profile.trend_config_for_asset_class(AssetClass.EQUITY_US)
-    equity_eu_trend = profile.trend_config_for_asset_class(AssetClass.EQUITY_EU)
-    crypto_candidate_selection = profile.candidate_selection_config_for_asset_class(AssetClass.CRYPTO)
-
-    assert crypto_trend.min_session_move_percent == 0.20
-    assert crypto_trend.snapshot_momentum_window_seconds == 180
-    assert crypto_trend.min_snapshot_momentum_percent == 0.20
-    assert equity_us_trend.snapshot_momentum_window_seconds == 180
-    assert equity_us_trend.min_snapshot_momentum_percent == 0.15
-    assert equity_eu_trend.snapshot_momentum_window_seconds == 180
-    assert equity_eu_trend.min_snapshot_momentum_percent == 0.15
-    assert crypto_candidate_selection.top_n == 2
-
-
-def test_strategy_profile_from_name_rejects_unknown_profile():
-    with pytest.raises(ValueError, match='Unsupported strategy aggressiveness'):
-        strategy_profile_from_name('berserker')

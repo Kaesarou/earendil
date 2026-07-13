@@ -3,26 +3,11 @@ from datetime import timedelta
 
 from app.instruments.models import TrendStrategyConfig
 from app.market.models import Candle, MarketSnapshot
-from app.strategies.aggressive_strategy_config import AggressiveStrategyConfig
-from app.strategies.balanced_strategy_config import BalancedStrategyConfig
-from app.strategies.models import StrategyProfileConfig
 from app.strategies.signals import Signal
 
 StrategyMetadata = dict[str, float | int | str | bool]
 
 SNAPSHOT_HISTORY_MAXLEN = 512
-
-
-def strategy_profile_from_name(name: str) -> StrategyProfileConfig:
-    normalized_name = name.strip().lower()
-    if normalized_name in ('balanced', 'balance'):
-        return BalancedStrategyConfig()
-    if normalized_name in ('aggressive', 'aggressif', 'aggressiv'):
-        return AggressiveStrategyConfig()
-    raise ValueError(
-        f'Unsupported strategy aggressiveness: {name}. '
-        'Expected one of: balanced, aggressive.'
-    )
 
 
 class TrendStrategy:
@@ -133,7 +118,7 @@ class TrendStrategy:
 
         return Signal(
             action='BUY',
-            confidence=0.8,
+            setup_quality=0.8,
             reason='trend_bullish_breakout',
             metadata={
                 **entry_metadata,
@@ -208,7 +193,7 @@ class TrendStrategy:
 
         return Signal(
             action='SELL',
-            confidence=0.8,
+            setup_quality=0.8,
             reason='trend_bearish_breakdown',
             metadata={
                 **entry_metadata,
@@ -296,7 +281,7 @@ class TrendStrategy:
 
         return Signal(
             action='BUY',
-            confidence=0.75,
+            setup_quality=0.75,
             reason='trend_bullish_snapshot_momentum',
             metadata={
                 **setup_metadata,
@@ -331,7 +316,7 @@ class TrendStrategy:
 
         return Signal(
             action='SELL',
-            confidence=0.75,
+            setup_quality=0.75,
             reason='trend_bearish_snapshot_momentum',
             metadata={
                 **setup_metadata,

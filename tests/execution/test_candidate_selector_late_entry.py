@@ -26,7 +26,7 @@ def candidate(score: float = 10.0, rejection_reason: str | None = REASON) -> Tra
         symbol='AMD',
         snapshot=snapshot(),
         candle=candle(),
-        signal=Signal(action='BUY', confidence=0.8, reason='test'),
+        signal=Signal(action='BUY', setup_quality=0.8, reason='test'),
         score=score,
         rank_reason='test',
         **{LATE_FIELD: rejection_reason},

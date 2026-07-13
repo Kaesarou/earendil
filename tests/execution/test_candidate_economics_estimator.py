@@ -24,7 +24,7 @@ def make_candidate(symbol: str) -> TradeCandidate:
         opened_at=now,
         closed_at=now,
     )
-    signal = Signal(action='BUY', confidence=0.8, reason='test_signal')
+    signal = Signal(action='BUY', setup_quality=0.8, reason='test_signal')
     return TradeCandidate(symbol=symbol, snapshot=snapshot, candle=candle, signal=signal, score=120.0, rank_reason='test')
 
 

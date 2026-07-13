@@ -49,7 +49,7 @@ def buy_signal(
 ) -> Signal:
     return Signal(
         action='BUY',
-        confidence=0.8,
+        setup_quality=0.8,
         reason='intraday_bullish_breakout',
         metadata={
             'session_move_percent': session_move_percent,
@@ -70,7 +70,7 @@ def sell_signal(
 ) -> Signal:
     return Signal(
         action='SELL',
-        confidence=0.8,
+        setup_quality=0.8,
         reason='intraday_bearish_breakdown',
         metadata={
             'session_move_percent': session_move_percent,
@@ -106,7 +106,7 @@ def base_score_without_exhaustion(market_snapshot: MarketSnapshot, signal: Signa
         close_quality = close_position_percent
 
     score = 0.0
-    score += signal.confidence * 100
+    score += signal.setup_quality * 100
     score += min(session_move_percent * 15, 30)
     score += min(trend_strength_percent * 80, 25)
     score += min(impulse_percent * 40, 20)
@@ -253,7 +253,7 @@ def test_hold_or_unknown_action_uses_penalized_scoring_path():
         candle=candle('UNKNOWN', open=99.0, high=101.0, low=98.5, close=100.0),
         signal=Signal(
             action='HOLD',
-            confidence=0.0,
+            setup_quality=0.0,
             reason='test_hold',
             metadata={
                 'session_move_percent': 1.0,

@@ -30,7 +30,7 @@ def candle(close=100.2, low=99.9, high=100.5, open_=100.0, minute=0):
 def evaluated(side='BUY', score=120.0):
     signal = Signal(
         action=side,
-        confidence=0.8,
+        setup_quality=0.8,
         reason='test',
         metadata={
             'range_high': 100.0,

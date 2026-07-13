@@ -1,4 +1,0 @@
-Traceback (most recent call last):
-  File "/home/runner/work/goblin/goblin/scripts/apply_cleanup_pr1.py", line 369, in <module>
-    raise RuntimeError(f'Forbidden legacy concept {forbidden!r} remains in {matches}')
-RuntimeError: Forbidden legacy concept 'strategy_profile_from_name' remains in ['tests/journal/test_run_manifest.py']

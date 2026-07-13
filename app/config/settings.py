@@ -63,7 +63,6 @@ class Settings(BaseSettings):
 
     watchlist: str = Field(default='', alias='WATCHLIST')
     base_currency: str = Field(default='USD', alias='BASE_CURRENCY')
-    strategy_aggressiveness: str = Field(default='balanced', alias='STRATEGY_AGGRESSIVENESS')
     max_open_positions: int = Field(default=1, alias='MAX_OPEN_POSITIONS')
     max_open_positions_per_symbol: int = Field(default=1, alias='MAX_OPEN_POSITIONS_PER_SYMBOL')
     max_trades_per_session: int = Field(default=3, alias='MAX_TRADES_PER_SESSION')

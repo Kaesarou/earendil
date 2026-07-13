@@ -1,7 +1,6 @@
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 
 from app.instruments.base_configs import CRYPTO_CONFIG, EQUITY_EU_CONFIG, EQUITY_US_CONFIG
-from app.instruments.config_overrides import with_risk_overrides
 from app.instruments.models import AssetClass, InstrumentConfig
 from app.risk.trade_cooldown import TradeCooldownConfig
 from app.strategies.models import StrategyProfileConfig
@@ -15,18 +14,27 @@ BALANCED_TRADE_COOLDOWN = TradeCooldownConfig(
     stop_loss_symbol_lock_minutes=15,
 )
 
-BALANCED_CRYPTO_CONFIG = with_risk_overrides(
+BALANCED_CRYPTO_CONFIG = replace(
     CRYPTO_CONFIG,
-    trade_cooldown=BALANCED_TRADE_COOLDOWN,
+    risk=replace(
+        CRYPTO_CONFIG.risk,
+        trade_cooldown=BALANCED_TRADE_COOLDOWN,
+    ),
 )
-BALANCED_EQUITY_US_CONFIG = with_risk_overrides(
+BALANCED_EQUITY_US_CONFIG = replace(
     EQUITY_US_CONFIG,
-    dynamic_sl_tp_enabled=True,
-    trade_cooldown=BALANCED_TRADE_COOLDOWN,
+    risk=replace(
+        EQUITY_US_CONFIG.risk,
+        dynamic_sl_tp_enabled=True,
+        trade_cooldown=BALANCED_TRADE_COOLDOWN,
+    ),
 )
-BALANCED_EQUITY_EU_CONFIG = with_risk_overrides(
+BALANCED_EQUITY_EU_CONFIG = replace(
     EQUITY_EU_CONFIG,
-    trade_cooldown=BALANCED_TRADE_COOLDOWN,
+    risk=replace(
+        EQUITY_EU_CONFIG.risk,
+        trade_cooldown=BALANCED_TRADE_COOLDOWN,
+    ),
 )
 
 

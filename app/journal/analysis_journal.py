@@ -182,7 +182,12 @@ class AnalysisJournal:
         self._last_partial_summary_at = now
 
 
-def build_analysis_journal(settings: Settings, *, run_id: str | None = None) -> AnalysisJournal:
+def build_analysis_journal(
+    settings: Settings,
+    *,
+    run_id: str | None = None,
+    profile: str = 'balanced',
+) -> AnalysisJournal:
     detail_level = normalize_detail_level(settings.journal_detail_level)
     debug_enabled = detail_level in {'debug', 'full'} or settings.journal_keep_debug_decisions
     return AnalysisJournal(
@@ -212,7 +217,7 @@ def build_analysis_journal(settings: Settings, *, run_id: str | None = None) -> 
         partial_summary_interval_minutes=settings.journal_partial_summary_interval_minutes,
         run_id=run_id,
         strategy='TrendStrategy',
-        profile=settings.strategy_aggressiveness,
+        profile=profile,
     )
 
 

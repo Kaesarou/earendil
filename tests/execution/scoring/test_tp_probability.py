@@ -44,7 +44,7 @@ def _candidate(*, side: str = 'BUY', close_position_percent: float = 88.0) -> Tr
         candle=_candle(),
         signal=Signal(
             action=side,
-            confidence=0.8,
+            setup_quality=0.8,
             reason='trend_bullish_breakout' if side == 'BUY' else 'trend_bearish_breakdown',
             metadata={
                 'market_regime': 'TRENDING',

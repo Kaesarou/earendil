@@ -1,9 +1,9 @@
 from app.instruments.models import AssetClass
-from app.risk.profiles import risk_profiles_for_aggressiveness
+from app.risk.profiles import DEFAULT_RISK_PROFILES
 
 
 def test_crypto_stale_position_config_is_enabled():
-    profiles = risk_profiles_for_aggressiveness('balanced')
+    profiles = DEFAULT_RISK_PROFILES
 
     config = profiles[AssetClass.CRYPTO].stale_position
 
@@ -14,7 +14,7 @@ def test_crypto_stale_position_config_is_enabled():
 
 
 def test_equity_us_stale_position_config_is_enabled():
-    profiles = risk_profiles_for_aggressiveness('balanced')
+    profiles = DEFAULT_RISK_PROFILES
 
     config = profiles[AssetClass.EQUITY_US].stale_position
 
@@ -25,7 +25,7 @@ def test_equity_us_stale_position_config_is_enabled():
 
 
 def test_equity_eu_stale_position_config_is_enabled():
-    profiles = risk_profiles_for_aggressiveness('balanced')
+    profiles = DEFAULT_RISK_PROFILES
 
     config = profiles[AssetClass.EQUITY_EU].stale_position
 

@@ -30,6 +30,8 @@ The display name is **Goblin!**. Technical identifiers use `goblin` because pack
 
 Goblin currently includes:
 
+- one active, versioned `BalancedStrategyConfig`;
+
 - broker abstraction with a local fake broker and eToro demo/live clients;
 - cached instrument and position resolution for eToro;
 - multi-symbol watchlists across crypto, US equities, and European equities;
@@ -333,7 +335,6 @@ cp .env.example .env
 |---|---|---|
 | `WATCHLIST` | empty | Comma-separated symbols analyzed by the bot; must not be empty |
 | `BASE_CURRENCY` | `USD` | Currency used in order payloads |
-| `STRATEGY_AGGRESSIVENESS` | `balanced` | `balanced` or `aggressive` |
 | `CRYPTO_SYMBOLS` | empty | Symbols classified as crypto |
 | `EQUITY_US_SYMBOLS` | empty | Symbols classified as US equities |
 | `EQUITY_EU_SYMBOLS` | empty | Symbols classified as European equities |

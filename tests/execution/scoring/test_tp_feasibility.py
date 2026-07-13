@@ -20,7 +20,7 @@ def candle(symbol: str = 'TEST') -> Candle:
 
 
 def signal(side: str = 'BUY', metadata: dict | None = None) -> Signal:
-    return Signal(action=side, confidence=0.8, reason='test_signal', metadata=metadata or {})
+    return Signal(action=side, setup_quality=0.8, reason='test_signal', metadata=metadata or {})
 
 
 def candidate(side: str = 'BUY', score: float = 150.0, metadata: dict | None = None, entry_quality_metadata: dict | None = None) -> TradeCandidate:

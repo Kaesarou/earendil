@@ -44,7 +44,7 @@ def test_signal_scorer_uses_setup_quality_bonus_without_changing_score() -> None
     )
     signal = Signal(
         action='BUY',
-        confidence=0.8,
+        setup_quality=0.8,
         reason='trend_bullish_breakout',
         metadata={
             'session_move_percent': 1.0,

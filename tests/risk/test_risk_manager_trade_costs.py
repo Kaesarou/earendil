@@ -51,7 +51,7 @@ def snapshot(symbol: str = 'AAPL', bid: float = 99.95, ask: float = 100.05) -> M
 
 
 def buy_signal() -> Signal:
-    return Signal(action='BUY', confidence=0.75, reason='test_buy')
+    return Signal(action='BUY', setup_quality=0.75, reason='test_buy')
 
 
 def _candidate(signal: Signal, snapshot: MarketSnapshot) -> TradeCandidate:
