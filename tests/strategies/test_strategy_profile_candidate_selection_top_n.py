@@ -28,4 +28,4 @@ def test_strategy_profile_rejects_invalid_asset_class():
     profile = BalancedStrategyConfig()
 
     with pytest.raises(ValueError, match='Unsupported asset class'):
-        profile.trend_config_for_asset_class('BROKEN')
+        profile.instrument_config_for_asset_class('BROKEN')
