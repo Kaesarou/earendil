@@ -4,13 +4,16 @@ on:
   push:
     branches:
       - refactor/cleanup-historical
+  pull_request:
+    branches:
+      - develop
 
 permissions:
   contents: write
 
 jobs:
   cleanup:
-    if: ${{ !contains(github.event.head_commit.message, '[cleanup-applied]') }}
+    if: ${{ github.event_name != 'push' || !contains(github.event.head_commit.message, '[cleanup-applied]') }}
     runs-on: ubuntu-latest
 
     steps:
