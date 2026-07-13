@@ -1,7 +1,7 @@
 from datetime import datetime, timedelta, timezone
 
+from app.instruments.models import TrendStrategyConfig
 from app.market.models import Candle, MarketSnapshot
-from app.strategies.models import TrendStrategyConfig
 from app.strategies.signals import Signal
 from app.strategies.strategy import TrendStrategy
 
