@@ -1,11 +1,13 @@
 from app.instruments.models import AssetClass
-from app.risk.profiles import DEFAULT_RISK_PROFILES
+from app.strategies.balanced_strategy_config import BalancedStrategyConfig
+
+
+def _risk_profiles():
+    return BalancedStrategyConfig().risk_profiles()
 
 
 def test_crypto_stale_position_config_is_enabled():
-    profiles = DEFAULT_RISK_PROFILES
-
-    config = profiles[AssetClass.CRYPTO].stale_position
+    config = _risk_profiles()[AssetClass.CRYPTO].stale_position
 
     assert config.enabled
     assert config.max_age_minutes == 60
@@ -14,9 +16,7 @@ def test_crypto_stale_position_config_is_enabled():
 
 
 def test_equity_us_stale_position_config_is_enabled():
-    profiles = DEFAULT_RISK_PROFILES
-
-    config = profiles[AssetClass.EQUITY_US].stale_position
+    config = _risk_profiles()[AssetClass.EQUITY_US].stale_position
 
     assert config.enabled
     assert config.max_age_minutes == 60
@@ -25,9 +25,7 @@ def test_equity_us_stale_position_config_is_enabled():
 
 
 def test_equity_eu_stale_position_config_is_enabled():
-    profiles = DEFAULT_RISK_PROFILES
-
-    config = profiles[AssetClass.EQUITY_EU].stale_position
+    config = _risk_profiles()[AssetClass.EQUITY_EU].stale_position
 
     assert config.enabled
     assert config.max_age_minutes == 75
