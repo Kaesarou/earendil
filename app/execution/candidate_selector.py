@@ -49,19 +49,12 @@ def select_trade_candidates(
     selected_candidates: list[TradeCandidate] = []
     rejected_candidates: list[RejectedCandidateSelection] = []
     for candidate in rank_trade_candidates(candidates):
-        if candidate.late_entry_rejection_reason is not None:
-            rejected_candidates.append(
-                RejectedCandidateSelection(candidate, candidate.late_entry_rejection_reason)
-            )
-            continue
-        if candidate.sell_rejection_reason is not None:
-            rejected_candidates.append(
-                RejectedCandidateSelection(candidate, candidate.sell_rejection_reason)
-            )
-            continue
         if config.min_score > 0 and candidate.score < config.min_score:
             rejected_candidates.append(
-                RejectedCandidateSelection(candidate, 'candidate_selection_score_too_low')
+                RejectedCandidateSelection(
+                    candidate,
+                    'candidate_selection_score_too_low',
+                )
             )
             continue
         selected_candidates.append(candidate)
@@ -69,7 +62,10 @@ def select_trade_candidates(
         kept_candidates = selected_candidates[: config.top_n]
         overflow_candidates = selected_candidates[config.top_n :]
         rejected_candidates.extend(
-            RejectedCandidateSelection(candidate, 'candidate_selection_outside_top_n')
+            RejectedCandidateSelection(
+                candidate,
+                'candidate_selection_outside_top_n',
+            )
             for candidate in overflow_candidates
         )
         selected_candidates = kept_candidates
@@ -85,7 +81,10 @@ def select_evaluated_trade_candidates(
     decision_engine = EntryDecisionEngine()
 
     for original in rank_evaluated_trade_candidates(evaluated_candidates):
-        decision_config = original.candidate.entry_decision_config or EntryDecisionConfig()
+        decision_config = (
+            original.candidate.entry_decision_config
+            or EntryDecisionConfig()
+        )
         decision = original.entry_decision or decision_engine.evaluate(
             evaluated_candidate=original,
             config=decision_config,
@@ -118,37 +117,16 @@ def select_evaluated_trade_candidates(
                 )
             )
             continue
-        if evaluated_candidate.readiness == CandidateReadiness.WAIT_CONFIRMATION:
-            rejected_candidates.append(
-                RejectedEvaluatedCandidateSelection(
-                    evaluated_candidate=evaluated_candidate,
-                    reason=evaluated_candidate.readiness_reason or 'candidate_wait_confirmation',
-                    min_score_used=min_score_used,
-                    selection_threshold_source=threshold_source,
-                )
-            )
-            continue
         if evaluated_candidate.readiness == CandidateReadiness.REJECT:
             rejected_candidates.append(
                 RejectedEvaluatedCandidateSelection(
                     evaluated_candidate=evaluated_candidate,
-                    reason=evaluated_candidate.readiness_reason or 'candidate_readiness_reject',
+                    reason=(
+                        evaluated_candidate.readiness_reason
+                        or 'candidate_readiness_reject'
+                    ),
                     min_score_used=min_score_used,
                     selection_threshold_source=threshold_source,
-                )
-            )
-            continue
-        if candidate.late_entry_rejection_reason is not None:
-            rejected_candidates.append(
-                RejectedEvaluatedCandidateSelection(
-                    evaluated_candidate, candidate.late_entry_rejection_reason, min_score_used, threshold_source
-                )
-            )
-            continue
-        if candidate.sell_rejection_reason is not None:
-            rejected_candidates.append(
-                RejectedEvaluatedCandidateSelection(
-                    evaluated_candidate, candidate.sell_rejection_reason, min_score_used, threshold_source
                 )
             )
             continue
@@ -172,7 +150,10 @@ def select_evaluated_trade_candidates(
                 )
             )
             continue
-        if economics.expected_net_profit_percent < economics.min_expected_net_profit_percent:
+        if (
+            economics.expected_net_profit_percent
+            < economics.min_expected_net_profit_percent
+        ):
             rejected_candidates.append(
                 RejectedEvaluatedCandidateSelection(
                     evaluated_candidate,
@@ -192,12 +173,18 @@ def select_evaluated_trade_candidates(
                 evaluated_candidate=item,
                 reason='candidate_selection_outside_top_n',
                 min_score_used=selection_threshold_for(item, config)[0],
-                selection_threshold_source=selection_threshold_for(item, config)[1],
+                selection_threshold_source=selection_threshold_for(
+                    item,
+                    config,
+                )[1],
             )
             for item in overflow_candidates
         )
         selected_candidates = kept_candidates
-    return EvaluatedCandidateSelectionResult(selected_candidates, rejected_candidates)
+    return EvaluatedCandidateSelectionResult(
+        selected_candidates,
+        rejected_candidates,
+    )
 
 
 def selection_threshold_for(
@@ -206,10 +193,18 @@ def selection_threshold_for(
 ) -> tuple[float, str]:
     effective_sl_tp = evaluated_candidate.effective_sl_tp
     if effective_sl_tp is not None:
-        selection_min_score = effective_sl_tp.metadata.get('selection_min_score')
+        selection_min_score = effective_sl_tp.metadata.get(
+            'selection_min_score'
+        )
         if selection_min_score is not None:
-            return float(selection_min_score), 'effective_sl_tp_selection_min_score'
-        if effective_sl_tp.mode == 'dynamic' and config.dynamic_min_score is not None:
+            return (
+                float(selection_min_score),
+                'effective_sl_tp_selection_min_score',
+            )
+        if (
+            effective_sl_tp.mode == 'dynamic'
+            and config.dynamic_min_score is not None
+        ):
             return config.dynamic_min_score, 'dynamic_min_score'
     return config.min_score, 'min_score'
 
@@ -217,7 +212,11 @@ def selection_threshold_for(
 def rank_evaluated_trade_candidates(
     evaluated_candidates: list[EvaluatedTradeCandidate],
 ) -> list[EvaluatedTradeCandidate]:
-    return sorted(evaluated_candidates, key=_evaluated_candidate_ranking_key, reverse=True)
+    return sorted(
+        evaluated_candidates,
+        key=_evaluated_candidate_ranking_key,
+        reverse=True,
+    )
 
 
 def _evaluated_candidate_ranking_key(
@@ -225,4 +224,8 @@ def _evaluated_candidate_ranking_key(
 ) -> tuple[float, float, float]:
     score = evaluated_candidate.candidate.score
     score_bucket = math.floor(score / 5) * 5
-    return (score_bucket, evaluated_candidate.economics.expected_net_profit, score)
+    return (
+        score_bucket,
+        evaluated_candidate.economics.expected_net_profit,
+        score,
+    )

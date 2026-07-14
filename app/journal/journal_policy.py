@@ -50,6 +50,7 @@ MINIMAL_TRADE_EVENT_TYPES = frozenset(
         'pending_entry_registered',
         'pending_entry_updated',
         'pending_entry_retest_detected',
+        'pending_entry_confirmation_blocked',
         'pending_entry_confirmed',
         'pending_entry_invalidated',
         'pending_entry_expired',
@@ -64,7 +65,11 @@ def normalize_detail_level(detail_level: str | None) -> str:
     return normalized
 
 
-def should_write_to_trade_journal(event_type: str, payload: dict[str, Any], detail_level: str | None) -> bool:
+def should_write_to_trade_journal(
+    event_type: str,
+    payload: dict[str, Any],
+    detail_level: str | None,
+) -> bool:
     level = normalize_detail_level(detail_level)
     if event_type in RAW_EVENT_TYPES or event_type in ERROR_EVENT_TYPES:
         return False
@@ -79,7 +84,11 @@ def should_write_to_trade_journal(event_type: str, payload: dict[str, Any], deta
     return True
 
 
-def should_write_to_debug_journal(event_type: str, payload: dict[str, Any], detail_level: str | None) -> bool:
+def should_write_to_debug_journal(
+    event_type: str,
+    payload: dict[str, Any],
+    detail_level: str | None,
+) -> bool:
     level = normalize_detail_level(detail_level)
     if level not in {'debug', 'full'}:
         return False
@@ -121,7 +130,10 @@ def decision_symbol(payload: dict[str, Any]) -> str | None:
 
 
 def decision_side(payload: dict[str, Any]) -> str | None:
-    signal = payload.get('signal') or _attribute(payload.get('candidate'), 'signal')
+    signal = payload.get('signal') or _attribute(
+        payload.get('candidate'),
+        'signal',
+    )
     side = _attribute(signal, 'action')
     if side:
         return str(side)

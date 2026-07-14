@@ -119,6 +119,18 @@ class AnalysisJournal:
                     economics,
                     'expected_net_profit_percent',
                 ),
+                'break_even_probability': _attribute(
+                    candidate,
+                    'break_even_probability',
+                ),
+                'net_expected_value_percent': _attribute(
+                    candidate,
+                    'net_expected_value_percent',
+                ),
+                'probability_edge': _attribute(
+                    candidate,
+                    'probability_edge',
+                ),
                 'entry_route_action': _enum_value(_attribute(decision, 'action')),
                 'entry_route_reason': _attribute(decision, 'reason'),
                 'selection_outcome': selection_outcome,

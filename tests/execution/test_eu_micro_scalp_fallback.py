@@ -2,13 +2,28 @@ from dataclasses import replace
 from datetime import datetime, timezone
 from types import SimpleNamespace
 
-from app.execution.candidate_economics import CandidateEconomics, EvaluatedTradeCandidate
-from app.execution.candidate_selector import CandidateSelectionConfig, selection_threshold_for
-from app.execution.eu_micro_scalp_fallback import EuMicroScalpFallbackAdjuster
-from app.execution.scoring.tp_feasibility import CandidateTpFeasibilityEvaluator, TpFeasibilityAnalyzer
+from app.execution.candidate_economics import (
+    CandidateEconomics,
+    EvaluatedTradeCandidate,
+)
+from app.execution.candidate_selector import (
+    CandidateSelectionConfig,
+    selection_threshold_for,
+)
+from app.execution.eu_micro_scalp_fallback import (
+    EuMicroScalpFallbackAdjuster,
+)
+from app.execution.scoring.tp_feasibility import (
+    CandidateTpFeasibilityEvaluator,
+    TpFeasibilityAnalyzer,
+)
 from app.execution.sl_tp_profile import EffectiveSlTp
 from app.execution.trade_candidate import TradeCandidate
-from app.instruments.models import AssetClass, RiskProfile, TpFeasibilityConfig
+from app.instruments.models import (
+    AssetClass,
+    RiskProfile,
+    TpFeasibilityConfig,
+)
 from app.market.models import Candle, MarketSnapshot
 from app.risk.trade_cost_model import TradeCostConfig
 from app.strategies.signals import Signal
@@ -16,7 +31,13 @@ from app.strategies.signals import Signal
 
 def _snapshot(symbol: str = 'SAN.PA') -> MarketSnapshot:
     now = datetime(2026, 7, 10, 12, 0, tzinfo=timezone.utc)
-    return MarketSnapshot(symbol=symbol, bid=100.0, ask=100.0, last=100.0, timestamp=now)
+    return MarketSnapshot(
+        symbol=symbol,
+        bid=100.0,
+        ask=100.0,
+        last=100.0,
+        timestamp=now,
+    )
 
 
 def _candle(symbol: str = 'SAN.PA') -> Candle:
@@ -49,12 +70,14 @@ def _candidate(
             action=side,
             setup_quality=0.8,
             reason='trend_bullish_breakout',
-            metadata=metadata
-            or {
-                'atr_percent': 0.20,
-                'snapshot_momentum_percent': 0.30,
-                'session_move_percent': 0.30,
-            },
+            metadata=(
+                metadata
+                or {
+                    'atr_percent': 0.20,
+                    'snapshot_momentum_percent': 0.30,
+                    'session_move_percent': 0.30,
+                }
+            ),
         ),
         score=score,
         rank_reason='test_candidate',
@@ -97,7 +120,9 @@ def _evaluated_candidate(
     )
 
 
-def _risk_profile(asset_class: AssetClass = AssetClass.EQUITY_EU) -> RiskProfile:
+def _risk_profile(
+    asset_class: AssetClass = AssetClass.EQUITY_EU,
+) -> RiskProfile:
     return RiskProfile(
         asset_class=asset_class,
         max_position_size_percent=0.75,
@@ -125,40 +150,45 @@ def _risk_profile(asset_class: AssetClass = AssetClass.EQUITY_EU) -> RiskProfile
     )
 
 
-def test_eu_micro_scalp_fallback_is_default_for_strong_eu_candidate_penalized_by_normal_tp():
+def test_uncapped_normal_eu_candidate_is_not_forced_into_micro_scalp():
     result = CandidateTpFeasibilityEvaluator().evaluate(
         evaluated_candidate=_evaluated_candidate(),
         risk_profile=_risk_profile(),
     )
 
-    assert result.effective_sl_tp is not None
-    assert result.effective_sl_tp.source == 'eu_micro_scalp_fallback'
-    assert result.effective_sl_tp.take_profit_percent == 0.60
-    assert result.effective_sl_tp.stop_loss_percent == 0.60
-    assert result.effective_sl_tp.metadata['selection_min_score'] == 110.0
-    assert result.candidate.score == 110.0
-    assert result.candidate.tp_feasibility_metadata['adaptation'] == 'eu_micro_scalp_fallback'
-    assert result.economics.expected_net_profit_percent == 0.30
+    assert result.effective_sl_tp is None
+    assert result.candidate.score >= 115.0
+    assert result.candidate.tp_feasibility_metadata.get(
+        'adaptation'
+    ) is None
 
 
 def test_eu_micro_scalp_fallback_ignores_non_eu_candidates():
     result = CandidateTpFeasibilityEvaluator().evaluate(
-        evaluated_candidate=_evaluated_candidate(candidate=_candidate(symbol='MSFT')),
+        evaluated_candidate=_evaluated_candidate(
+            candidate=_candidate(symbol='MSFT')
+        ),
         risk_profile=_risk_profile(AssetClass.EQUITY_US),
     )
 
     assert result.effective_sl_tp is None
-    assert result.candidate.tp_feasibility_metadata.get('adaptation') is None
+    assert result.candidate.tp_feasibility_metadata.get(
+        'adaptation'
+    ) is None
 
 
 def test_eu_micro_scalp_fallback_refuses_weak_raw_score():
     result = CandidateTpFeasibilityEvaluator().evaluate(
-        evaluated_candidate=_evaluated_candidate(candidate=_candidate(score=140.0)),
+        evaluated_candidate=_evaluated_candidate(
+            candidate=_candidate(score=140.0)
+        ),
         risk_profile=_risk_profile(),
     )
 
     assert result.effective_sl_tp is None
-    assert result.candidate.tp_feasibility_metadata.get('adaptation') is None
+    assert result.candidate.tp_feasibility_metadata.get(
+        'adaptation'
+    ) is None
 
 
 def test_selection_threshold_can_be_overridden_by_effective_sl_tp_metadata():
@@ -185,7 +215,7 @@ def test_selection_threshold_can_be_overridden_by_effective_sl_tp_metadata():
     assert source == 'effective_sl_tp_selection_min_score'
 
 
-def test_pending_eu_micro_scalp_keeps_structural_stop_and_reduced_position_size():
+def test_pending_eu_micro_scalp_keeps_structural_stop_and_position_size():
     raw_candidate = _candidate(score=155.0)
     structural_sl_tp = EffectiveSlTp(
         stop_loss_percent=1.2,
@@ -227,7 +257,11 @@ def test_pending_eu_micro_scalp_keeps_structural_stop_and_reduced_position_size(
     assert fallback_sl_tp.source == 'pending_structural'
     assert fallback_sl_tp.stop_loss_percent == 1.2
     assert fallback_sl_tp.take_profit_percent == 0.6
-    assert fallback_sl_tp.metadata['structural_invalidation_price'] == 98.8
-    assert fallback_sl_tp.metadata['adaptation'] == 'eu_micro_scalp_fallback'
+    assert fallback_sl_tp.metadata[
+        'structural_invalidation_price'
+    ] == 98.8
+    assert fallback_sl_tp.metadata['adaptation'] == (
+        'eu_micro_scalp_fallback'
+    )
     assert fallback_evaluated.candidate.score == 155.0
     assert fallback_evaluated.economics.position_value == 500.0

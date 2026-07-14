@@ -5,6 +5,7 @@ from pydantic import ValidationError
 
 from app.config.settings import Settings
 from app.execution.entry_decision import ENTRY_DECISION_MODEL_VERSION
+from app.execution.scoring.tp_probability import TP_PROBABILITY_MODEL_VERSION
 from app.instruments.instrument_registry import InstrumentRegistry
 from app.journal.run_manifest import (
     build_run_manifest,
@@ -15,7 +16,7 @@ from app.journal.run_manifest import (
 from app.strategies.balanced_strategy_config import BalancedStrategyConfig
 
 
-def test_run_manifest_captures_v4_analysis_contract_without_broker_secrets():
+def test_run_manifest_captures_pr5a_contract_without_broker_secrets():
     settings = Settings(
         WATCHLIST='AAPL',
         EQUITY_US_SYMBOLS='AAPL',
@@ -41,7 +42,7 @@ def test_run_manifest_captures_v4_analysis_contract_without_broker_secrets():
     )
 
     snapshot = manifest['runtime']['settings']
-    assert manifest['schema_version'] == 4
+    assert manifest['schema_version'] == 6
     assert 'ETORO_API_KEY' not in snapshot
     assert 'ETORO_USER_KEY' not in snapshot
     assert manifest['strategy']['profile'] == 'balanced'
@@ -52,17 +53,29 @@ def test_run_manifest_captures_v4_analysis_contract_without_broker_secrets():
     assert 'origin_candidate_id' in fields
     assert 'pending_entry_id' in fields
     assert 'entry_route_action' in fields
+    assert 'break_even_probability' in fields
+    assert 'net_expected_value_percent' in fields
+    assert 'probability_edge' in fields
     assert 'entry_action' not in fields
-    assert manifest['files']['manifest'].endswith('runs/run-test/run_manifest.json')
+    assert manifest['files']['manifest'].endswith(
+        'runs/run-test/run_manifest.json'
+    )
     assert manifest['code']['source_sha256']
     assert manifest['models']['entry_decision'] == ENTRY_DECISION_MODEL_VERSION
-    assert manifest['models']['multi_timeframe'] == 'multi_timeframe_features_v2'
-    config = manifest['runtime']['multi_timeframe']['config_by_symbol']['AAPL']
+    assert manifest['models']['entry_decision'] == 'entry_router_v4'
+    assert manifest['models']['tp_probability'] == TP_PROBABILITY_MODEL_VERSION
+    assert manifest['models']['tp_probability'] == 'heuristic_v2'
+    assert manifest['models']['multi_timeframe'] == (
+        'multi_timeframe_features_v2'
+    )
+    config = manifest['runtime']['multi_timeframe']['config_by_symbol'][
+        'AAPL'
+    ]
     assert config.feature_configs['m5'].provisional_bars == 8
     assert config.feature_configs['m5'].ready_bars == 15
-    assert manifest['runtime']['multi_timeframe']['supported_timeframes_seconds'] == [
-        60, 300, 900, 1800, 3600,
-    ]
+    assert manifest['runtime']['multi_timeframe'][
+        'supported_timeframes_seconds'
+    ] == [60, 300, 900, 1800, 3600]
 
 
 def test_removed_candle_timeframe_setting_is_rejected():
@@ -86,9 +99,10 @@ def test_sanitized_settings_keeps_non_sensitive_runtime_values():
 
 
 def test_run_artifact_path_creates_stable_per_run_location():
-    assert run_artifact_path('data/logs/daily_summary.json', 'run-123') == (
-        'data/logs/runs/run-123/daily_summary.json'
-    )
+    assert run_artifact_path(
+        'data/logs/daily_summary.json',
+        'run-123',
+    ) == 'data/logs/runs/run-123/daily_summary.json'
 
 
 def test_code_fingerprint_changes_when_source_changes(tmp_path):

@@ -15,12 +15,8 @@ class SignalScoreBreakdown:
     base_score: float
     final_score: float
     exhaustion: MoveExhaustionAnalysis
-    score_before_late_entry_cap: float = 0.0
-    score_after_late_entry_cap: float = 0.0
     score_metadata: dict[str, Any] = field(default_factory=dict)
     sell_specific_penalty: float = 0.0
-    sell_score_cap: float | None = None
-    sell_rejection_reason: str | None = None
 
 
 class SignalScorer(Protocol):
@@ -79,16 +75,17 @@ def directional_score_breakdown(
     base_score -= spread_percent(snapshot) * 120
 
     analyzer = move_exhaustion_analyzer or _DEFAULT_MOVE_EXHAUSTION_ANALYZER
-    exhaustion = analyzer.analyze(candle=candle, signal=signal, close_quality=close_quality)
-    score_before_cap = base_score - exhaustion.exhaustion_penalty
-    final_score = min(score_before_cap, exhaustion.late_entry_score_cap) if exhaustion.late_entry_score_cap is not None else score_before_cap
+    exhaustion = analyzer.analyze(
+        candle=candle,
+        signal=signal,
+        close_quality=close_quality,
+    )
+    final_score = max(base_score - exhaustion.exhaustion_penalty, 0.0)
 
     return SignalScoreBreakdown(
         base_score=base_score,
         final_score=final_score,
         exhaustion=exhaustion,
-        score_before_late_entry_cap=score_before_cap,
-        score_after_late_entry_cap=final_score,
         score_metadata={'setup_quality_bonus': round(setup_quality_bonus, 4)},
     )
 

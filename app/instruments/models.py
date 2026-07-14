@@ -38,12 +38,7 @@ class TpFeasibilityConfig:
     cost_to_tp_hard_reject_ratio: float = 1.0
     late_move_soft_percent: float = 0.80
     late_move_hard_percent: float = 2.00
-    near_extreme_distance_percent: float = 0.15
     max_penalty_points: float = 45.0
-    moderate_score_cap: float = 110.0
-    severe_score_cap: float = 95.0
-    wait_confirmation_min_runway_score: float = 25.0
-    wait_confirmation_severe_penalty: float = 40.0
 
 
 @dataclass(frozen=True)
@@ -63,12 +58,9 @@ class MarketContextConfig:
 @dataclass(frozen=True)
 class EntryDecisionConfig:
     moderate_extension_percent: float = 0.12
-    severe_extension_percent: float = 0.45
     wait_for_retest_penalty: float = 25.0
-    severe_feasibility_penalty: float = 40.0
     minimum_retest_runway_score: float = 25.0
     maximum_retest_candles: int = 5
-    context_opposition_is_hard_reject: bool = True
     require_context: bool = False
 
 

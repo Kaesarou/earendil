@@ -4,7 +4,10 @@ from datetime import datetime, timezone
 from typing import TypeVar
 
 from app.brokers.base import BrokerClient
-from app.execution.candidate_economics import CandidateEconomicsEstimator, EvaluatedTradeCandidate
+from app.execution.candidate_economics import (
+    CandidateEconomicsEstimator,
+    EvaluatedTradeCandidate,
+)
 from app.execution.candidate_ranking import rank_trade_candidates
 from app.execution.candidate_readiness import CandidateReadiness
 from app.execution.candidate_selector import (
@@ -17,7 +20,9 @@ from app.execution.candidate_selector import (
     select_trade_candidates,
 )
 from app.execution.position_tracker import PositionTracker
-from app.execution.scoring.tp_feasibility import CandidateTpFeasibilityEvaluator
+from app.execution.scoring.tp_feasibility import (
+    CandidateTpFeasibilityEvaluator,
+)
 from app.execution.sl_tp_profile import EffectiveSlTp, EffectiveSlTpResolver
 from app.execution.trade_candidate import TradeCandidate
 from app.execution.trade_executor import TradeExecutor
@@ -30,11 +35,10 @@ from app.runtime.pending_candidate_lifecycle import (
     economics_rejection_reason,
     invalidate_pending_candidate,
     keep_pending_waiting,
-    pending_entry_key,
+    pending_entry_id,
     reconcile_pending_selection_rejections,
 )
 from app.runtime.pending_entry import PendingEntryManager
-from app.runtime.pending_entry_flow import write_pending_events
 from app.strategies.models import StrategyProfileConfig
 
 logger = logging.getLogger(__name__)
@@ -44,7 +48,9 @@ RejectedItem = TypeVar('RejectedItem')
 
 
 def _smallest_positive_top_n(top_n_limits: list[int]) -> int:
-    positive_top_n_limits = [limit for limit in top_n_limits if limit > 0]
+    positive_top_n_limits = [
+        limit for limit in top_n_limits if limit > 0
+    ]
     return min(positive_top_n_limits) if positive_top_n_limits else 0
 
 
@@ -59,7 +65,9 @@ def _apply_top_n_limit(
     if top_n <= 0 or len(selected_items) <= top_n:
         return selected_items, rejected_items
     kept_items = selected_items[:top_n]
-    rejected_items.extend(build_rejection(item) for item in selected_items[top_n:])
+    rejected_items.extend(
+        build_rejection(item) for item in selected_items[top_n:]
+    )
     return kept_items, rejected_items
 
 
@@ -72,8 +80,14 @@ def select_trade_candidates_with_strategy_profile(
     rejected_candidates: list[RejectedCandidateSelection] = []
     top_n_limits: list[int] = []
     for candidate in rank_trade_candidates(candidates):
-        asset_class = risk_manager.instrument_profile_for(candidate.symbol).asset_class
-        config = strategy_profile.candidate_selection_config_for_asset_class(asset_class)
+        asset_class = risk_manager.instrument_profile_for(
+            candidate.symbol
+        ).asset_class
+        config = (
+            strategy_profile.candidate_selection_config_for_asset_class(
+                asset_class
+            )
+        )
         top_n_limits.append(config.top_n)
         result = select_trade_candidates([candidate], config)
         if result.selected_candidates:
@@ -89,7 +103,10 @@ def select_trade_candidates_with_strategy_profile(
             reason='candidate_selection_outside_top_n',
         ),
     )
-    return CandidateSelectionResult(selected_candidates, rejected_candidates)
+    return CandidateSelectionResult(
+        selected_candidates,
+        rejected_candidates,
+    )
 
 
 def select_evaluated_trade_candidates_with_strategy_profile(
@@ -100,12 +117,23 @@ def select_evaluated_trade_candidates_with_strategy_profile(
     selected_candidates: list[EvaluatedTradeCandidate] = []
     rejected_candidates: list[RejectedEvaluatedCandidateSelection] = []
     top_n_limits: list[int] = []
-    for evaluated_candidate in rank_evaluated_trade_candidates(evaluated_candidates):
+    for evaluated_candidate in rank_evaluated_trade_candidates(
+        evaluated_candidates
+    ):
         candidate = evaluated_candidate.candidate
-        asset_class = risk_manager.instrument_profile_for(candidate.symbol).asset_class
-        config = strategy_profile.candidate_selection_config_for_asset_class(asset_class)
+        asset_class = risk_manager.instrument_profile_for(
+            candidate.symbol
+        ).asset_class
+        config = (
+            strategy_profile.candidate_selection_config_for_asset_class(
+                asset_class
+            )
+        )
         top_n_limits.append(config.top_n)
-        result = select_evaluated_trade_candidates([evaluated_candidate], config)
+        result = select_evaluated_trade_candidates(
+            [evaluated_candidate],
+            config,
+        )
         if result.selected_candidates:
             selected_candidates.append(evaluated_candidate)
         else:
@@ -119,14 +147,20 @@ def select_evaluated_trade_candidates_with_strategy_profile(
             reason='candidate_selection_outside_top_n',
         ),
     )
-    return EvaluatedCandidateSelectionResult(selected_candidates, rejected_candidates)
+    return EvaluatedCandidateSelectionResult(
+        selected_candidates,
+        rejected_candidates,
+    )
 
 
 def _candidate_selection_result_from_evaluated(
     selection_result: EvaluatedCandidateSelectionResult,
 ) -> CandidateSelectionResult:
     return CandidateSelectionResult(
-        selected_candidates=[item.candidate for item in selection_result.selected_candidates],
+        selected_candidates=[
+            item.candidate
+            for item in selection_result.selected_candidates
+        ],
         rejected_candidates=[
             RejectedCandidateSelection(
                 candidate=item.evaluated_candidate.candidate,
@@ -170,13 +204,19 @@ def apply_trade_cooldown_guard(
                 'candidate': candidate,
                 'trade_plan': plan,
                 'cooldown': decision.active_cooldown,
-                'cooldown_remaining_seconds': decision.remaining_seconds,
+                'cooldown_remaining_seconds': (
+                    decision.remaining_seconds
+                ),
                 'lock_scope': decision.lock_scope,
                 'blocked_sides': list(decision.blocked_sides),
-                'instrument_profile': risk_manager.instrument_profile_for(
+                'instrument_profile': (
+                    risk_manager.instrument_profile_for(
+                        candidate.symbol
+                    )
+                ),
+                'risk_profile': risk_manager.risk_profile_for(
                     candidate.symbol
                 ),
-                'risk_profile': risk_manager.risk_profile_for(candidate.symbol),
             },
         )
     return result.selected_candidates
@@ -192,7 +232,9 @@ def apply_tp_feasibility_to_evaluated_candidates(
     return [
         actual_evaluator.evaluate(
             evaluated_candidate=item,
-            risk_profile=risk_manager.risk_profile_for(item.candidate.symbol),
+            risk_profile=risk_manager.risk_profile_for(
+                item.candidate.symbol
+            ),
         )
         for item in evaluated_candidates
     ]
@@ -201,7 +243,6 @@ def apply_tp_feasibility_to_evaluated_candidates(
 def route_candidate_readiness(
     *,
     evaluated_candidates: list[EvaluatedTradeCandidate],
-    risk_manager: RiskManager,
     pending_entry_manager: PendingEntryManager | None,
     trade_journal: JsonlJournal,
 ) -> tuple[
@@ -240,31 +281,6 @@ def route_candidate_readiness(
                 reason=reason,
             )
         )
-        if pending_entry_manager is None:
-            continue
-
-        pending_key = pending_entry_key(candidate)
-        if item.readiness == CandidateReadiness.WAIT_CONFIRMATION:
-            if pending_key is not None:
-                keep_pending_waiting(
-                    candidate=candidate,
-                    reason='recalculated_still_waiting',
-                    pending_entry_manager=pending_entry_manager,
-                    trade_journal=trade_journal,
-                )
-            else:
-                config = risk_manager.risk_profile_for(
-                    candidate.symbol
-                ).entry_confirmation
-                write_pending_events(
-                    trade_journal,
-                    pending_entry_manager.register(
-                        evaluated_candidate=item,
-                        max_candles=config.max_candles,
-                    ),
-                )
-            continue
-
         invalidate_pending_candidate(
             candidate=candidate,
             reason=f'recalculated_reject:{reason}',
@@ -283,7 +299,11 @@ def _slippage_percent(
     if planned_entry_price <= 0:
         return None
     return round(
-        ((effective_entry_price - planned_entry_price) / planned_entry_price) * 100,
+        (
+            (effective_entry_price - planned_entry_price)
+            / planned_entry_price
+        )
+        * 100,
         4,
     )
 
@@ -296,7 +316,10 @@ def _resolve_runtime_effective_sl_tp(
 ) -> EffectiveSlTp | None:
     if not hasattr(risk_profile, 'dynamic_sl_tp_enabled'):
         return None
-    return resolver.resolve(candidate=candidate, risk_profile=risk_profile)
+    return resolver.resolve(
+        candidate=candidate,
+        risk_profile=risk_profile,
+    )
 
 
 def _evaluate_risk_manager(
@@ -337,35 +360,55 @@ def _candidate_log_item(
         'action': candidate.signal.action,
         'score': candidate.score,
         'expected_net_profit': (
-            round(economics.expected_net_profit, 4) if economics else None
+            round(economics.expected_net_profit, 4)
+            if economics
+            else None
         ),
         'expected_net_profit_percent': (
-            round(economics.expected_net_profit_percent, 4) if economics else None
+            round(economics.expected_net_profit_percent, 4)
+            if economics
+            else None
         ),
         'effective_take_profit_percent': (
-            effective_sl_tp.take_profit_percent if effective_sl_tp else None
+            effective_sl_tp.take_profit_percent
+            if effective_sl_tp
+            else None
         ),
         'effective_stop_loss_percent': (
-            effective_sl_tp.stop_loss_percent if effective_sl_tp else None
+            effective_sl_tp.stop_loss_percent
+            if effective_sl_tp
+            else None
         ),
         'sl_tp_mode': effective_sl_tp.mode if effective_sl_tp else None,
-        'sl_tp_source': effective_sl_tp.source if effective_sl_tp else None,
+        'sl_tp_source': (
+            effective_sl_tp.source if effective_sl_tp else None
+        ),
         'tp_feasibility_penalty': candidate.tp_feasibility_penalty,
-        'tp_feasibility_score_cap': candidate.tp_feasibility_score_cap,
         'tp_feasibility_hard_rejection_reason': (
             candidate.tp_feasibility_hard_rejection_reason
         ),
         'score_before_tp_feasibility': (
-            feasibility.score_before_tp_feasibility if feasibility else None
+            feasibility.score_before_tp_feasibility
+            if feasibility
+            else None
         ),
-        'score_after_tp_penalty': (
-            feasibility.score_after_tp_penalty if feasibility else None
+        'adjusted_score': (
+            feasibility.adjusted_score if feasibility else None
         ),
         'tp_feasibility_runway_score': (
             feasibility.runway_score if feasibility else None
         ),
-        'readiness': feasibility.readiness.value if feasibility else None,
-        'readiness_reason': feasibility.readiness_reason if feasibility else None,
+        'readiness': (
+            feasibility.readiness.value if feasibility else None
+        ),
+        'readiness_reason': (
+            feasibility.readiness_reason if feasibility else None
+        ),
+        'break_even_probability': candidate.break_even_probability,
+        'net_expected_value_percent': (
+            candidate.net_expected_value_percent
+        ),
+        'probability_edge': candidate.probability_edge,
         'reason': candidate.rank_reason,
     }
 
@@ -380,8 +423,12 @@ def execute_ranked_candidates(
     position_store: PositionStore | None = None,
     strategy_profile: StrategyProfileConfig | None = None,
     cooldown_guard: TradeCooldownGuard | None = None,
-    candidate_economics_estimator: CandidateEconomicsEstimator | None = None,
-    is_broker_authorization_error: BrokerAuthorizationErrorChecker | None = None,
+    candidate_economics_estimator: (
+        CandidateEconomicsEstimator | None
+    ) = None,
+    is_broker_authorization_error: (
+        BrokerAuthorizationErrorChecker | None
+    ) = None,
     pending_entry_manager: PendingEntryManager | None = None,
 ) -> None:
     if not candidates:
@@ -396,11 +443,18 @@ def execute_ranked_candidates(
         if not candidates:
             return
 
-    selected_evaluated_candidates: list[EvaluatedTradeCandidate] | None = None
-    rejected_evaluated_candidates: list[RejectedEvaluatedCandidateSelection] | None = None
+    selected_evaluated_candidates: (
+        list[EvaluatedTradeCandidate] | None
+    ) = None
+    rejected_evaluated_candidates: (
+        list[RejectedEvaluatedCandidateSelection] | None
+    ) = None
     if candidate_economics_estimator is None:
         selection_result = (
-            CandidateSelectionResult(rank_trade_candidates(candidates), [])
+            CandidateSelectionResult(
+                rank_trade_candidates(candidates),
+                [],
+            )
             if strategy_profile is None
             else select_trade_candidates_with_strategy_profile(
                 candidates,
@@ -412,7 +466,10 @@ def execute_ranked_candidates(
     else:
         selection_equity = execution_broker.get_account_equity()
         evaluated_candidates = [
-            candidate_economics_estimator.evaluate(candidate, selection_equity)
+            candidate_economics_estimator.evaluate(
+                candidate,
+                selection_equity,
+            )
             for candidate in candidates
         ]
         trade_journal.write(
@@ -422,9 +479,11 @@ def execute_ranked_candidates(
                 'evaluated_candidates': evaluated_candidates,
             },
         )
-        evaluated_candidates = apply_tp_feasibility_to_evaluated_candidates(
-            evaluated_candidates=evaluated_candidates,
-            risk_manager=risk_manager,
+        evaluated_candidates = (
+            apply_tp_feasibility_to_evaluated_candidates(
+                evaluated_candidates=evaluated_candidates,
+                risk_manager=risk_manager,
+            )
         )
         trade_journal.write(
             'candidate_tp_feasibility',
@@ -433,15 +492,18 @@ def execute_ranked_candidates(
                 'evaluated_candidates': evaluated_candidates,
             },
         )
-        tradable_candidates, readiness_rejections = route_candidate_readiness(
-            evaluated_candidates=evaluated_candidates,
-            risk_manager=risk_manager,
-            pending_entry_manager=pending_entry_manager,
-            trade_journal=trade_journal,
+        tradable_candidates, readiness_rejections = (
+            route_candidate_readiness(
+                evaluated_candidates=evaluated_candidates,
+                pending_entry_manager=pending_entry_manager,
+                trade_journal=trade_journal,
+            )
         )
         evaluated_selection = (
             EvaluatedCandidateSelectionResult(
-                rank_evaluated_trade_candidates(tradable_candidates),
+                rank_evaluated_trade_candidates(
+                    tradable_candidates
+                ),
                 [],
             )
             if strategy_profile is None
@@ -452,13 +514,21 @@ def execute_ranked_candidates(
             )
         )
         reconcile_pending_selection_rejections(
-            rejected_candidates=evaluated_selection.rejected_candidates,
+            rejected_candidates=(
+                evaluated_selection.rejected_candidates
+            ),
             pending_entry_manager=pending_entry_manager,
             trade_journal=trade_journal,
         )
-        evaluated_selection.rejected_candidates.extend(readiness_rejections)
-        selected_evaluated_candidates = evaluated_selection.selected_candidates
-        rejected_evaluated_candidates = evaluated_selection.rejected_candidates
+        evaluated_selection.rejected_candidates.extend(
+            readiness_rejections
+        )
+        selected_evaluated_candidates = (
+            evaluated_selection.selected_candidates
+        )
+        rejected_evaluated_candidates = (
+            evaluated_selection.rejected_candidates
+        )
         selection_result = _candidate_selection_result_from_evaluated(
             evaluated_selection
         )
@@ -467,19 +537,31 @@ def execute_ranked_candidates(
     trade_journal.write(
         'candidate_selection',
         {
-            'strategy_profile': strategy_profile.name if strategy_profile else None,
+            'strategy_profile': (
+                strategy_profile.name if strategy_profile else None
+            ),
             'selected_candidates': selection_result.selected_candidates,
             'rejected_candidates': selection_result.rejected_candidates,
-            'selected_evaluated_candidates': selected_evaluated_candidates,
-            'rejected_evaluated_candidates': rejected_evaluated_candidates,
+            'selected_evaluated_candidates': (
+                selected_evaluated_candidates
+            ),
+            'rejected_evaluated_candidates': (
+                rejected_evaluated_candidates
+            ),
         },
     )
     logger.info(
         'Candidate selection | profile=%s | selected=%s | rejected=%s',
         strategy_profile.name if strategy_profile else None,
-        [candidate.symbol for candidate in selection_result.selected_candidates],
         [
-            {'symbol': rejection.candidate.symbol, 'reason': rejection.reason}
+            candidate.symbol
+            for candidate in selection_result.selected_candidates
+        ],
+        [
+            {
+                'symbol': rejection.candidate.symbol,
+                'reason': rejection.reason,
+            }
             for rejection in selection_result.rejected_candidates
         ],
     )
@@ -522,8 +604,12 @@ def execute_ranked_candidates(
     for candidate in ranked_candidates:
         try:
             equity = execution_broker.get_account_equity()
-            instrument_profile = risk_manager.instrument_profile_for(candidate.symbol)
-            risk_profile = risk_manager.risk_profile_for(candidate.symbol)
+            instrument_profile = (
+                risk_manager.instrument_profile_for(candidate.symbol)
+            )
+            risk_profile = risk_manager.risk_profile_for(
+                candidate.symbol
+            )
             effective_sl_tp = effective_sl_tp_by_id.get(
                 id(candidate)
             ) or _resolve_runtime_effective_sl_tp(
@@ -605,15 +691,19 @@ def execute_ranked_candidates(
                 },
             )
             planned_entry_price = candidate.snapshot.last
-            executed_entry_price = execution_result.executed_entry_price
+            executed_entry_price = (
+                execution_result.executed_entry_price
+            )
             effective_entry_price = (
                 executed_entry_price
                 if executed_entry_price is not None
                 else planned_entry_price
             )
-            adjusted_plan = risk_manager.adjust_trade_plan_to_entry_price(
-                trade_plan=plan,
-                entry_price=effective_entry_price,
+            adjusted_plan = (
+                risk_manager.adjust_trade_plan_to_entry_price(
+                    trade_plan=plan,
+                    entry_price=effective_entry_price,
+                )
             )
             tracked_position = position_tracker.record_open_position(
                 position_id=execution_result.position_id,
@@ -625,17 +715,19 @@ def execute_ranked_candidates(
                 session_key=candidate.session_key,
             )
             if pending_entry_manager is not None:
-                pending_key = pending_entry_key(candidate)
-                if pending_key is not None:
-                    pending_entry_manager.remove(pending_key)
+                identifier = pending_entry_id(candidate)
+                if identifier is not None:
+                    pending_entry_manager.remove_by_id(identifier)
 
             if position_store is not None:
                 try:
-                    position_store.save_open_position(tracked_position)
+                    position_store.save_open_position(
+                        tracked_position
+                    )
                 except Exception as exc:
                     logger.exception(
-                        'Position persistence save error | position_id=%s | '
-                        'symbol=%s | error=%s',
+                        'Position persistence save error | '
+                        'position_id=%s | symbol=%s | error=%s',
                         tracked_position.position_id,
                         tracked_position.symbol,
                         exc,
@@ -644,7 +736,9 @@ def execute_ranked_candidates(
                         'position_persistence_error',
                         {
                             'symbol': tracked_position.symbol,
-                            'position_id': tracked_position.position_id,
+                            'position_id': (
+                                tracked_position.position_id
+                            ),
                             'position': tracked_position,
                             'message': str(exc),
                         },
@@ -670,9 +764,15 @@ def execute_ranked_candidates(
                         if executed_entry_price is not None
                         else 'snapshot_fallback'
                     ),
-                    'execution_slippage_percent': _slippage_percent(
-                        planned_entry_price=planned_entry_price,
-                        effective_entry_price=effective_entry_price,
+                    'execution_slippage_percent': (
+                        _slippage_percent(
+                            planned_entry_price=(
+                                planned_entry_price
+                            ),
+                            effective_entry_price=(
+                                effective_entry_price
+                            ),
+                        )
                     ),
                     'instrument_profile': instrument_profile,
                     'risk_profile': risk_profile,
