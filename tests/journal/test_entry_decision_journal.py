@@ -1,4 +1,5 @@
 import json
+from datetime import datetime, timezone
 from types import SimpleNamespace
 
 from app.journal.analysis_journal import AnalysisJournal
@@ -15,18 +16,24 @@ def test_candidate_selection_emits_standalone_entry_decision_event(tmp_path):
         write_partial_summary=False,
         profile='balanced',
     )
-    context = SimpleNamespace(version='market_context_v1', regime='risk_on')
+    context = SimpleNamespace(version='market_context_v2', regime='risk_on')
     multi_timeframe_context = SimpleNamespace(
         model_version='multi_timeframe_features_v1',
         alignment='aligned',
         features_by_timeframe={'m1': {'direction': 'up'}},
         unavailable_timeframes=('m5', 'm15', 'm30', 'h1'),
     )
+    timestamp = datetime(2026, 7, 14, 10, 32, 8, tzinfo=timezone.utc)
     candidate = SimpleNamespace(
         candidate_id='candidate-1',
         symbol='AAPL',
-        signal=SimpleNamespace(action='BUY'),
+        signal=SimpleNamespace(
+            action='BUY',
+            metadata={'origin_candidate_id': 'candidate-origin'},
+        ),
+        snapshot=SimpleNamespace(last=201.25, timestamp=timestamp),
         score=120.0,
+        base_score=132.0,
         rank_reason='test',
         market_context=context,
         multi_timeframe_context=multi_timeframe_context,
@@ -34,15 +41,21 @@ def test_candidate_selection_emits_standalone_entry_decision_event(tmp_path):
     decision = SimpleNamespace(
         action='enter_now',
         reason='entry_conditions_satisfied',
-        model_version='entry_router_v1',
+        model_version='entry_router_v2',
     )
     evaluated = SimpleNamespace(
         candidate=candidate,
         entry_decision=decision,
-        economics=SimpleNamespace(expected_net_profit_percent=0.4),
+        economics=SimpleNamespace(
+            expected_net_profit_percent=0.4,
+            estimated_total_cost_percent=0.35,
+        ),
         tp_feasibility=SimpleNamespace(runway_score=80.0),
         tp_probability=None,
-        effective_sl_tp=SimpleNamespace(take_profit_percent=1.0),
+        effective_sl_tp=SimpleNamespace(
+            take_profit_percent=1.6,
+            stop_loss_percent=0.9,
+        ),
     )
 
     journal.write(
@@ -62,9 +75,19 @@ def test_candidate_selection_emits_standalone_entry_decision_event(tmp_path):
     entry_record = next(record for record in records if record['event_type'] == 'entry_decision')
     payload = entry_record['payload']
     assert payload['candidate_id'] == 'candidate-1'
+    assert payload['origin_candidate_id'] == 'candidate-origin'
+    assert payload['candidate_timestamp'] == timestamp.isoformat()
+    assert payload['entry_reference_price'] == 201.25
+    assert payload['effective_stop_loss_percent'] == 0.9
+    assert payload['effective_take_profit_percent'] == 1.6
+    assert payload['estimated_total_cost_percent'] == 0.35
+    assert payload['score'] == 120.0
+    assert payload['base_score'] == 132.0
+    assert payload['entry_action'] == 'enter_now'
+    assert payload['entry_reason'] == 'entry_conditions_satisfied'
     assert payload['selection_outcome'] == 'selected'
-    assert payload['entry_model_version'] == 'entry_router_v1'
-    assert payload['market_context_version'] == 'market_context_v1'
+    assert payload['entry_model_version'] == 'entry_router_v2'
+    assert payload['market_context_version'] == 'market_context_v2'
     assert payload['multi_timeframe_model_version'] == 'multi_timeframe_features_v1'
     assert payload['multi_timeframe_context']['alignment'] == 'aligned'
     assert payload['strategy_profile'] == 'balanced'
