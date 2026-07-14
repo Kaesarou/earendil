@@ -18,28 +18,62 @@ from app.market.timeframes import (
     SamplingQuality,
     Timeframe,
     TimeframeDirection,
+    TimeframeMaturity,
 )
 
 
 @dataclass(frozen=True)
-class MultiTimeframeConfig:
-    range_lookback_bars: int = 20
-    ema_fast_bars: int = 3
-    ema_slow_bars: int = 8
-    atr_lookback_bars: int = 14
-    compression_lookback_bars: int = 10
+class TimeframeFeatureConfig:
+    provisional_bars: int
+    ready_bars: int
+    range_lookback_bars: int
+    ema_fast_bars: int
+    ema_slow_bars: int
+    atr_lookback_bars: int
+    compression_lookback_bars: int
     acceleration_window_bars: int = 2
-    opening_range_minutes: tuple[int, ...] = (15, 30)
 
-    @property
-    def required_feature_bars(self) -> int:
-        return max(
+    def __post_init__(self) -> None:
+        if self.provisional_bars < 2:
+            raise ValueError('provisional_bars must be at least 2.')
+        if self.ready_bars < self.provisional_bars:
+            raise ValueError('ready_bars must be >= provisional_bars.')
+        required = max(
             self.range_lookback_bars,
             self.ema_slow_bars,
             self.atr_lookback_bars + 1,
             self.compression_lookback_bars + 1,
             self.acceleration_window_bars * 2 + 1,
         )
+        if self.ready_bars < required:
+            raise ValueError(
+                f'ready_bars={self.ready_bars} is below the required feature window {required}.'
+            )
+
+
+def _default_feature_configs() -> dict[str, TimeframeFeatureConfig]:
+    return {
+        'm1': TimeframeFeatureConfig(10, 20, 20, 3, 8, 14, 10),
+        'm5': TimeframeFeatureConfig(8, 15, 15, 3, 8, 10, 8),
+        'm15': TimeframeFeatureConfig(6, 12, 12, 3, 6, 8, 6),
+        'm30': TimeframeFeatureConfig(5, 10, 10, 3, 6, 8, 6),
+        'h1': TimeframeFeatureConfig(5, 8, 8, 2, 5, 5, 5),
+    }
+
+
+@dataclass(frozen=True)
+class MultiTimeframeConfig:
+    feature_configs: dict[str, TimeframeFeatureConfig] = field(
+        default_factory=_default_feature_configs
+    )
+    opening_range_minutes: tuple[int, ...] = (15, 30)
+
+    def feature_config_for(self, timeframe: Timeframe) -> TimeframeFeatureConfig:
+        key = timeframe.name.lower()
+        try:
+            return self.feature_configs[key]
+        except KeyError as exc:
+            raise ValueError(f'Missing multi-timeframe feature config for {key}.') from exc
 
 
 @dataclass(frozen=True)
@@ -74,37 +108,40 @@ class MultiTimeframeUpdate:
 @dataclass(frozen=True)
 class TimeframeFeatures:
     timeframe: str
+    maturity: TimeframeMaturity
     as_of: datetime
     latest_bar_closed_at: datetime
     bar_count: int
+    covered_seconds: int
     direction: TimeframeDirection
     sampling_quality: SamplingQuality
     close: float
     ema_fast: float
     ema_slow: float
-    close_vs_fast_ema_percent: float
-    fast_vs_slow_ema_percent: float
-    atr_percent: float
     return_1_bar_percent: float
-    return_3_bars_percent: float
-    rolling_high: float
-    rolling_low: float
-    rolling_range_percent: float
-    range_position_percent: float
-    distance_to_range_high_percent: float
-    distance_to_range_low_percent: float
-    previous_bar_high: float
-    previous_bar_low: float
-    body_percent_of_range: float
-    upper_wick_percent_of_range: float
-    lower_wick_percent_of_range: float
-    close_position_percent: float
-    compression_ratio: float
+    return_sample_percent: float
     velocity_percent_per_bar: float
-    previous_velocity_percent_per_bar: float
-    acceleration_percent_per_bar: float
-    pullback_from_recent_high_percent: float
-    rebound_from_recent_low_percent: float
+    close_vs_fast_ema_percent: float | None = None
+    fast_vs_slow_ema_percent: float | None = None
+    atr_percent: float | None = None
+    return_3_bars_percent: float | None = None
+    rolling_high: float | None = None
+    rolling_low: float | None = None
+    rolling_range_percent: float | None = None
+    range_position_percent: float | None = None
+    distance_to_range_high_percent: float | None = None
+    distance_to_range_low_percent: float | None = None
+    previous_bar_high: float | None = None
+    previous_bar_low: float | None = None
+    body_percent_of_range: float | None = None
+    upper_wick_percent_of_range: float | None = None
+    lower_wick_percent_of_range: float | None = None
+    close_position_percent: float | None = None
+    compression_ratio: float | None = None
+    previous_velocity_percent_per_bar: float | None = None
+    acceleration_percent_per_bar: float | None = None
+    pullback_from_recent_high_percent: float | None = None
+    rebound_from_recent_low_percent: float | None = None
 
 
 @dataclass(frozen=True)
@@ -135,11 +172,15 @@ class MultiTimeframeContext:
     as_of: datetime
     side: str
     features_by_timeframe: dict[str, TimeframeFeatures]
+    maturity_by_timeframe: dict[str, TimeframeMaturity]
     opening_ranges: OpeningRangeFeatures
-    aligned_timeframes: tuple[str, ...]
-    opposed_timeframes: tuple[str, ...]
+    ready_aligned_timeframes: tuple[str, ...]
+    ready_opposed_timeframes: tuple[str, ...]
+    inclusive_aligned_timeframes: tuple[str, ...]
+    inclusive_opposed_timeframes: tuple[str, ...]
     unavailable_timeframes: tuple[str, ...]
-    alignment: MultiTimeframeAlignment
+    ready_alignment: MultiTimeframeAlignment
+    alignment_including_provisional: MultiTimeframeAlignment
 
 
 @dataclass
@@ -215,16 +256,11 @@ class MultiTimeframeCandleEngine:
                 f'got {candle.timeframe_seconds}s.'
             )
         if candle.symbol.strip().upper() != self.symbol:
-            raise ValueError(
-                f'Expected candle for {self.symbol}, got {candle.symbol}.'
-            )
+            raise ValueError(f'Expected candle for {self.symbol}, got {candle.symbol}.')
 
         gaps: list[CandleGap] = []
         candle_opened_at = _as_utc(candle.opened_at)
-        if (
-            self._last_base_closed_at is not None
-            and candle_opened_at > self._last_base_closed_at
-        ):
+        if self._last_base_closed_at is not None and candle_opened_at > self._last_base_closed_at:
             missing = int(
                 (candle_opened_at - self._last_base_closed_at).total_seconds()
                 // BASE_TIMEFRAME.value
@@ -261,10 +297,7 @@ class MultiTimeframeCandleEngine:
                     session_24_7=session_24_7,
                 )
             )
-        return MultiTimeframeUpdate(
-            closed_bars=tuple(closed_bars),
-            gaps=tuple(gaps),
-        )
+        return MultiTimeframeUpdate(closed_bars=tuple(closed_bars), gaps=tuple(gaps))
 
     def flush_partial(self) -> tuple[TimeframeBar, ...]:
         partials: list[TimeframeBar] = []
@@ -272,9 +305,7 @@ class MultiTimeframeCandleEngine:
             bucket = self._buckets.pop(timeframe, None)
             if bucket is None or not bucket.base_candles:
                 continue
-            partials.append(
-                self._finalize_bucket(bucket, forced=BarCompleteness.PARTIAL)
-            )
+            partials.append(self._finalize_bucket(bucket, forced=BarCompleteness.PARTIAL))
         self._last_base_closed_at = None
         return tuple(partials)
 
@@ -295,16 +326,11 @@ class MultiTimeframeCandleEngine:
         )
         closed: list[TimeframeBar] = []
         bucket = self._buckets.get(timeframe)
-        if (
-            bucket is not None
-            and (
-                bucket.session_key != session_key
-                or bucket.bucket_start != bucket_start
-            )
+        if bucket is not None and (
+            bucket.session_key != session_key or bucket.bucket_start != bucket_start
         ):
             closed.append(self._finalize_bucket(bucket))
             bucket = None
-
         if bucket is None:
             bucket = _AggregateBucket(
                 timeframe=timeframe,
@@ -313,7 +339,6 @@ class MultiTimeframeCandleEngine:
                 bucket_end=bucket_end,
             )
             self._buckets[timeframe] = bucket
-
         bucket.base_candles.append(candle)
         if _as_utc(candle.closed_at) >= bucket.bucket_end:
             closed.append(self._finalize_bucket(bucket))
@@ -334,9 +359,7 @@ class MultiTimeframeCandleEngine:
             and _candles_are_contiguous(candles)
         )
         completeness = forced or (
-            BarCompleteness.COMPLETE
-            if complete
-            else BarCompleteness.INCOMPLETE
+            BarCompleteness.COMPLETE if complete else BarCompleteness.INCOMPLETE
         )
         volumes = [candle.volume for candle in candles]
         volume = (
@@ -368,18 +391,12 @@ class MultiTimeframeCandleEngine:
 
 
 class MultiTimeframeService:
-    def __init__(
-        self,
-        configs: dict[str, MultiTimeframeConfig] | None = None,
-    ) -> None:
+    def __init__(self, configs: dict[str, MultiTimeframeConfig] | None = None) -> None:
         self._configs = {
-            symbol.strip().upper(): config
-            for symbol, config in (configs or {}).items()
+            symbol.strip().upper(): config for symbol, config in (configs or {}).items()
         }
         self._engines: dict[str, MultiTimeframeCandleEngine] = {}
-        self._stores: dict[str, TimeframeSeriesStore] = defaultdict(
-            TimeframeSeriesStore
-        )
+        self._stores: dict[str, TimeframeSeriesStore] = defaultdict(TimeframeSeriesStore)
 
     def reset_symbol(
         self,
@@ -404,10 +421,7 @@ class MultiTimeframeService:
         session_decision: Any,
     ) -> MultiTimeframeUpdate:
         normalized = symbol.strip().upper()
-        session_key = (
-            getattr(session_decision, 'session_key', None)
-            or 'unknown_session'
-        )
+        session_key = getattr(session_decision, 'session_key', None) or 'unknown_session'
         engine = self._engines.setdefault(
             normalized,
             MultiTimeframeCandleEngine(normalized),
@@ -415,14 +429,8 @@ class MultiTimeframeService:
         update = engine.on_base_candle(
             candle,
             session_key=session_key,
-            session_start_time=getattr(
-                session_decision,
-                'session_start_time',
-                None,
-            ),
-            session_24_7=bool(
-                getattr(session_decision, 'session_24_7', False)
-            ),
+            session_start_time=getattr(session_decision, 'session_start_time', None),
+            session_24_7=bool(getattr(session_decision, 'session_24_7', False)),
         )
         for bar in update.closed_bars:
             self._stores[normalized].append(bar)
@@ -439,22 +447,22 @@ class MultiTimeframeService:
         normalized = symbol.strip().upper()
         config = self._configs.get(normalized, MultiTimeframeConfig())
         actual_as_of = _as_utc(as_of)
-        features: dict[str, TimeframeFeatures] = {}
-        unavailable: list[str] = []
-        aligned: list[str] = []
-        opposed: list[str] = []
-        desired = (
-            TimeframeDirection.UP
-            if side.upper() == 'BUY'
-            else TimeframeDirection.DOWN
-        )
+        desired = TimeframeDirection.UP if side.upper() == 'BUY' else TimeframeDirection.DOWN
         opposite = (
             TimeframeDirection.DOWN
             if desired == TimeframeDirection.UP
             else TimeframeDirection.UP
         )
+        features: dict[str, TimeframeFeatures] = {}
+        maturity_by_timeframe: dict[str, TimeframeMaturity] = {}
+        unavailable: list[str] = []
+        ready_aligned: list[str] = []
+        ready_opposed: list[str] = []
+        inclusive_aligned: list[str] = []
+        inclusive_opposed: list[str] = []
 
         for timeframe in SUPPORTED_TIMEFRAMES:
+            key = timeframe.name.lower()
             bars = self._stores[normalized].bars(
                 timeframe,
                 as_of=actual_as_of,
@@ -463,36 +471,46 @@ class MultiTimeframeService:
             calculated = _timeframe_features(
                 timeframe=timeframe,
                 bars=bars,
-                config=config,
+                config=config.feature_config_for(timeframe),
                 as_of=actual_as_of,
             )
-            key = timeframe.name.lower()
             if calculated is None:
+                maturity_by_timeframe[key] = TimeframeMaturity.UNAVAILABLE
                 unavailable.append(key)
                 continue
             features[key] = calculated
+            maturity_by_timeframe[key] = calculated.maturity
             if calculated.direction == desired:
-                aligned.append(key)
+                inclusive_aligned.append(key)
+                if calculated.maturity == TimeframeMaturity.READY:
+                    ready_aligned.append(key)
             elif calculated.direction == opposite:
-                opposed.append(key)
+                inclusive_opposed.append(key)
+                if calculated.maturity == TimeframeMaturity.READY:
+                    ready_opposed.append(key)
 
-        alignment = _alignment(aligned=aligned, opposed=opposed)
-        opening_ranges = _opening_ranges(
-            store=self._stores[normalized],
-            config=config,
-            as_of=actual_as_of,
-            session_decision=session_decision,
-        )
         return MultiTimeframeContext(
             model_version=MULTI_TIMEFRAME_MODEL_VERSION,
             as_of=actual_as_of,
             side=side.upper(),
             features_by_timeframe=features,
-            opening_ranges=opening_ranges,
-            aligned_timeframes=tuple(aligned),
-            opposed_timeframes=tuple(opposed),
+            maturity_by_timeframe=maturity_by_timeframe,
+            opening_ranges=_opening_ranges(
+                store=self._stores[normalized],
+                config=config,
+                as_of=actual_as_of,
+                session_decision=session_decision,
+            ),
+            ready_aligned_timeframes=tuple(ready_aligned),
+            ready_opposed_timeframes=tuple(ready_opposed),
+            inclusive_aligned_timeframes=tuple(inclusive_aligned),
+            inclusive_opposed_timeframes=tuple(inclusive_opposed),
             unavailable_timeframes=tuple(unavailable),
-            alignment=alignment,
+            ready_alignment=_alignment(aligned=ready_aligned, opposed=ready_opposed),
+            alignment_including_provisional=_alignment(
+                aligned=inclusive_aligned,
+                opposed=inclusive_opposed,
+            ),
         )
 
     def bars(
@@ -522,10 +540,10 @@ def _timeframe_features(
     *,
     timeframe: Timeframe,
     bars: list[TimeframeBar],
-    config: MultiTimeframeConfig,
+    config: TimeframeFeatureConfig,
     as_of: datetime,
 ) -> TimeframeFeatures | None:
-    if len(bars) < config.required_feature_bars:
+    if len(bars) < config.provisional_bars:
         return None
     candles = [bar.candle for bar in bars]
     latest = candles[-1]
@@ -534,22 +552,61 @@ def _timeframe_features(
     if latest_close <= 0:
         return None
 
-    ema_fast = _ema(closes[-config.ema_fast_bars:])
-    ema_slow = _ema(closes[-config.ema_slow_bars:])
+    maturity = (
+        TimeframeMaturity.READY
+        if len(candles) >= config.ready_bars
+        else TimeframeMaturity.PROVISIONAL
+    )
+    ema_fast_window = min(config.ema_fast_bars, len(closes))
+    ema_slow_window = min(config.ema_slow_bars, len(closes))
+    ema_fast = _ema(closes[-ema_fast_window:])
+    ema_slow = _ema(closes[-ema_slow_window:])
     direction = _direction(latest_close, ema_fast, ema_slow)
+    returns = [
+        _signed_percent(closes[index], closes[index - 1])
+        for index in range(1, len(closes))
+    ]
+    recent_velocity = _average(returns[-min(config.acceleration_window_bars, len(returns)):])
+    sample_per_base_bar = latest.sample_count / max(
+        1,
+        timeframe.value // BASE_TIMEFRAME.value,
+    )
+    common = dict(
+        timeframe=timeframe.name.lower(),
+        maturity=maturity,
+        as_of=as_of,
+        latest_bar_closed_at=_as_utc(latest.closed_at),
+        bar_count=len(candles),
+        covered_seconds=max(
+            0,
+            int((_as_utc(latest.closed_at) - _as_utc(candles[0].opened_at)).total_seconds()),
+        ),
+        direction=direction,
+        sampling_quality=_sampling_quality(sample_per_base_bar),
+        close=round(latest_close, 8),
+        ema_fast=round(ema_fast, 8),
+        ema_slow=round(ema_slow, 8),
+        return_1_bar_percent=round(
+            _signed_percent(closes[-1], closes[-2]),
+            6,
+        ),
+        return_sample_percent=round(
+            _signed_percent(closes[-1], closes[0]),
+            6,
+        ),
+        velocity_percent_per_bar=round(recent_velocity, 6),
+    )
+    if maturity == TimeframeMaturity.PROVISIONAL:
+        return TimeframeFeatures(**common)
+
     range_candles = candles[-config.range_lookback_bars:]
     rolling_high = max(candle.high for candle in range_candles)
     rolling_low = min(candle.low for candle in range_candles)
     rolling_range = rolling_high - rolling_low
     reference_open = range_candles[0].open
-    rolling_range_percent = _percent(rolling_range, reference_open)
-    range_position = _position(latest_close, rolling_low, rolling_high)
-
     true_ranges = _true_ranges(candles)
     atr = _average(true_ranges[-config.atr_lookback_bars:])
-    compression_window = true_ranges[
-        -(config.compression_lookback_bars + 1):
-    ]
+    compression_window = true_ranges[-(config.compression_lookback_bars + 1):]
     historical_ranges = compression_window[:-1]
     compression_reference = median(historical_ranges)
     compression_ratio = (
@@ -557,55 +614,23 @@ def _timeframe_features(
         if compression_reference > 0
         else 0.0
     )
-
-    returns = [
-        _signed_percent(closes[index], closes[index - 1])
-        for index in range(1, len(closes))
-    ]
     window = config.acceleration_window_bars
-    recent_velocity = _average(returns[-window:])
     previous_velocity = _average(returns[-(window * 2):-window])
     latest_range = latest.high - latest.low
     body = abs(latest.close - latest.open)
     upper_wick = latest.high - max(latest.open, latest.close)
     lower_wick = min(latest.open, latest.close) - latest.low
 
-    sample_per_base_bar = latest.sample_count / max(
-        1,
-        timeframe.value // BASE_TIMEFRAME.value,
-    )
-    sampling_quality = _sampling_quality(sample_per_base_bar)
     return TimeframeFeatures(
-        timeframe=timeframe.name.lower(),
-        as_of=as_of,
-        latest_bar_closed_at=_as_utc(latest.closed_at),
-        bar_count=len(bars),
-        direction=direction,
-        sampling_quality=sampling_quality,
-        close=round(latest_close, 8),
-        ema_fast=round(ema_fast, 8),
-        ema_slow=round(ema_slow, 8),
-        close_vs_fast_ema_percent=round(
-            _signed_percent(latest_close, ema_fast),
-            6,
-        ),
-        fast_vs_slow_ema_percent=round(
-            _signed_percent(ema_fast, ema_slow),
-            6,
-        ),
+        **common,
+        close_vs_fast_ema_percent=round(_signed_percent(latest_close, ema_fast), 6),
+        fast_vs_slow_ema_percent=round(_signed_percent(ema_fast, ema_slow), 6),
         atr_percent=round(_percent(atr, latest_close), 6),
-        return_1_bar_percent=round(
-            _signed_percent(closes[-1], closes[-2]),
-            6,
-        ),
-        return_3_bars_percent=round(
-            _signed_percent(closes[-1], closes[-4]),
-            6,
-        ),
+        return_3_bars_percent=round(_signed_percent(closes[-1], closes[-4]), 6),
         rolling_high=round(rolling_high, 8),
         rolling_low=round(rolling_low, 8),
-        rolling_range_percent=round(rolling_range_percent, 6),
-        range_position_percent=round(range_position, 6),
+        rolling_range_percent=round(_percent(rolling_range, reference_open), 6),
+        range_position_percent=round(_position(latest_close, rolling_low, rolling_high), 6),
         distance_to_range_high_percent=round(
             _percent(rolling_high - latest_close, latest_close),
             6,
@@ -616,32 +641,13 @@ def _timeframe_features(
         ),
         previous_bar_high=round(candles[-2].high, 8),
         previous_bar_low=round(candles[-2].low, 8),
-        body_percent_of_range=round(
-            _ratio_percent(body, latest_range),
-            6,
-        ),
-        upper_wick_percent_of_range=round(
-            _ratio_percent(upper_wick, latest_range),
-            6,
-        ),
-        lower_wick_percent_of_range=round(
-            _ratio_percent(lower_wick, latest_range),
-            6,
-        ),
-        close_position_percent=round(
-            _position(latest.close, latest.low, latest.high),
-            6,
-        ),
+        body_percent_of_range=round(_ratio_percent(body, latest_range), 6),
+        upper_wick_percent_of_range=round(_ratio_percent(upper_wick, latest_range), 6),
+        lower_wick_percent_of_range=round(_ratio_percent(lower_wick, latest_range), 6),
+        close_position_percent=round(_position(latest.close, latest.low, latest.high), 6),
         compression_ratio=round(compression_ratio, 6),
-        velocity_percent_per_bar=round(recent_velocity, 6),
-        previous_velocity_percent_per_bar=round(
-            previous_velocity,
-            6,
-        ),
-        acceleration_percent_per_bar=round(
-            recent_velocity - previous_velocity,
-            6,
-        ),
+        previous_velocity_percent_per_bar=round(previous_velocity, 6),
+        acceleration_percent_per_bar=round(recent_velocity - previous_velocity, 6),
         pullback_from_recent_high_percent=round(
             _percent(rolling_high - latest_close, rolling_high),
             6,
@@ -661,14 +667,8 @@ def _opening_ranges(
     session_decision: Any,
 ) -> OpeningRangeFeatures:
     session_key = getattr(session_decision, 'session_key', None)
-    session_24_7 = bool(
-        getattr(session_decision, 'session_24_7', False)
-    )
-    session_start = getattr(
-        session_decision,
-        'session_start_time',
-        None,
-    )
+    session_24_7 = bool(getattr(session_decision, 'session_24_7', False))
+    session_start = getattr(session_decision, 'session_start_time', None)
     if session_24_7 or session_start is None or session_key is None:
         return OpeningRangeFeatures(
             session_key=session_key,
@@ -689,11 +689,7 @@ def _opening_ranges(
         complete_only=True,
         session_key=session_key,
     )
-    latest_close = (
-        session_bars[-1].candle.close
-        if session_bars
-        else None
-    )
+    latest_close = session_bars[-1].candle.close if session_bars else None
     windows: dict[str, OpeningRangeWindow] = {}
     for minutes in config.opening_range_minutes:
         end = start + timedelta(minutes=minutes)
@@ -733,7 +729,6 @@ def _opening_ranges(
                 expected_source_bar_count=minutes,
             )
             continue
-
         high = max(candle.high for candle in candles)
         low = min(candle.low for candle in candles)
         windows[key] = OpeningRangeWindow(
@@ -742,33 +737,15 @@ def _opening_ranges(
             high=round(high, 8),
             low=round(low, 8),
             range_percent=round(_percent(high - low, low), 6),
-            position_percent=round(
-                _position(latest_close, low, high),
-                6,
-            ),
-            distance_to_high_percent=round(
-                _percent(high - latest_close, latest_close),
-                6,
-            ),
-            distance_to_low_percent=round(
-                _percent(latest_close - low, latest_close),
-                6,
-            ),
-            breakout_above_percent=round(
-                max(0.0, _signed_percent(latest_close, high)),
-                6,
-            ),
-            breakdown_below_percent=round(
-                max(0.0, _signed_percent(low, latest_close)),
-                6,
-            ),
+            position_percent=round(_position(latest_close, low, high), 6),
+            distance_to_high_percent=round(_percent(high - latest_close, latest_close), 6),
+            distance_to_low_percent=round(_percent(latest_close - low, latest_close), 6),
+            breakout_above_percent=round(max(0.0, _signed_percent(latest_close, high)), 6),
+            breakdown_below_percent=round(max(0.0, _signed_percent(low, latest_close)), 6),
             source_bar_count=len(candles),
             expected_source_bar_count=minutes,
         )
-    return OpeningRangeFeatures(
-        session_key=session_key,
-        windows=windows,
-    )
+    return OpeningRangeFeatures(session_key=session_key, windows=windows)
 
 
 def _bucket_bounds(
@@ -782,25 +759,15 @@ def _bucket_bounds(
     if not session_24_7 and session_start_time is not None:
         anchor = _as_utc(session_start_time)
     else:
-        anchor = opened.replace(
-            hour=0,
-            minute=0,
-            second=0,
-            microsecond=0,
-        )
+        anchor = opened.replace(hour=0, minute=0, second=0, microsecond=0)
     elapsed = int((opened - anchor).total_seconds())
     if elapsed < 0:
         raise ValueError(
-            f'Candle {opened.isoformat()} precedes session anchor '
-            f'{anchor.isoformat()}.'
+            f'Candle {opened.isoformat()} precedes session anchor {anchor.isoformat()}.'
         )
     bucket_index = elapsed // timeframe.value
-    bucket_start = anchor + timedelta(
-        seconds=bucket_index * timeframe.value
-    )
-    return bucket_start, bucket_start + timedelta(
-        seconds=timeframe.value
-    )
+    bucket_start = anchor + timedelta(seconds=bucket_index * timeframe.value)
+    return bucket_start, bucket_start + timedelta(seconds=timeframe.value)
 
 
 def _candles_are_contiguous(candles: list[Candle]) -> bool:
