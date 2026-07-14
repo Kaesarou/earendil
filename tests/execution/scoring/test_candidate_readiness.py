@@ -14,27 +14,21 @@ def classify(runway, penalty, hard=None):
     )
 
 
-def test_tradable_now_when_runway_and_penalty_are_acceptable():
-    decision = classify(25.0, 39.999999)
+def test_readiness_no_longer_routes_low_runway_to_pending():
+    decision = classify(5.0, 39.0)
 
     assert decision.readiness == CandidateReadiness.TRADABLE_NOW
+    assert decision.reason == 'entry_decision_required'
 
 
-def test_amat_boundary_uses_raw_runway_value():
-    decision = classify(20.049999, 39.98)
-
-    assert decision.readiness == CandidateReadiness.WAIT_CONFIRMATION
-    assert decision.reason == 'insufficient_runway'
-
-
-def test_severe_penalty_waits_even_with_large_runway():
+def test_readiness_no_longer_routes_severe_penalty_to_pending():
     decision = classify(80.0, 40.0)
 
-    assert decision.readiness == CandidateReadiness.WAIT_CONFIRMATION
-    assert decision.reason == 'severe_feasibility_penalty'
+    assert decision.readiness == CandidateReadiness.TRADABLE_NOW
+    assert decision.reason == 'entry_decision_required'
 
 
-def test_hard_rejection_is_reject():
+def test_hard_rejection_is_still_reject():
     decision = classify(100.0, 0.0, 'spread_prohibitive')
 
     assert decision.readiness == CandidateReadiness.REJECT
