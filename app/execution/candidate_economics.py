@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from app.execution.sl_tp_profile import EffectiveSlTp, EffectiveSlTpResolver
 from app.execution.trade_candidate import TradeCandidate
@@ -41,6 +41,8 @@ class EvaluatedTradeCandidate:
     tp_feasibility: TpFeasibilityAnalysis | None = None
     tp_probability: TpBeforeSlProbabilityEstimate | None = None
     entry_decision: EntryDecision | None = None
+    readiness: Any = None
+    readiness_reason: str | None = None
 
 
 class CandidateEconomicsEstimator:
