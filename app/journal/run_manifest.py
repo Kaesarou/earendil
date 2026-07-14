@@ -10,6 +10,7 @@ from typing import Any
 from app.config.settings import Settings
 from app.instruments.instrument_registry import InstrumentRegistry
 from app.journal.serialization import serialize_value
+from app.market.market_context import MARKET_CONTEXT_VERSION
 from app.market.multi_timeframe import expected_sampling_quality
 from app.market.timeframes import (
     BASE_TIMEFRAME,
@@ -103,7 +104,7 @@ def build_run_manifest(
             'python_version': platform.python_version(),
         },
         'models': {
-            'market_context': 'market_context_v1',
+            'market_context': MARKET_CONTEXT_VERSION,
             'multi_timeframe': MULTI_TIMEFRAME_MODEL_VERSION,
             'entry_decision': 'entry_router_v1',
             'tp_probability': 'heuristic_v1',

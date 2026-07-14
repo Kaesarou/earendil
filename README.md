@@ -33,7 +33,8 @@ Goblin currently includes:
 - deterministic M5, M15, M30 and H1 aggregation from complete M1 bars;
 - explicit gap, incomplete-bar and partial-bar handling without synthetic candles;
 - range, opening-range, wick, compression, acceleration and pullback observations;
-- benchmark, breadth, sector and relative-strength market context;
+- active context-only reference indices: `Crypto10`, `SPX500` and `FRA40`;
+- benchmark session return, rolling momentum, breadth, sector and relative-strength context;
 - deterministic long and short `TrendStrategy` signals on M1;
 - separate BUY and SELL scoring paths;
 - spread-aware, fee-aware candidate economics;
@@ -57,12 +58,12 @@ flowchart TD
     C -->|rejected| D[Quality evidence]
     C -->|quarantined jump| E[Confirmation buffer]
     C -->|accepted| F[Canonical M1 builder]
+    C --> L[Market context]
     F --> G[Closed M1]
     G --> H[TrendStrategy]
     G --> I[Multi-timeframe aggregation]
     I --> J[M5 / M15 / M30 / H1]
     J --> K[Multi-timeframe features]
-    C --> L[Market context]
     H --> M[TradeCandidate]
     K --> M
     L --> M
@@ -141,9 +142,32 @@ The multi-timeframe layer exposes diagnostic observations including:
 
 These observations are retained with candidates but do not modify scoring or routing yet. They must earn their place through replay and statistical evidence.
 
-## Market context and entry routing
+## Market context and reference indices
 
-A candidate may carry benchmark, breadth, sector and relative-strength context. The context classifies the market as `risk_on`, `risk_off`, `mixed` or `unknown`, and the candidate as `aligned`, `neutral`, `opposed` or `unknown`.
+The trading universe and context universe are separate.
+
+`WATCHLIST` contains symbols allowed to create candidates. The following defaults are context-only instruments:
+
+| Asset class | Reference instrument |
+|---|---|
+| Crypto | `Crypto10` |
+| US equities | `SPX500` |
+| European equities | `FRA40` |
+
+Reference instruments are fetched and validated but never receive a strategy instance, never consume a ranking slot and can never reach order execution. They may be overridden or disabled through the corresponding environment settings.
+
+A candidate may carry:
+
+- benchmark direction;
+- benchmark return since the active session opened;
+- benchmark rolling momentum over the configured window;
+- same-market breadth;
+- sector context;
+- symbol relative strength against the benchmark.
+
+The benchmark direction remains based on the session return. Rolling momentum is a distinct diagnostic value comparing the latest benchmark snapshot with a valid snapshot at or before the configured horizon, currently 180 seconds by default. If the historical reference is missing, belongs to another session or is too old relative to the requested horizon, the momentum is `None`; Goblin does not substitute the session open or interpolate a price.
+
+The combined context classifies the market as `risk_on`, `risk_off`, `mixed` or `unknown`, and the candidate as `aligned`, `neutral`, `opposed` or `unknown`.
 
 `EntryDecisionEngine` is the authority for timing:
 
@@ -153,7 +177,7 @@ A candidate may carry benchmark, breadth, sector and relative-strength context. 
 
 A pending entry requires a real return to the structural level followed by continuation. Persistent closes farther away do not count as confirmation. On confirmation the complete candidate is rebuilt with current price, market context, multi-timeframe context, economics and feasibility.
 
-See [`docs/market-context-entry-routing.md`](docs/market-context-entry-routing.md) for the PR2 decision foundation.
+See [`docs/market-context-entry-routing.md`](docs/market-context-entry-routing.md) for benchmark, context and entry-routing semantics.
 
 ## Strategy and risk separation
 
@@ -214,17 +238,17 @@ cp .env.example .env
 
 ### Trading and context universe
 
-| Variable | Description |
-|---|---|
-| `WATCHLIST` | Symbols eligible for candidate creation |
-| `CRYPTO_SYMBOLS` | Crypto classification |
-| `EQUITY_US_SYMBOLS` | US equity classification |
-| `EQUITY_EU_SYMBOLS` | European equity classification |
-| `MARKET_BENCHMARK_CRYPTO` | Optional context-only crypto benchmark |
-| `MARKET_BENCHMARK_EQUITY_US` | Optional context-only US benchmark |
-| `MARKET_BENCHMARK_EQUITY_EU` | Optional context-only EU benchmark |
+| Variable | Default | Description |
+|---|---|---|
+| `WATCHLIST` | empty | Symbols eligible for candidate creation |
+| `CRYPTO_SYMBOLS` | empty | Crypto classification |
+| `EQUITY_US_SYMBOLS` | empty | US equity classification |
+| `EQUITY_EU_SYMBOLS` | empty | European equity classification |
+| `MARKET_BENCHMARK_CRYPTO` | `Crypto10` | Context-only crypto reference |
+| `MARKET_BENCHMARK_EQUITY_US` | `SPX500` | Context-only US reference |
+| `MARKET_BENCHMARK_EQUITY_EU` | `FRA40` | Context-only EU reference |
 
-Every watchlist symbol must belong to exactly one asset class. Benchmark symbols are validated and used for context but can never create orders.
+Every watchlist symbol must belong to exactly one asset class. Benchmark symbols are validated and used for context but can never create orders. Set a benchmark value to an empty string to disable it explicitly.
 
 ### Sessions
 
@@ -242,9 +266,9 @@ WATCHLIST=BTC,ETH,SOL,AAPL,NVDA,AIR.PA
 CRYPTO_SYMBOLS=BTC,ETH,SOL
 EQUITY_US_SYMBOLS=AAPL,NVDA
 EQUITY_EU_SYMBOLS=AIR.PA
-MARKET_BENCHMARK_CRYPTO=
-MARKET_BENCHMARK_EQUITY_US=
-MARKET_BENCHMARK_EQUITY_EU=
+MARKET_BENCHMARK_CRYPTO=Crypto10
+MARKET_BENCHMARK_EQUITY_US=SPX500
+MARKET_BENCHMARK_EQUITY_EU=FRA40
 TRADING_SESSION_TIMEZONE=Europe/Paris
 TRADING_SESSIONS_CRYPTO=
 TRADING_SESSIONS_EQUITY_US=15:30-22:00
@@ -321,9 +345,10 @@ The manifest records:
 - Python version;
 - sanitized runtime settings;
 - resolved strategy and instrument profiles;
+- configured context-only benchmarks;
 - fixed timeframe invariants;
 - polling and expected sampling quality;
-- analysis model versions;
+- analysis model versions, including `market_context_v2`;
 - output paths and retention guarantees.
 
 Every evaluated selected or rejected candidate receives a deterministic identifier and an `entry_decision` record containing market context, multi-timeframe context, economics, effective SL/TP, feasibility, entry action and selection outcome.
@@ -368,7 +393,7 @@ python -m pytest tests -v
 python -m ruff check app tests
 ```
 
-GitHub Actions runs validation on pull requests. Multi-timeframe tests cover exact OHLC aggregation, session anchoring, gaps, incomplete bars, opening ranges, full-session retention and no-lookahead replay.
+GitHub Actions runs validation on pull requests. Tests cover benchmark configuration, rolling momentum, session isolation, exact OHLC aggregation, session anchoring, gaps, incomplete bars, opening ranges, full-session retention and no-lookahead replay.
 
 ## Development status
 

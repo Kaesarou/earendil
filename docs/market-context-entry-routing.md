@@ -1,6 +1,6 @@
 # Validated market context and entry routing
 
-This document describes the Goblin vNext foundation introduced by PR2.
+This document describes the Goblin vNext foundation introduced by PR2 and the benchmark activation completed by its corrective follow-up.
 
 ## Decision pipeline
 
@@ -46,20 +46,23 @@ A suspicious price jump is quarantined instead of being trusted immediately. A f
 
 `WATCHLIST` remains the trading universe. Only these symbols may create candidates.
 
-The optional benchmark settings form a context-only universe:
+The benchmark settings form a separate context-only universe:
 
-- `MARKET_BENCHMARK_CRYPTO`
-- `MARKET_BENCHMARK_EQUITY_US`
-- `MARKET_BENCHMARK_EQUITY_EU`
+- `MARKET_BENCHMARK_CRYPTO=Crypto10`;
+- `MARKET_BENCHMARK_EQUITY_US=SPX500`;
+- `MARKET_BENCHMARK_EQUITY_EU=FRA40`.
 
-Context-only symbols are fetched and validated but never receive a strategy instance and can never reach execution. Their exact eToro aliases must be verified before configuration, so the defaults remain empty.
+The configured aliases are normalized internally for broker lookup. Context-only symbols are fetched and validated, but they never receive a strategy instance and can never create a candidate, consume a ranking slot or reach execution.
 
-## Market context V1
+A benchmark may still be disabled explicitly by setting its environment value to an empty string.
+
+## Market context V2
 
 Every candidate can carry an immutable `CandidateMarketContext` containing:
 
 - asset class;
-- benchmark direction and return when configured;
+- benchmark direction and session return;
+- benchmark rolling momentum;
 - same-market breadth and coverage;
 - sector breadth when enough mapped symbols are available;
 - symbol session return;
@@ -70,6 +73,28 @@ Every candidate can carry an immutable `CandidateMarketContext` containing:
 The context is deliberately categorical and diagnostic. It is not another opaque score.
 
 All accepted snapshots in a polling loop update the context service before the first candidate decision, preventing watchlist ordering from changing breadth results.
+
+### Benchmark session return
+
+`session_return_percent` compares the latest validated benchmark price with its first validated price in the active session. This value continues to drive the benchmark direction and therefore contributes to `risk_on`, `risk_off`, `mixed` or `unknown` classification.
+
+### Benchmark rolling momentum
+
+`momentum_percent` is distinct from the session return. It compares the latest validated benchmark price with the latest validated snapshot available at or before:
+
+```text
+latest benchmark timestamp - momentum_window_seconds
+```
+
+The default window is 180 seconds. The reference snapshot must:
+
+- belong to the same active session;
+- be at or before the requested horizon;
+- be no farther behind that horizon than `maximum_context_age_seconds`.
+
+If no valid reference exists, momentum is `None`. Goblin never substitutes the session opening or fabricates an interpolated price.
+
+Historical snapshots are bounded to 24 hours and finite-session history is removed when that session is reset. This prevents a new equity session from inheriting momentum from the previous trading day.
 
 ## Explicit entry actions
 
@@ -134,16 +159,17 @@ The trade journal writes one standalone `entry_decision` event for selected and 
 - selector outcome;
 - strategy and model versions.
 
-This is the schema foundation for future MFE, MAE, TP-before-SL, timeout and net-expectancy labels. PR2 does not claim that those labels or a calibrated probability model already exist.
+This is the schema foundation for future MFE, MAE, TP-before-SL, timeout and net-expectancy labels. The current system does not claim that those labels or a calibrated probability model already exist.
 
 ## Run traceability
 
 Run manifests record:
 
-- `market_context_v1`;
+- `market_context_v2`;
+- `multi_timeframe_features_v1`;
 - `entry_router_v1`;
 - the active Balanced profile and resolved instrument configurations;
-- optional benchmark symbols;
+- the three configured reference indices;
 - the source fingerprint and Git commit when available.
 
-The Windows startup script passes `git rev-parse HEAD` into the Docker build so the runtime manifest can identify the exact source commit.
+The market-context version was incremented because `momentum_percent` changed from a duplicate session-return value to a real rolling-window measurement. Historical runs using `market_context_v1` therefore remain distinguishable from V2 runs.
