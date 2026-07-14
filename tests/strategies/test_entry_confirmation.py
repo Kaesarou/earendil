@@ -47,11 +47,14 @@ def test_sell_retest_then_continuation_confirms():
     assert second.structural_invalidation_price == 100.05
 
 
-def test_two_persistent_closes_confirm_buy():
-    first = evaluate('BUY', candle(100.0, 100.7, 100.0, 100.5), signal('BUY', 0.2))
-    second = evaluate('BUY', candle(100.4, 101.0, 100.3, 100.8), signal('BUY', 0.2), closes=first.consecutive_closes, structure=first.structural_invalidation_price)
-    assert second.state == 'confirmed'
-    assert second.confirmation_type == 'persistence'
+def test_persistent_closes_without_retest_do_not_confirm():
+    first = evaluate('BUY', candle(100.4, 100.8, 100.3, 100.6), signal('BUY', 0.2))
+    second = evaluate('BUY', candle(100.6, 101.0, 100.4, 100.8), signal('BUY', 0.2), state=first.state, closes=first.consecutive_closes, structure=first.structural_invalidation_price)
+
+    assert first.state == 'waiting'
+    assert second.state == 'waiting'
+    assert second.confirmation_type is None
+    assert second.reason == 'waiting_for_retest'
 
 
 def test_momentum_inversion_invalidates():

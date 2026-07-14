@@ -1,8 +1,14 @@
+from __future__ import annotations
+
 from dataclasses import dataclass, field
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from app.market.models import Candle, MarketSnapshot
 from app.strategies.signals import Signal
+
+if TYPE_CHECKING:
+    from app.instruments.models import EntryDecisionConfig
+    from app.market.market_context import CandidateMarketContext
 
 
 @dataclass(frozen=True)
@@ -35,3 +41,6 @@ class TradeCandidate:
     tp_before_sl_probability_band: str | None = None
     tp_probability_model_version: str | None = None
     tp_probability_metadata: dict[str, Any] = field(default_factory=dict)
+    candidate_id: str = ''
+    market_context: CandidateMarketContext | None = None
+    entry_decision_config: EntryDecisionConfig | None = None

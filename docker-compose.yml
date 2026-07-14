@@ -1,6 +1,9 @@
 services:
   goblin:
-    build: .
+    build:
+      context: .
+      args:
+        GIT_COMMIT: ${GIT_COMMIT:-unknown}
     container_name: goblin-bot
     env_file:
       - .env

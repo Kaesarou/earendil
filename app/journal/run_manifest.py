@@ -30,7 +30,7 @@ def run_artifact_path(base_path: str, run_id: str) -> str:
 def resolve_git_commit() -> str | None:
     for variable_name in ('GIT_COMMIT', 'GITHUB_SHA', 'SOURCE_VERSION'):
         value = os.getenv(variable_name)
-        if value:
+        if value and value.strip().lower() not in {'unknown', 'local'}:
             return value.strip()
 
     try:
@@ -79,10 +79,14 @@ def build_run_manifest(
         symbol: instrument_registry.resolve(symbol)
         for symbol in symbols
     }
+    benchmark_symbols = {
+        asset_class.value: list(configured_symbols)
+        for asset_class, configured_symbols in settings.benchmark_symbols_by_asset_class().items()
+    }
     actual_manifest_path = manifest_path or settings.run_manifest_path
     actual_summary_path = summary_path or settings.daily_summary_path
     return {
-        'schema_version': 1,
+        'schema_version': 2,
         'run_id': run_id,
         'status': 'running',
         'started_at': started_at,
@@ -92,6 +96,11 @@ def build_run_manifest(
             'source_sha256': resolve_code_fingerprint(),
             'python_version': platform.python_version(),
         },
+        'models': {
+            'market_context': 'market_context_v1',
+            'entry_decision': 'entry_router_v1',
+            'tp_probability': 'heuristic_v1',
+        },
         'strategy': {
             'name': 'TrendStrategy',
             'profile': strategy_profile.name,
@@ -99,6 +108,7 @@ def build_run_manifest(
         },
         'runtime': {
             'watchlist': symbols,
+            'context_benchmarks': benchmark_symbols,
             'symbol_profiles': symbol_profiles,
             'settings': sanitized_settings_snapshot(settings),
         },
@@ -110,6 +120,8 @@ def build_run_manifest(
             'error_stream': settings.errors_journal_path,
             'raw_market_retained': True,
             'raw_candles_retained': True,
+            'candidate_id_enabled': True,
+            'entry_decisions_retained': True,
         },
         'files': {
             'manifest': actual_manifest_path,
@@ -156,7 +168,12 @@ def finalize_run_manifest(
     if summary is not None:
         manifest['result'] = {
             'market_snapshots': summary.get('market_data', {}).get('snapshots', 0),
+            'market_data_rejected': summary.get('market_data', {}).get('rejected', 0),
+            'market_data_quarantined': summary.get('market_data', {}).get('quarantined', 0),
             'candles_closed': summary.get('market_data', {}).get('candles_closed', 0),
+            'enter_now': summary.get('entry_decisions', {}).get('enter_now', 0),
+            'wait_for_retest': summary.get('entry_decisions', {}).get('wait_for_retest', 0),
+            'skip': summary.get('entry_decisions', {}).get('skip', 0),
             'orders_submitted': summary.get('orders', {}).get('submitted', 0),
             'positions_opened': summary.get('positions', {}).get('opened', 0),
             'positions_closed': summary.get('positions', {}).get('closed', 0),

@@ -1,4 +1,5 @@
-from typing import Any
+import hashlib
+from typing import TYPE_CHECKING, Any
 
 from app.execution.scoring.sell_signal_scorer import SellSignalScorer
 from app.execution.scoring.signal_scorer import (
@@ -10,6 +11,10 @@ from app.market.models import Candle, MarketSnapshot
 from app.strategies.signals import Signal
 from app.utils.commons import spread_percent
 
+if TYPE_CHECKING:
+    from app.instruments.models import EntryDecisionConfig
+    from app.market.market_context import CandidateMarketContext
+
 _DEFAULT_SELL_SCORER = SellSignalScorer()
 
 
@@ -19,6 +24,10 @@ def build_trade_candidate(
     candle: Candle,
     signal: Signal,
     session_key: str = '',
+    *,
+    run_id: str = '',
+    market_context: 'CandidateMarketContext | None' = None,
+    entry_decision_config: 'EntryDecisionConfig | None' = None,
 ) -> TradeCandidate:
     score_breakdown = _score_breakdown(
         snapshot=snapshot,
@@ -58,6 +67,15 @@ def build_trade_candidate(
         sell_specific_penalty=score_breakdown.sell_specific_penalty,
         sell_score_cap=score_breakdown.sell_score_cap,
         sell_rejection_reason=score_breakdown.sell_rejection_reason,
+        candidate_id=_candidate_id(
+            run_id=run_id,
+            symbol=symbol,
+            signal=signal,
+            session_key=session_key,
+            candle=candle,
+        ),
+        market_context=market_context,
+        entry_decision_config=entry_decision_config,
     )
 
 
@@ -67,6 +85,30 @@ def rank_trade_candidates(candidates: list[TradeCandidate]) -> list[TradeCandida
         key=lambda candidate: candidate.score,
         reverse=True,
     )
+
+
+def _candidate_id(
+    *,
+    run_id: str,
+    symbol: str,
+    signal: Signal,
+    session_key: str,
+    candle: Candle,
+) -> str:
+    metadata = signal.metadata or {}
+    level_key = 'range_high' if signal.action == 'BUY' else 'range_low'
+    level = metadata.get(level_key, '')
+    raw = '|'.join(
+        (
+            run_id,
+            symbol.strip().upper(),
+            signal.action.strip().upper(),
+            session_key,
+            candle.closed_at.isoformat(),
+            str(level),
+        )
+    )
+    return hashlib.sha256(raw.encode('utf-8')).hexdigest()
 
 
 def _score_breakdown(

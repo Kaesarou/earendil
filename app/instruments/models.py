@@ -1,6 +1,7 @@
 from dataclasses import dataclass, field
 from enum import StrEnum
 
+from app.market.data_quality import MarketDataQualityConfig
 from app.risk.stale_position_guard import StalePositionConfig
 from app.risk.trade_cooldown import TradeCooldownConfig
 from app.risk.trade_cost_model import TradeCostConfig
@@ -42,6 +43,32 @@ class TpFeasibilityConfig:
     severe_score_cap: float = 95.0
     wait_confirmation_min_runway_score: float = 25.0
     wait_confirmation_severe_penalty: float = 40.0
+
+
+@dataclass(frozen=True)
+class MarketContextConfig:
+    minimum_breadth_sample_size: int = 2
+    minimum_sector_sample_size: int = 2
+    minimum_breadth_coverage_ratio: float = 0.60
+    bullish_advancing_ratio: float = 0.60
+    bearish_advancing_ratio: float = 0.40
+    minimum_benchmark_move_percent: float = 0.05
+    unchanged_band_percent: float = 0.01
+    maximum_context_age_seconds: int = 120
+    momentum_window_seconds: int = 180
+    require_benchmark: bool = False
+
+
+@dataclass(frozen=True)
+class EntryDecisionConfig:
+    moderate_extension_percent: float = 0.12
+    severe_extension_percent: float = 0.45
+    wait_for_retest_penalty: float = 25.0
+    severe_feasibility_penalty: float = 40.0
+    minimum_retest_runway_score: float = 25.0
+    maximum_retest_candles: int = 5
+    context_opposition_is_hard_reject: bool = True
+    require_context: bool = False
 
 
 @dataclass(frozen=True)
@@ -100,3 +127,6 @@ class TrendStrategyConfig:
 class InstrumentConfig:
     trend: TrendStrategyConfig
     risk: RiskProfile
+    market_data_quality: MarketDataQualityConfig = field(default_factory=MarketDataQualityConfig)
+    market_context: MarketContextConfig = field(default_factory=MarketContextConfig)
+    entry_decision: EntryDecisionConfig = field(default_factory=EntryDecisionConfig)

@@ -72,7 +72,40 @@ class AnalysisJournal:
                     routed_payload,
                 )
 
+        if routed_event_type == 'candidate_selection':
+            self._write_counterfactual_entry_decisions(routed_payload)
+
         self._maybe_write_partial_summary()
+
+    def _write_counterfactual_entry_decisions(self, payload: dict[str, Any]) -> None:
+        for evaluated, selection_outcome, selection_reason in _evaluated_selection_items(payload):
+            candidate = _attribute(evaluated, 'candidate')
+            decision = _attribute(evaluated, 'entry_decision')
+            if candidate is None or decision is None:
+                continue
+            record = {
+                'candidate_id': _attribute(candidate, 'candidate_id'),
+                'symbol': _attribute(candidate, 'symbol'),
+                'side': _attribute(_attribute(candidate, 'signal'), 'action'),
+                'candidate': candidate,
+                'market_context': _attribute(candidate, 'market_context'),
+                'candidate_economics': _attribute(evaluated, 'economics'),
+                'tp_feasibility': _attribute(evaluated, 'tp_feasibility'),
+                'tp_probability': _attribute(evaluated, 'tp_probability'),
+                'effective_sl_tp': _attribute(evaluated, 'effective_sl_tp'),
+                'entry_decision': decision,
+                'selection_outcome': selection_outcome,
+                'selection_reason': selection_reason,
+                'market_context_version': _attribute(
+                    _attribute(candidate, 'market_context'),
+                    'version',
+                ),
+                'entry_model_version': _attribute(decision, 'model_version'),
+                'strategy_profile': self.summary.profile,
+            }
+            written = self.trade_journal.write('entry_decision', record)
+            if written is False:
+                self._record_trade_journal_write_failure('entry_decision', record)
 
     def record_raw_event(
         self,
@@ -84,7 +117,6 @@ class AnalysisJournal:
             self.summary.record(event_type, payload)
             self._maybe_write_partial_summary()
             return
-
         self.write(
             'raw_journal_error',
             {
@@ -180,6 +212,17 @@ class AnalysisJournal:
             return
         self.summary.write(self.partial_summary_path)
         self._last_partial_summary_at = now
+
+
+def _evaluated_selection_items(payload: dict[str, Any]):
+    selected = payload.get('selected_evaluated_candidates') or []
+    rejected = payload.get('rejected_evaluated_candidates') or []
+    for evaluated in selected:
+        yield evaluated, 'selected', None
+    for rejection in rejected:
+        evaluated = _attribute(rejection, 'evaluated_candidate')
+        if evaluated is not None:
+            yield evaluated, 'rejected', _attribute(rejection, 'reason')
 
 
 def build_analysis_journal(

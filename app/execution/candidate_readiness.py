@@ -22,22 +22,17 @@ def evaluate_candidate_readiness(
     min_runway_score: float,
     severe_penalty: float,
 ) -> CandidateReadinessDecision:
+    """Compatibility diagnostic only.
+
+    Entry timing is decided by EntryDecisionEngine. Feasibility may still hard-reject
+    a candidate, but a severe penalty no longer registers a pending entry by itself.
+    """
     if hard_rejection_reason is not None:
         return CandidateReadinessDecision(
             readiness=CandidateReadiness.REJECT,
             reason=hard_rejection_reason,
         )
-    if feasibility_penalty >= severe_penalty:
-        return CandidateReadinessDecision(
-            readiness=CandidateReadiness.WAIT_CONFIRMATION,
-            reason='severe_feasibility_penalty',
-        )
-    if runway_score < min_runway_score:
-        return CandidateReadinessDecision(
-            readiness=CandidateReadiness.WAIT_CONFIRMATION,
-            reason='insufficient_runway',
-        )
     return CandidateReadinessDecision(
         readiness=CandidateReadiness.TRADABLE_NOW,
-        reason='tp_feasibility_ready',
+        reason='entry_decision_required',
     )

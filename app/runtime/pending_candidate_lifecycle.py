@@ -2,6 +2,7 @@ from dataclasses import replace
 
 from app.execution.candidate_economics import EvaluatedTradeCandidate
 from app.execution.candidate_selector import RejectedEvaluatedCandidateSelection
+from app.execution.entry_decision import EntryAction
 from app.execution.trade_candidate import TradeCandidate
 from app.journal.jsonl_journal import JsonlJournal
 from app.runtime.pending_entry import PendingEntryEvent, PendingEntryManager, PendingEntryState
@@ -45,13 +46,7 @@ def invalidate_pending_candidate(
     invalidated = replace(removed, state=PendingEntryState.INVALIDATED)
     write_pending_events(
         trade_journal,
-        (
-            PendingEntryEvent(
-                'pending_entry_invalidated',
-                invalidated,
-                reason,
-            ),
-        ),
+        (PendingEntryEvent('pending_entry_invalidated', invalidated, reason),),
     )
 
 
@@ -73,13 +68,7 @@ def keep_pending_waiting(
         return
     write_pending_events(
         trade_journal,
-        (
-            PendingEntryEvent(
-                'pending_entry_updated',
-                pending,
-                reason,
-            ),
-        ),
+        (PendingEntryEvent('pending_entry_updated', pending, reason),),
     )
 
 
@@ -90,7 +79,37 @@ def reconcile_pending_selection_rejections(
     trade_journal: JsonlJournal,
 ) -> None:
     for rejected in rejected_candidates:
-        candidate = rejected.evaluated_candidate.candidate
+        evaluated_candidate = rejected.evaluated_candidate
+        candidate = evaluated_candidate.candidate
+        decision = evaluated_candidate.entry_decision
+        if (
+            pending_entry_manager is not None
+            and decision is not None
+            and decision.action == EntryAction.WAIT_FOR_RETEST
+        ):
+            existing_key = pending_entry_key(candidate)
+            if existing_key is not None:
+                keep_pending_waiting(
+                    candidate=candidate,
+                    reason=f'entry_decision:{decision.reason}',
+                    pending_entry_manager=pending_entry_manager,
+                    trade_journal=trade_journal,
+                )
+            else:
+                decision_config = candidate.entry_decision_config
+                max_candles = (
+                    decision_config.maximum_retest_candles
+                    if decision_config is not None
+                    else 5
+                )
+                write_pending_events(
+                    trade_journal,
+                    pending_entry_manager.register(
+                        evaluated_candidate=evaluated_candidate,
+                        max_candles=max_candles,
+                    ),
+                )
+            continue
         if rejected.reason in _RETRYABLE_SELECTION_REASONS:
             keep_pending_waiting(
                 candidate=candidate,
