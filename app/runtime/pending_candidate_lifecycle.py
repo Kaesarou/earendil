@@ -18,7 +18,7 @@ _RETRYABLE_SELECTION_REASONS = {
 }
 
 
-def pending_entry_key(candidate: TradeCandidate) -> str | None:
+def pending_entry_id(candidate: TradeCandidate) -> str | None:
     return candidate.pending_entry_id
 
 
@@ -43,10 +43,10 @@ def invalidate_pending_candidate(
 ) -> None:
     if pending_entry_manager is None:
         return
-    pending_key = pending_entry_key(candidate)
-    if pending_key is None:
+    identifier = pending_entry_id(candidate)
+    if identifier is None:
         return
-    removed = pending_entry_manager.remove(pending_key)
+    removed = pending_entry_manager.remove_by_id(identifier)
     if removed is None:
         return
     invalidated = replace(removed, state=PendingEntryState.INVALIDATED)
@@ -71,11 +71,11 @@ def keep_pending_waiting(
 ) -> None:
     if pending_entry_manager is None:
         return
-    pending_key = pending_entry_key(candidate)
-    if pending_key is None:
+    identifier = pending_entry_id(candidate)
+    if identifier is None:
         return
-    pending_entry_manager.mark_waiting_after_recalculation(pending_key)
-    pending = pending_entry_manager.get(pending_key)
+    pending_entry_manager.mark_waiting_after_recalculation(identifier)
+    pending = pending_entry_manager.get_by_id(identifier)
     if pending is None:
         return
     write_pending_events(
@@ -105,8 +105,8 @@ def reconcile_pending_selection_rejections(
             and decision is not None
             and decision.action == EntryAction.WAIT_FOR_RETEST
         ):
-            existing_key = pending_entry_key(candidate)
-            if existing_key is not None:
+            identifier = pending_entry_id(candidate)
+            if identifier is not None:
                 keep_pending_waiting(
                     candidate=candidate,
                     reason=f'entry_route:{decision.reason}',
