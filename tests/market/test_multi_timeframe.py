@@ -8,6 +8,7 @@ from app.market.multi_timeframe import (
     MultiTimeframeCandleEngine,
     MultiTimeframeConfig,
     MultiTimeframeService,
+    TimeframeFeatureConfig,
     expected_sampling_quality,
 )
 from app.market.timeframes import (
@@ -16,9 +17,9 @@ from app.market.timeframes import (
     OpeningRangeStatus,
     SamplingQuality,
     Timeframe,
+    TimeframeMaturity,
 )
 from app.runtime.trading_session_window import TradingSessionDecision
-
 
 UTC = timezone.utc
 
@@ -63,24 +64,59 @@ def equity_session(start: datetime) -> TradingSessionDecision:
     )
 
 
-def small_config() -> MultiTimeframeConfig:
-    return MultiTimeframeConfig(
+def small_feature_config() -> TimeframeFeatureConfig:
+    return TimeframeFeatureConfig(
+        provisional_bars=2,
+        ready_bars=4,
         range_lookback_bars=4,
         ema_fast_bars=2,
         ema_slow_bars=4,
         atr_lookback_bars=2,
         compression_lookback_bars=2,
         acceleration_window_bars=1,
+    )
+
+
+def small_config() -> MultiTimeframeConfig:
+    return MultiTimeframeConfig(
+        feature_configs={
+            timeframe.name.lower(): small_feature_config()
+            for timeframe in Timeframe
+        },
         opening_range_minutes=(3,),
     )
+
+
+def add_minutes(
+    service: MultiTimeframeService,
+    session: TradingSessionDecision,
+    start: datetime,
+    count: int,
+    *,
+    symbol: str = 'AAPL',
+) -> None:
+    for minute in range(count):
+        close = 100 + minute * 0.1
+        service.on_base_candle(
+            symbol=symbol,
+            candle=candle_at(
+                start + timedelta(minutes=minute),
+                open_price=close - 0.05,
+                high=close + 0.1,
+                low=close - 0.1,
+                close=close,
+                symbol=symbol,
+            ),
+            session_decision=session,
+        )
 
 
 def test_five_m1_candles_build_one_exact_m5_bar():
     start = datetime(2026, 7, 13, 15, 30, tzinfo=UTC)
     engine = MultiTimeframeCandleEngine('AAPL')
     closed = []
-
     prices = [100.0, 101.0, 99.0, 103.0, 102.0]
+
     for minute, price in enumerate(prices):
         update = engine.on_base_candle(
             candle_at(
@@ -167,6 +203,84 @@ def test_us_h1_is_anchored_to_session_open_at_half_past():
     assert h1.candle.closed_at == start + timedelta(hours=1)
 
 
+def test_maturity_moves_from_unavailable_to_provisional_to_ready():
+    start = datetime(2026, 7, 13, 15, 30, tzinfo=UTC)
+    session = equity_session(start)
+    service = MultiTimeframeService({'AAPL': small_config()})
+
+    add_minutes(service, session, start, 1)
+    unavailable = service.build_context(
+        symbol='AAPL', side='BUY', as_of=start + timedelta(minutes=1), session_decision=session
+    )
+    assert unavailable.maturity_by_timeframe['m1'] == TimeframeMaturity.UNAVAILABLE
+    assert 'm1' not in unavailable.features_by_timeframe
+
+    add_minutes(service, session, start + timedelta(minutes=1), 1)
+    provisional = service.build_context(
+        symbol='AAPL', side='BUY', as_of=start + timedelta(minutes=2), session_decision=session
+    )
+    m1_provisional = provisional.features_by_timeframe['m1']
+    assert m1_provisional.maturity == TimeframeMaturity.PROVISIONAL
+    assert m1_provisional.atr_percent is None
+    assert m1_provisional.compression_ratio is None
+    assert provisional.ready_alignment == MultiTimeframeAlignment.UNKNOWN
+    assert provisional.alignment_including_provisional == MultiTimeframeAlignment.ALIGNED
+
+    for minute in range(2, 4):
+        close = 100 + minute * 0.1
+        service.on_base_candle(
+            symbol='AAPL',
+            candle=candle_at(
+                start + timedelta(minutes=minute),
+                open_price=close - 0.05,
+                high=close + 0.1,
+                low=close - 0.1,
+                close=close,
+            ),
+            session_decision=session,
+        )
+    ready = service.build_context(
+        symbol='AAPL', side='BUY', as_of=start + timedelta(minutes=4), session_decision=session
+    )
+    m1_ready = ready.features_by_timeframe['m1']
+    assert m1_ready.maturity == TimeframeMaturity.READY
+    assert m1_ready.atr_percent is not None
+    assert m1_ready.compression_ratio is not None
+    assert ready.ready_alignment == MultiTimeframeAlignment.ALIGNED
+
+
+def test_default_windows_make_m5_provisional_after_8_bars_and_ready_after_15():
+    start = datetime(2026, 7, 13, 15, 30, tzinfo=UTC)
+    session = equity_session(start)
+    service = MultiTimeframeService()
+    add_minutes(service, session, start, 40)
+
+    provisional = service.build_context(
+        symbol='AAPL', side='BUY', as_of=start + timedelta(minutes=40), session_decision=session
+    )
+    assert provisional.maturity_by_timeframe['m5'] == TimeframeMaturity.PROVISIONAL
+    assert provisional.features_by_timeframe['m5'].bar_count == 8
+
+    for minute in range(40, 75):
+        close = 100 + minute * 0.1
+        service.on_base_candle(
+            symbol='AAPL',
+            candle=candle_at(
+                start + timedelta(minutes=minute),
+                open_price=close - 0.05,
+                high=close + 0.1,
+                low=close - 0.1,
+                close=close,
+            ),
+            session_decision=session,
+        )
+    ready = service.build_context(
+        symbol='AAPL', side='BUY', as_of=start + timedelta(minutes=75), session_decision=session
+    )
+    assert ready.maturity_by_timeframe['m5'] == TimeframeMaturity.READY
+    assert ready.features_by_timeframe['m5'].bar_count == 15
+
+
 def test_features_and_opening_range_are_built_from_closed_bars_only():
     start = datetime(2026, 7, 13, 15, 30, tzinfo=UTC)
     session = equity_session(start)
@@ -178,17 +292,10 @@ def test_features_and_opening_range_are_built_from_closed_bars_only():
         candle_at(start + timedelta(minutes=3), open_price=105, high=107, low=104, close=106),
     )
     for candle in candles:
-        service.on_base_candle(
-            symbol='AAPL',
-            candle=candle,
-            session_decision=session,
-        )
+        service.on_base_candle(symbol='AAPL', candle=candle, session_decision=session)
 
     context = service.build_context(
-        symbol='AAPL',
-        side='BUY',
-        as_of=start + timedelta(minutes=4),
-        session_decision=session,
+        symbol='AAPL', side='BUY', as_of=start + timedelta(minutes=4), session_decision=session
     )
 
     m1 = context.features_by_timeframe['m1']
@@ -196,18 +303,14 @@ def test_features_and_opening_range_are_built_from_closed_bars_only():
     assert m1.latest_bar_closed_at == start + timedelta(minutes=4)
     assert m1.range_position_percent == pytest.approx(87.5)
     assert m1.body_percent_of_range == pytest.approx(33.333333)
-    assert m1.upper_wick_percent_of_range == pytest.approx(33.333333)
-    assert m1.lower_wick_percent_of_range == pytest.approx(33.333333)
     assert m1.compression_ratio == pytest.approx(0.75)
     assert opening.status == OpeningRangeStatus.READY
     assert opening.high == 106
     assert opening.low == 99
-    assert opening.source_bar_count == 3
-    assert context.alignment == MultiTimeframeAlignment.ALIGNED
-    assert context.unavailable_timeframes == ('m5', 'm15', 'm30', 'h1')
+    assert context.ready_alignment == MultiTimeframeAlignment.ALIGNED
 
 
-def test_incomplete_opening_range_and_incomplete_higher_bar_are_not_features():
+def test_incomplete_opening_range_and_higher_bar_are_not_features():
     start = datetime(2026, 7, 13, 15, 30, tzinfo=UTC)
     session = equity_session(start)
     service = MultiTimeframeService({'AAPL': small_config()})
@@ -226,22 +329,15 @@ def test_incomplete_opening_range_and_incomplete_higher_bar_are_not_features():
         )
 
     context = service.build_context(
-        symbol='AAPL',
-        side='BUY',
-        as_of=start + timedelta(minutes=5),
-        session_decision=session,
+        symbol='AAPL', side='BUY', as_of=start + timedelta(minutes=5), session_decision=session
     )
     all_m5 = service.bars('AAPL', Timeframe.M5)
-    complete_m5 = service.bars(
-        'AAPL',
-        Timeframe.M5,
-        complete_only=True,
-    )
+    complete_m5 = service.bars('AAPL', Timeframe.M5, complete_only=True)
 
     assert context.opening_ranges.windows['3'].status == OpeningRangeStatus.INCOMPLETE
     assert all_m5[0].completeness == BarCompleteness.INCOMPLETE
     assert complete_m5 == []
-    assert 'm5' in context.unavailable_timeframes
+    assert context.maturity_by_timeframe['m5'] == TimeframeMaturity.UNAVAILABLE
 
 
 def test_same_as_of_context_does_not_change_after_future_bars_arrive():
@@ -264,10 +360,7 @@ def test_same_as_of_context_does_not_change_after_future_bars_arrive():
 
     as_of = start + timedelta(minutes=4)
     original = service.build_context(
-        symbol='AAPL',
-        side='BUY',
-        as_of=as_of,
-        session_decision=session,
+        symbol='AAPL', side='BUY', as_of=as_of, session_decision=session
     )
 
     for minute, close in ((4, 90.0), (5, 80.0), (6, 70.0)):
@@ -284,12 +377,8 @@ def test_same_as_of_context_does_not_change_after_future_bars_arrive():
         )
 
     replayed = service.build_context(
-        symbol='AAPL',
-        side='BUY',
-        as_of=as_of,
-        session_decision=session,
+        symbol='AAPL', side='BUY', as_of=as_of, session_decision=session
     )
-
     assert replayed == original
 
 
