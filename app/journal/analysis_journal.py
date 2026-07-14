@@ -83,12 +83,17 @@ class AnalysisJournal:
             decision = _attribute(evaluated, 'entry_decision')
             if candidate is None or decision is None:
                 continue
+            multi_timeframe_context = _attribute(
+                candidate,
+                'multi_timeframe_context',
+            )
             record = {
                 'candidate_id': _attribute(candidate, 'candidate_id'),
                 'symbol': _attribute(candidate, 'symbol'),
                 'side': _attribute(_attribute(candidate, 'signal'), 'action'),
                 'candidate': candidate,
                 'market_context': _attribute(candidate, 'market_context'),
+                'multi_timeframe_context': multi_timeframe_context,
                 'candidate_economics': _attribute(evaluated, 'economics'),
                 'tp_feasibility': _attribute(evaluated, 'tp_feasibility'),
                 'tp_probability': _attribute(evaluated, 'tp_probability'),
@@ -99,6 +104,10 @@ class AnalysisJournal:
                 'market_context_version': _attribute(
                     _attribute(candidate, 'market_context'),
                     'version',
+                ),
+                'multi_timeframe_model_version': _attribute(
+                    multi_timeframe_context,
+                    'model_version',
                 ),
                 'entry_model_version': _attribute(decision, 'model_version'),
                 'strategy_profile': self.summary.profile,
