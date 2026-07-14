@@ -249,7 +249,6 @@ goblin/
 │   │   ├── strategy.py                 # TrendStrategy
 │   │   ├── entry_confirmation.py
 │   │   ├── balanced_strategy_config.py
-│   │   ├── aggressive_strategy_config.py
 │   │   └── guards/                     # cooldown and post-TP guards
 │   ├── instruments/
 │   │   ├── instrument_registry.py
@@ -285,16 +284,15 @@ goblin/
 └── .env.example
 ```
 
-## Strategy profiles
+## Strategy profile
 
-Profiles are code-versioned rather than spread across dozens of environment variables. Every run manifest stores the exact resolved profile, so historical logs remain interpretable after configuration changes.
+`BalancedStrategyConfig` is the single active strategy profile. It is code-versioned rather than spread across dozens of environment variables, and every run manifest stores the exact resolved profile so historical logs remain interpretable after configuration changes.
 
 | Profile | Global minimum score | US minimum score | Top candidates per loop | Character |
 |---|---:|---:|---:|---|
 | `balanced` | 115 | 100 | 2 | stricter filters, longer cooldowns, fewer entries |
-| `aggressive` | 105 | 95 | 2 | shorter lookbacks, lower thresholds, shorter cooldowns |
 
-The balanced profile currently uses 30 minutes after TP, 45 minutes after SL, and a 15-minute bilateral symbol lock after SL. The aggressive profile shortens the main cooldowns.
+The balanced profile currently uses 30 minutes after TP, 45 minutes after SL, and a 15-minute bilateral symbol lock after SL.
 
 ## Base asset profiles
 
