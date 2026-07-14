@@ -16,7 +16,16 @@ from app.journal.serialization import serialize_value
 
 
 class DailySummaryAggregator:
-    def __init__(self, *, run_id=None, strategy=None, profile=None, journal_detail_level='normal', started_at=None, max_items=10):
+    def __init__(
+        self,
+        *,
+        run_id=None,
+        strategy=None,
+        profile=None,
+        journal_detail_level='normal',
+        started_at=None,
+        max_items=10,
+    ):
         self.run_id = run_id
         self.strategy = strategy
         self.profile = profile
@@ -35,6 +44,14 @@ class DailySummaryAggregator:
         self.entry_decisions_by_reason = Counter()
         self.market_data_rejections_by_reason = Counter()
         self.market_context_regimes = Counter()
+        self.timeframe_bars_by_timeframe = Counter()
+        self.timeframe_incomplete_by_timeframe = Counter()
+        self.timeframe_partial_by_timeframe = Counter()
+        self.candle_gaps_by_symbol = Counter()
+        self.multi_timeframe_alignments = Counter()
+        self.multi_timeframe_ready = Counter()
+        self.multi_timeframe_unavailable = Counter()
+        self.opening_range_statuses = Counter()
         self.total_decisions = self.hold_total = self.candidate_total = 0
         self.selected_total = self.rejected_total = 0
         self.orders_submitted = self.orders_failed = self.orders_filled = 0
@@ -47,7 +64,9 @@ class DailySummaryAggregator:
         self.rejected_by_feasibility_total = self.orders_from_pending = 0
         self.enter_now_total = self.wait_for_retest_total = self.skip_total = 0
         self.pending_position_ids = set()
-        self.gross_pnl_estimated = self.estimated_costs = self.net_pnl_estimated = 0.0
+        self.gross_pnl_estimated = 0.0
+        self.estimated_costs = 0.0
+        self.net_pnl_estimated = 0.0
         self.pnl_from_pending = 0.0
         self.net_pnl_available = True
         self.top_rejected_candidates = []
@@ -72,16 +91,35 @@ class DailySummaryAggregator:
             regime = _attribute(payload.get('market_context'), 'regime')
             value = _attribute(regime, 'value') or regime or 'unknown'
             self.market_context_regimes[str(value)] += 1
-        elif event_type == 'candle_closed': self.candles_closed += 1
-        elif event_type == 'candidate_detected': self._record_candidate_detected(payload)
-        elif event_type == 'candidate_tp_feasibility': self._record_candidate_readiness(payload)
-        elif event_type == 'candidate_selection': self._record_candidate_selection(payload)
-        elif event_type == 'decision': self._record_decision(payload)
-        elif event_type == 'cooldown_blocked': self._record_cooldown(payload)
+        elif event_type == 'candle_closed':
+            self.candles_closed += 1
+        elif event_type == 'timeframe_bar_closed':
+            self._record_timeframe_bar(payload, self.timeframe_bars_by_timeframe)
+        elif event_type == 'timeframe_bar_incomplete':
+            self._record_timeframe_bar(payload, self.timeframe_incomplete_by_timeframe)
+        elif event_type == 'timeframe_bar_partial':
+            self._record_timeframe_bar(payload, self.timeframe_partial_by_timeframe)
+        elif event_type == 'candle_gap_detected':
+            symbol = payload.get('symbol') or _attribute(payload.get('gap'), 'symbol')
+            if symbol:
+                self.candle_gaps_by_symbol[str(symbol)] += 1
+        elif event_type == 'multi_timeframe_context_built':
+            self._record_multi_timeframe_context(payload)
+        elif event_type == 'candidate_detected':
+            self._record_candidate_detected(payload)
+        elif event_type == 'candidate_tp_feasibility':
+            self._record_candidate_readiness(payload)
+        elif event_type == 'candidate_selection':
+            self._record_candidate_selection(payload)
+        elif event_type == 'decision':
+            self._record_decision(payload)
+        elif event_type == 'cooldown_blocked':
+            self._record_cooldown(payload)
         elif event_type == 'order_submitted':
             self.orders_submitted += 1
             self._increment_symbol_counter(self.orders_by_symbol, payload)
-            if _is_pending_candidate(payload.get('candidate')): self.orders_from_pending += 1
+            if _is_pending_candidate(payload.get('candidate')):
+                self.orders_from_pending += 1
         elif event_type == 'order_failed':
             self.orders_failed += 1
             self._increment_symbol_counter(self.orders_by_symbol, payload)
@@ -91,31 +129,76 @@ class DailySummaryAggregator:
         elif event_type == 'position_opened':
             self.positions_opened += 1
             if _is_pending_candidate(payload.get('candidate')):
-                position_id = payload.get('position_id') or _attribute(payload.get('position'), 'position_id')
-                if position_id: self.pending_position_ids.add(str(position_id))
+                position_id = payload.get('position_id') or _attribute(
+                    payload.get('position'),
+                    'position_id',
+                )
+                if position_id:
+                    self.pending_position_ids.add(str(position_id))
         elif event_type == 'position_closed':
             self.positions_closed += 1
             self._record_closed_position_pnl(payload)
-        elif event_type == 'position_restored': self.positions_restored += 1
-        elif event_type in {'force_close_requested', 'force_close_completed', 'force_close'}: self.force_closed += 1
-        elif event_type == 'session_state_changed': self._append_limited(self.session_transitions, self._session_transition_summary(payload))
-        elif self._is_error_event(event_type): self._record_error(event_type, payload)
+        elif event_type == 'position_restored':
+            self.positions_restored += 1
+        elif event_type in {
+            'force_close_requested',
+            'force_close_completed',
+            'force_close',
+        }:
+            self.force_closed += 1
+        elif event_type == 'session_state_changed':
+            self._append_limited(
+                self.session_transitions,
+                self._session_transition_summary(payload),
+            )
+        elif self._is_error_event(event_type):
+            self._record_error(event_type, payload)
 
     def _record_market_data_reason(self, payload):
         validation = payload.get('validation')
         for reason in _as_list(_attribute(validation, 'reasons')):
             self.market_data_rejections_by_reason[str(reason)] += 1
 
+    def _record_timeframe_bar(self, payload, counter: Counter) -> None:
+        timeframe = payload.get('timeframe')
+        if timeframe is None:
+            bar = payload.get('timeframe_bar')
+            timeframe = _attribute(_attribute(bar, 'timeframe'), 'name') or _attribute(
+                bar,
+                'timeframe',
+            )
+        if timeframe is not None:
+            counter[str(timeframe).lower()] += 1
+
+    def _record_multi_timeframe_context(self, payload) -> None:
+        context = payload.get('multi_timeframe_context')
+        alignment = _attribute(context, 'alignment')
+        alignment_value = _attribute(alignment, 'value') or alignment or 'unknown'
+        self.multi_timeframe_alignments[str(alignment_value)] += 1
+        features = _attribute(context, 'features_by_timeframe') or {}
+        for timeframe in features:
+            self.multi_timeframe_ready[str(timeframe)] += 1
+        for timeframe in _as_list(_attribute(context, 'unavailable_timeframes')):
+            self.multi_timeframe_unavailable[str(timeframe)] += 1
+        opening_ranges = _attribute(context, 'opening_ranges')
+        windows = _attribute(opening_ranges, 'windows') or {}
+        for minutes, window in windows.items():
+            status = _attribute(window, 'status')
+            status_value = _attribute(status, 'value') or status or 'unknown'
+            self.opening_range_statuses[f'{minutes}m:{status_value}'] += 1
+
     def _record_candidate_readiness(self, payload):
         for item in _as_list(payload.get('evaluated_candidates')):
             readiness = _attribute(item, 'readiness')
             value = _attribute(readiness, 'value') or readiness
             reason = _attribute(item, 'readiness_reason') or 'unknown_readiness'
-            if value == 'tradable_now': self.tradable_now_total += 1
+            if value == 'tradable_now':
+                self.tradable_now_total += 1
             elif value == 'wait_confirmation':
                 self.wait_confirmation_total += 1
                 self.wait_confirmation_by_reason[str(reason)] += 1
-            elif value == 'reject': self.rejected_by_feasibility_total += 1
+            elif value == 'reject':
+                self.rejected_by_feasibility_total += 1
 
     def _record_entry_decision(self, item):
         candidate = _candidate_from_selection_item(item)
@@ -127,9 +210,12 @@ class DailySummaryAggregator:
         value = _attribute(action, 'value') or action
         reason = _attribute(decision, 'reason') or 'unknown_entry_decision'
         self.entry_decisions_by_reason[str(reason)] += 1
-        if value == 'enter_now': self.enter_now_total += 1
-        elif value == 'wait_for_retest': self.wait_for_retest_total += 1
-        elif value == 'skip': self.skip_total += 1
+        if value == 'enter_now':
+            self.enter_now_total += 1
+        elif value == 'wait_for_retest':
+            self.wait_for_retest_total += 1
+        elif value == 'skip':
+            self.skip_total += 1
         context = _attribute(candidate, 'market_context')
         regime = _attribute(context, 'regime')
         regime_value = _attribute(regime, 'value') or regime
@@ -143,13 +229,28 @@ class DailySummaryAggregator:
     def write(self, path):
         summary_path = Path(path)
         summary_path.parent.mkdir(parents=True, exist_ok=True)
-        summary_path.write_text(json.dumps(serialize_value(self.to_dict()), ensure_ascii=False, indent=2) + '\n', encoding='utf-8')
+        summary_path.write_text(
+            json.dumps(
+                serialize_value(self.to_dict()),
+                ensure_ascii=False,
+                indent=2,
+            ) + '\n',
+            encoding='utf-8',
+        )
 
     def to_dict(self):
+        closed_total = sum(self.timeframe_bars_by_timeframe.values())
+        incomplete_total = sum(self.timeframe_incomplete_by_timeframe.values())
+        partial_total = sum(self.timeframe_partial_by_timeframe.values())
+        gap_total = sum(self.candle_gaps_by_symbol.values())
         return {
-            'schema_version': 2, 'run_id': self.run_id, 'strategy': self.strategy,
-            'profile': self.profile, 'journal_detail_level': self.journal_detail_level,
-            'started_at': self.started_at, 'ended_at': self.ended_at,
+            'schema_version': 3,
+            'run_id': self.run_id,
+            'strategy': self.strategy,
+            'profile': self.profile,
+            'journal_detail_level': self.journal_detail_level,
+            'started_at': self.started_at,
+            'ended_at': self.ended_at,
             'events': {'by_type': dict(self.event_counts)},
             'market_data': {
                 'snapshots': self.market_snapshots,
@@ -160,7 +261,23 @@ class DailySummaryAggregator:
                 'rejected': self.market_data_rejected,
                 'rejections_by_reason': dict(self.market_data_rejections_by_reason),
             },
-            'market_context': {'by_regime': dict(self.market_context_regimes)},
+            'market_context': {
+                'by_regime': dict(self.market_context_regimes),
+            },
+            'multi_timeframe': {
+                'closed_total': closed_total,
+                'closed_by_timeframe': dict(self.timeframe_bars_by_timeframe),
+                'incomplete_total': incomplete_total,
+                'incomplete_by_timeframe': dict(self.timeframe_incomplete_by_timeframe),
+                'partial_total': partial_total,
+                'partial_by_timeframe': dict(self.timeframe_partial_by_timeframe),
+                'gap_total': gap_total,
+                'gaps_by_symbol': dict(self.candle_gaps_by_symbol),
+                'alignment': dict(self.multi_timeframe_alignments),
+                'features_ready_by_timeframe': dict(self.multi_timeframe_ready),
+                'features_unavailable_by_timeframe': dict(self.multi_timeframe_unavailable),
+                'opening_range_statuses': dict(self.opening_range_statuses),
+            },
             'entry_decisions': {
                 'enter_now': self.enter_now_total,
                 'wait_for_retest': self.wait_for_retest_total,
@@ -168,20 +285,39 @@ class DailySummaryAggregator:
                 'by_reason': dict(self.entry_decisions_by_reason),
             },
             'decisions': {
-                'total': self.total_decisions, 'hold_total': self.hold_total,
-                'candidate_total': self.candidate_total, 'selected_total': self.selected_total,
-                'rejected_total': self.rejected_total, 'orders_submitted': self.orders_submitted,
-                'orders_failed': self.orders_failed, 'orders_filled': self.orders_filled,
+                'total': self.total_decisions,
+                'hold_total': self.hold_total,
+                'candidate_total': self.candidate_total,
+                'selected_total': self.selected_total,
+                'rejected_total': self.rejected_total,
+                'orders_submitted': self.orders_submitted,
+                'orders_failed': self.orders_failed,
+                'orders_filled': self.orders_filled,
                 'tradable_now_total': self.tradable_now_total,
                 'wait_confirmation_total': self.wait_confirmation_total,
                 'rejected_by_feasibility_total': self.rejected_by_feasibility_total,
                 'wait_confirmation_by_reason': dict(self.wait_confirmation_by_reason),
             },
             'hold_reasons': dict(self.hold_reasons),
-            'rejections': {'total': self.rejected_total, 'by_reason': dict(self.rejection_reasons), 'top_rejected_candidates': self.top_rejected_candidates},
+            'rejections': {
+                'total': self.rejected_total,
+                'by_reason': dict(self.rejection_reasons),
+                'top_rejected_candidates': self.top_rejected_candidates,
+            },
             'selected_candidates': self.selected_candidates,
-            'orders': {'submitted': self.orders_submitted, 'filled': self.orders_filled, 'failed': self.orders_failed, 'by_symbol': dict(self.orders_by_symbol), 'from_pending': self.orders_from_pending},
-            'positions': {'opened': self.positions_opened, 'closed': self.positions_closed, 'restored': self.positions_restored, 'force_closed': self.force_closed},
+            'orders': {
+                'submitted': self.orders_submitted,
+                'filled': self.orders_filled,
+                'failed': self.orders_failed,
+                'by_symbol': dict(self.orders_by_symbol),
+                'from_pending': self.orders_from_pending,
+            },
+            'positions': {
+                'opened': self.positions_opened,
+                'closed': self.positions_closed,
+                'restored': self.positions_restored,
+                'force_closed': self.force_closed,
+            },
             'pending_entries': {
                 'registered': self.event_counts['pending_entry_registered'],
                 'confirmed': self.event_counts['pending_entry_confirmed'],
@@ -197,15 +333,23 @@ class DailySummaryAggregator:
                 'net_estimated_available': self.net_pnl_available,
                 'from_pending': round(self.pnl_from_pending, 4),
             },
-            'cooldown': {'blocked_total': sum(self.cooldowns_by_symbol.values()), 'by_symbol': dict(self.cooldowns_by_symbol)},
+            'cooldown': {
+                'blocked_total': sum(self.cooldowns_by_symbol.values()),
+                'by_symbol': dict(self.cooldowns_by_symbol),
+            },
             'runtime': {'session_transitions': self.session_transitions},
-            'errors': {'total': sum(self.error_types.values()), 'by_type': dict(self.error_types), 'samples': self.errors},
+            'errors': {
+                'total': sum(self.error_types.values()),
+                'by_type': dict(self.error_types),
+                'samples': self.errors,
+            },
         }
 
     def _record_candidate_detected(self, payload):
         self.candidate_total += 1
         symbol = _attribute(payload.get('candidate'), 'symbol') or payload.get('symbol')
-        if symbol: self.candidates_by_symbol[str(symbol)] += 1
+        if symbol:
+            self.candidates_by_symbol[str(symbol)] += 1
 
     def _record_candidate_selection(self, payload):
         selected = _as_list(payload.get('selected_candidates'))
@@ -216,7 +360,10 @@ class DailySummaryAggregator:
         self.rejected_total += len(rejected_source)
         for item in selected_source:
             self._record_entry_decision(item)
-            self._append_limited(self.selected_candidates, self._selected_candidate_summary(item))
+            self._append_limited(
+                self.selected_candidates,
+                self._selected_candidate_summary(item),
+            )
         for item in rejected_source:
             self._record_entry_decision(item)
             reason = _attribute(item, 'reason') or 'unknown_rejection'
@@ -236,22 +383,25 @@ class DailySummaryAggregator:
 
     def _record_cooldown(self, payload):
         symbol = payload.get('symbol') or _attribute(payload.get('candidate'), 'symbol')
-        if symbol: self.cooldowns_by_symbol[str(symbol)] += 1
+        if symbol:
+            self.cooldowns_by_symbol[str(symbol)] += 1
         reason = payload.get('reason') or _attribute(payload.get('trade_plan'), 'reason') or 'cooldown_blocked'
         self.rejection_reasons[str(reason)] += 1
 
     def _record_closed_position_pnl(self, payload):
         closed = payload.get('closed_position')
         gross = _attribute(closed, 'gross_pnl')
-        if gross is None: return
+        if gross is None:
+            return
         gross = float(gross)
         self.gross_pnl_estimated += gross
         cost = _attribute(closed, 'estimated_total_cost')
         net = _attribute(closed, 'net_pnl_estimated')
         if cost is None or net is None:
-            amount, pct = _attribute(closed, 'amount'), _attribute(closed, 'estimated_total_cost_percent')
-            if amount is not None and pct is not None:
-                cost = float(amount) * float(pct) / 100
+            amount = _attribute(closed, 'amount')
+            percent = _attribute(closed, 'estimated_total_cost_percent')
+            if amount is not None and percent is not None:
+                cost = float(amount) * float(percent) / 100
                 net = gross - cost
         if cost is None or net is None:
             self.net_pnl_available = False
@@ -265,25 +415,68 @@ class DailySummaryAggregator:
 
     def _record_error(self, event_type, payload):
         self.error_types[event_type] += 1
-        if event_type.startswith('broker_'): self.broker_failures += 1
-        self._append_limited(self.errors, {'event_type': event_type, 'symbol': payload.get('symbol'), 'message': payload.get('message')})
+        if event_type.startswith('broker_'):
+            self.broker_failures += 1
+        self._append_limited(
+            self.errors,
+            {
+                'event_type': event_type,
+                'symbol': payload.get('symbol'),
+                'message': payload.get('message'),
+            },
+        )
 
     def _remember_top_rejected_decision(self, payload, reason):
-        self._append_ranked(self.top_rejected_candidates, {'symbol': decision_symbol(payload), 'side': decision_side(payload), 'score': _candidate_score(payload.get('candidate')), 'reason': reason})
+        self._append_ranked(
+            self.top_rejected_candidates,
+            {
+                'symbol': decision_symbol(payload),
+                'side': decision_side(payload),
+                'score': _candidate_score(payload.get('candidate')),
+                'reason': reason,
+            },
+        )
 
     def _remember_top_rejected_candidate(self, item, reason):
-        summary = _candidate_summary(_candidate_from_selection_item(item)); summary['reason'] = reason
+        summary = _candidate_summary(_candidate_from_selection_item(item))
+        summary['reason'] = reason
         self._append_ranked(self.top_rejected_candidates, summary)
 
-    def _selected_candidate_summary(self, item): return _candidate_summary(_candidate_from_selection_item(item))
-    def _session_transition_summary(self, payload): return {'symbol': payload.get('symbol'), 'from': payload.get('previous_state'), 'to': payload.get('new_state'), 'reason': payload.get('reason'), 'session_key': payload.get('session_key')}
+    def _selected_candidate_summary(self, item):
+        return _candidate_summary(_candidate_from_selection_item(item))
+
+    def _session_transition_summary(self, payload):
+        return {
+            'symbol': payload.get('symbol'),
+            'from': payload.get('previous_state'),
+            'to': payload.get('new_state'),
+            'reason': payload.get('reason'),
+            'session_key': payload.get('session_key'),
+        }
+
     def _increment_symbol_counter(self, counter, payload):
-        if payload.get('symbol'): counter[str(payload['symbol'])] += 1
+        if payload.get('symbol'):
+            counter[str(payload['symbol'])] += 1
+
     def _append_limited(self, items, item):
-        if len(items) < self.max_items: items.append(item)
+        if len(items) < self.max_items:
+            items.append(item)
+
     def _append_ranked(self, items, item):
-        items.append(item); items.sort(key=lambda value: value.get('score') or 0.0, reverse=True); del items[self.max_items:]
-    def _is_error_event(self, event_type): return event_type == 'error' or event_type.endswith('_error') or event_type.endswith('_warning') or event_type.startswith('broker_')
+        items.append(item)
+        items.sort(
+            key=lambda value: value.get('score') or 0.0,
+            reverse=True,
+        )
+        del items[self.max_items:]
+
+    def _is_error_event(self, event_type):
+        return (
+            event_type == 'error'
+            or event_type.endswith('_error')
+            or event_type.endswith('_warning')
+            or event_type.startswith('broker_')
+        )
 
 
 def _is_pending_candidate(candidate):
@@ -293,28 +486,41 @@ def _is_pending_candidate(candidate):
 
 def _candidate_from_selection_item(item):
     direct = _attribute(item, 'candidate')
-    if direct is not None: return direct
+    if direct is not None:
+        return direct
     evaluated = _attribute(item, 'evaluated_candidate')
-    if evaluated is not None: return _attribute(evaluated, 'candidate')
-    direct_evaluated = _attribute(item, 'candidate')
-    return direct_evaluated or item
+    if evaluated is not None:
+        return _attribute(evaluated, 'candidate')
+    return item
 
 
 def _candidate_summary(candidate):
     signal = _attribute(candidate, 'signal')
-    return {'candidate_id': _attribute(candidate, 'candidate_id'), 'symbol': _attribute(candidate, 'symbol'), 'side': _attribute(signal, 'action'), 'score': _candidate_score(candidate), 'reason': _attribute(candidate, 'rank_reason')}
+    return {
+        'candidate_id': _attribute(candidate, 'candidate_id'),
+        'symbol': _attribute(candidate, 'symbol'),
+        'side': _attribute(signal, 'action'),
+        'score': _candidate_score(candidate),
+        'reason': _attribute(candidate, 'rank_reason'),
+    }
 
 
 def _candidate_score(candidate):
-    score = _attribute(candidate, 'score'); return None if score is None else float(score)
+    score = _attribute(candidate, 'score')
+    return None if score is None else float(score)
 
 
 def _attribute(value, name):
-    if value is None: return None
+    if value is None:
+        return None
     return value.get(name) if isinstance(value, dict) else getattr(value, name, None)
 
 
 def _as_list(value):
-    if value is None: return []
-    if isinstance(value, (list, tuple)): return list(value)
+    if value is None:
+        return []
+    if isinstance(value, (list, tuple)):
+        return list(value)
+    if isinstance(value, set):
+        return list(value)
     return list(value)
