@@ -39,17 +39,17 @@ class EntryDecisionEngine:
         feasibility = evaluated_candidate.tp_feasibility
         economics = evaluated_candidate.economics
         hard_rejection = (
-            getattr(feasibility, 'tp_feasibility_hard_rejection_reason', None)
-            or candidate.tp_feasibility_hard_rejection_reason
-            or candidate.late_entry_rejection_reason
+            candidate.late_entry_rejection_reason
             or candidate.sell_rejection_reason
+            or getattr(feasibility, 'tp_feasibility_hard_rejection_reason', None)
+            or candidate.tp_feasibility_hard_rejection_reason
         )
         diagnostics = self._diagnostics(evaluated_candidate)
 
         if economics.expected_net_profit_percent < economics.min_expected_net_profit_percent:
             return self._decision(
                 EntryAction.SKIP,
-                'expected_profit_too_low_after_fees',
+                'candidate_selection_expected_profit_too_low_after_fees',
                 alignment,
                 False,
                 diagnostics,
