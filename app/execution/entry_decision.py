@@ -7,7 +7,7 @@ from app.instruments.models import EntryDecisionConfig
 from app.market.market_context import ContextAlignment, MarketRegime
 
 
-ENTRY_DECISION_MODEL_VERSION = 'entry_router_v1'
+ENTRY_DECISION_MODEL_VERSION = 'entry_router_v2'
 
 
 class EntryAction(StrEnum):
@@ -83,17 +83,21 @@ class EntryDecisionEngine:
             )
 
         extension_percent, retest_level = _extension_from_reference(candidate)
+        structural_retest_score = _structural_retest_score(candidate)
+        feasibility_runway_score = _runway_score(feasibility)
         retest_eligible = (
             retest_level is not None
             and extension_percent is not None
             and extension_percent >= config.moderate_extension_percent
-            and _runway_score(feasibility) >= config.minimum_retest_runway_score
+            and structural_retest_score >= config.minimum_retest_runway_score
         )
         diagnostics.update(
             {
                 'extension_percent': _round_optional(extension_percent),
                 'retest_level': _round_optional(retest_level),
-                'runway_score': _round_optional(_runway_score(feasibility)),
+                'runway_score': _round_optional(structural_retest_score),
+                'structural_retest_score': _round_optional(structural_retest_score),
+                'feasibility_runway_score': _round_optional(feasibility_runway_score),
                 'feasibility_penalty': _round_optional(_feasibility_penalty(feasibility)),
             }
         )
@@ -207,6 +211,17 @@ def _extension_from_reference(candidate) -> tuple[float | None, float | None]:
     else:
         return None, level
     return max(0.0, extension), level
+
+
+def _structural_retest_score(candidate) -> float:
+    quality = str(
+        candidate.entry_quality_metadata.get('remaining_move_quality', 'GOOD')
+    ).strip().upper()
+    return {
+        'GOOD': 100.0,
+        'ACCEPTABLE': 50.0,
+        'POOR': 0.0,
+    }.get(quality, 0.0)
 
 
 def _runway_score(feasibility: Any) -> float:

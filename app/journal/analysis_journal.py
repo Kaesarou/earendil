@@ -2,7 +2,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from app.config.settings import Settings
-from app.journal.daily_summary import DailySummaryAggregator
+from app.journal.analysis_ready_summary import AnalysisReadySummaryAggregator
 from app.journal.journal_policy import (
     normalize_detail_level,
     should_write_to_debug_journal,
@@ -39,7 +39,7 @@ class AnalysisJournal:
         self.partial_summary_interval = timedelta(minutes=max(1, partial_summary_interval_minutes))
         self._last_partial_summary_at = datetime.now(timezone.utc)
         self._session_state_by_symbol: dict[str, tuple[Any, ...]] = {}
-        self.summary = DailySummaryAggregator(
+        self.summary = AnalysisReadySummaryAggregator(
             run_id=run_id,
             strategy=strategy,
             profile=profile,
@@ -83,24 +83,56 @@ class AnalysisJournal:
             decision = _attribute(evaluated, 'entry_decision')
             if candidate is None or decision is None:
                 continue
+
+            signal = _attribute(candidate, 'signal')
+            signal_metadata = _attribute(signal, 'metadata') or {}
+            snapshot = _attribute(candidate, 'snapshot')
+            economics = _attribute(evaluated, 'economics')
+            effective_sl_tp = _attribute(evaluated, 'effective_sl_tp')
             multi_timeframe_context = _attribute(
                 candidate,
                 'multi_timeframe_context',
             )
             record = {
                 'candidate_id': _attribute(candidate, 'candidate_id'),
+                'origin_candidate_id': _attribute(
+                    signal_metadata,
+                    'origin_candidate_id',
+                ),
+                'candidate_timestamp': _attribute(snapshot, 'timestamp'),
                 'symbol': _attribute(candidate, 'symbol'),
-                'side': _attribute(_attribute(candidate, 'signal'), 'action'),
+                'side': _attribute(signal, 'action'),
+                'entry_reference_price': _attribute(snapshot, 'last'),
+                'score': _attribute(candidate, 'score'),
+                'base_score': _attribute(candidate, 'base_score'),
+                'effective_stop_loss_percent': _attribute(
+                    effective_sl_tp,
+                    'stop_loss_percent',
+                ),
+                'effective_take_profit_percent': _attribute(
+                    effective_sl_tp,
+                    'take_profit_percent',
+                ),
+                'estimated_total_cost_percent': _attribute(
+                    economics,
+                    'estimated_total_cost_percent',
+                ),
+                'expected_net_profit_percent': _attribute(
+                    economics,
+                    'expected_net_profit_percent',
+                ),
+                'entry_action': _enum_value(_attribute(decision, 'action')),
+                'entry_reason': _attribute(decision, 'reason'),
+                'selection_outcome': selection_outcome,
+                'selection_reason': selection_reason,
                 'candidate': candidate,
                 'market_context': _attribute(candidate, 'market_context'),
                 'multi_timeframe_context': multi_timeframe_context,
-                'candidate_economics': _attribute(evaluated, 'economics'),
+                'candidate_economics': economics,
                 'tp_feasibility': _attribute(evaluated, 'tp_feasibility'),
                 'tp_probability': _attribute(evaluated, 'tp_probability'),
-                'effective_sl_tp': _attribute(evaluated, 'effective_sl_tp'),
+                'effective_sl_tp': effective_sl_tp,
                 'entry_decision': decision,
-                'selection_outcome': selection_outcome,
-                'selection_reason': selection_reason,
                 'market_context_version': _attribute(
                     _attribute(candidate, 'market_context'),
                     'version',
@@ -281,6 +313,10 @@ def _session_state_name(session_decision: Any) -> str:
     if not _attribute(session_decision, 'new_entries_allowed'):
         return 'no_new_entries'
     return 'active'
+
+
+def _enum_value(value: Any) -> Any:
+    return _attribute(value, 'value') or value
 
 
 def _attribute(value: Any, name: str) -> Any:

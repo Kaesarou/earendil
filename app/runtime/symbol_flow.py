@@ -153,7 +153,7 @@ def process_closed_candle(
     market_context = _market_context_for_side(
         symbol=symbol,
         side=side,
-        closed_candle=closed_candle,
+        snapshot=snapshot,
         market_context_service=market_context_service,
     )
     multi_timeframe_context = _multi_timeframe_context_for_side(
@@ -297,7 +297,7 @@ def _market_context_for_side(
     *,
     symbol: str,
     side: str | None,
-    closed_candle: Candle,
+    snapshot: MarketSnapshot,
     market_context_service: MarketContextService | None,
 ) -> CandidateMarketContext | None:
     if market_context_service is None or side is None:
@@ -305,7 +305,7 @@ def _market_context_for_side(
     return market_context_service.build_candidate_context(
         symbol=symbol,
         side=side,
-        as_of=closed_candle.closed_at,
+        as_of=snapshot.timestamp,
     )
 
 

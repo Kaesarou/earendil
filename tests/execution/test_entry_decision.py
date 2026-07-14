@@ -38,7 +38,14 @@ def market_context(alignment: ContextAlignment) -> CandidateMarketContext:
     )
 
 
-def evaluated(*, last: float, alignment=ContextAlignment.ALIGNED, penalty=0.0, runway=100.0):
+def evaluated(
+    *,
+    last: float,
+    alignment=ContextAlignment.ALIGNED,
+    penalty=0.0,
+    runway=100.0,
+    remaining_move_quality='GOOD',
+):
     snapshot = MarketSnapshot('TEST', last - 0.05, last + 0.05, last, NOW)
     candle = Candle('TEST', 60, 99.8, last, 99.7, last, None, NOW, NOW)
     signal = Signal(
@@ -54,6 +61,9 @@ def evaluated(*, last: float, alignment=ContextAlignment.ALIGNED, penalty=0.0, r
         signal=signal,
         score=120.0,
         rank_reason='test',
+        entry_quality_metadata={
+            'remaining_move_quality': remaining_move_quality,
+        },
         market_context=market_context(alignment),
     )
     feasibility = SimpleNamespace(
@@ -125,3 +135,33 @@ def test_severe_penalty_without_a_useful_retest_is_skipped():
 
     assert decision.action == EntryAction.SKIP
     assert decision.reason == 'severe_feasibility_penalty_without_useful_retest'
+
+
+def test_severe_penalty_with_usable_structure_waits_for_retest():
+    item = evaluated(last=100.20, penalty=40.0, runway=10.0)
+    decision = EntryDecisionEngine().evaluate(
+        evaluated_candidate=item,
+        config=EntryDecisionConfig(),
+    )
+
+    assert decision.action == EntryAction.WAIT_FOR_RETEST
+    assert decision.retest_eligible is True
+    assert decision.diagnostics['structural_retest_score'] == 100.0
+    assert decision.diagnostics['feasibility_runway_score'] == 10.0
+
+
+def test_poor_structure_does_not_turn_severe_penalty_into_pending():
+    item = evaluated(
+        last=100.20,
+        penalty=40.0,
+        runway=100.0,
+        remaining_move_quality='POOR',
+    )
+    decision = EntryDecisionEngine().evaluate(
+        evaluated_candidate=item,
+        config=EntryDecisionConfig(),
+    )
+
+    assert decision.action == EntryAction.SKIP
+    assert decision.reason == 'severe_feasibility_penalty_without_useful_retest'
+    assert decision.diagnostics['structural_retest_score'] == 0.0

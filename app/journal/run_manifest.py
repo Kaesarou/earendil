@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any
 
 from app.config.settings import Settings
+from app.execution.entry_decision import ENTRY_DECISION_MODEL_VERSION
 from app.instruments.instrument_registry import InstrumentRegistry
 from app.journal.serialization import serialize_value
 from app.market.market_context import MARKET_CONTEXT_VERSION
@@ -106,7 +107,7 @@ def build_run_manifest(
         'models': {
             'market_context': MARKET_CONTEXT_VERSION,
             'multi_timeframe': MULTI_TIMEFRAME_MODEL_VERSION,
-            'entry_decision': 'entry_router_v1',
+            'entry_decision': ENTRY_DECISION_MODEL_VERSION,
             'tp_probability': 'heuristic_v1',
         },
         'strategy': {
@@ -149,6 +150,23 @@ def build_run_manifest(
             'multi_timeframe_candidate_snapshots_retained': True,
             'candidate_id_enabled': True,
             'entry_decisions_retained': True,
+            'analysis_ready_entry_fields': [
+                'candidate_id',
+                'origin_candidate_id',
+                'candidate_timestamp',
+                'symbol',
+                'side',
+                'entry_reference_price',
+                'effective_stop_loss_percent',
+                'effective_take_profit_percent',
+                'estimated_total_cost_percent',
+                'score',
+                'base_score',
+                'entry_action',
+                'entry_reason',
+                'selection_outcome',
+                'selection_reason',
+            ],
         },
         'files': {
             'manifest': actual_manifest_path,
