@@ -9,6 +9,7 @@ from typing import Any
 
 from app.config.settings import Settings
 from app.execution.entry_decision import ENTRY_DECISION_MODEL_VERSION
+from app.execution.scoring.tp_probability import TP_PROBABILITY_MODEL_VERSION
 from app.instruments.instrument_registry import InstrumentRegistry
 from app.journal.serialization import serialize_value
 from app.market.market_context import MARKET_CONTEXT_VERSION
@@ -56,9 +57,17 @@ def resolve_git_commit() -> str | None:
     return commit or None
 
 
-def resolve_code_fingerprint(source_root: str | Path | None = None) -> str | None:
-    root = Path(source_root) if source_root is not None else Path(__file__).resolve().parents[1]
-    source_files = sorted(path for path in root.rglob('*.py') if path.is_file())
+def resolve_code_fingerprint(
+    source_root: str | Path | None = None,
+) -> str | None:
+    root = (
+        Path(source_root)
+        if source_root is not None
+        else Path(__file__).resolve().parents[1]
+    )
+    source_files = sorted(
+        path for path in root.rglob('*.py') if path.is_file()
+    )
     if not source_files:
         return None
 
@@ -89,12 +98,13 @@ def build_run_manifest(
     }
     benchmark_symbols = {
         asset_class.value: list(configured_symbols)
-        for asset_class, configured_symbols in settings.benchmark_symbols_by_asset_class().items()
+        for asset_class, configured_symbols
+        in settings.benchmark_symbols_by_asset_class().items()
     }
     actual_manifest_path = manifest_path or settings.run_manifest_path
     actual_summary_path = summary_path or settings.daily_summary_path
     return {
-        'schema_version': 4,
+        'schema_version': 5,
         'run_id': run_id,
         'status': 'running',
         'started_at': started_at,
@@ -108,7 +118,7 @@ def build_run_manifest(
             'market_context': MARKET_CONTEXT_VERSION,
             'multi_timeframe': MULTI_TIMEFRAME_MODEL_VERSION,
             'entry_decision': ENTRY_DECISION_MODEL_VERSION,
-            'tp_probability': 'heuristic_v1',
+            'tp_probability': TP_PROBABILITY_MODEL_VERSION,
         },
         'strategy': {
             'name': 'TrendStrategy',
@@ -126,14 +136,17 @@ def build_run_manifest(
                     timeframe.value for timeframe in SUPPORTED_TIMEFRAMES
                 ],
                 'supported_timeframes': [
-                    timeframe.name.lower() for timeframe in SUPPORTED_TIMEFRAMES
+                    timeframe.name.lower()
+                    for timeframe in SUPPORTED_TIMEFRAMES
                 ],
                 'poll_interval_seconds': settings.poll_interval_seconds,
                 'expected_sampling_quality': expected_sampling_quality(
                     settings.poll_interval_seconds
                 ),
                 'config_by_symbol': {
-                    symbol: instrument_registry.config_for(symbol).multi_timeframe
+                    symbol: instrument_registry.config_for(
+                        symbol
+                    ).multi_timeframe
                     for symbol in symbols
                 },
             },
@@ -168,6 +181,9 @@ def build_run_manifest(
                 'entry_route_reason',
                 'selection_outcome',
                 'selection_reason',
+                'break_even_probability',
+                'net_expected_value_percent',
+                'probability_edge',
             ],
         },
         'files': {
@@ -214,23 +230,58 @@ def finalize_run_manifest(
     manifest['ended_at'] = ended_at or datetime.now(timezone.utc)
     if summary is not None:
         manifest['result'] = {
-            'market_snapshots': summary.get('market_data', {}).get('snapshots', 0),
-            'market_data_rejected': summary.get('market_data', {}).get('rejected', 0),
-            'market_data_quarantined': summary.get('market_data', {}).get('quarantined', 0),
-            'candles_closed': summary.get('market_data', {}).get('candles_closed', 0),
-            'timeframe_bars_closed': summary.get('multi_timeframe', {}).get('closed_total', 0),
-            'timeframe_bars_incomplete': summary.get('multi_timeframe', {}).get('incomplete_total', 0),
-            'candle_gaps': summary.get('multi_timeframe', {}).get('gap_total', 0),
-            'ready_for_selection': summary.get('entry_routing', {}).get(
-                'ready_for_selection', 0
-            ),
-            'wait_for_retest': summary.get('entry_routing', {}).get(
-                'wait_for_retest', 0
-            ),
-            'skip': summary.get('entry_routing', {}).get('skip', 0),
-            'orders_submitted': summary.get('orders', {}).get('submitted', 0),
-            'positions_opened': summary.get('positions', {}).get('opened', 0),
-            'positions_closed': summary.get('positions', {}).get('closed', 0),
+            'market_snapshots': summary.get(
+                'market_data',
+                {},
+            ).get('snapshots', 0),
+            'market_data_rejected': summary.get(
+                'market_data',
+                {},
+            ).get('rejected', 0),
+            'market_data_quarantined': summary.get(
+                'market_data',
+                {},
+            ).get('quarantined', 0),
+            'candles_closed': summary.get(
+                'market_data',
+                {},
+            ).get('candles_closed', 0),
+            'timeframe_bars_closed': summary.get(
+                'multi_timeframe',
+                {},
+            ).get('closed_total', 0),
+            'timeframe_bars_incomplete': summary.get(
+                'multi_timeframe',
+                {},
+            ).get('incomplete_total', 0),
+            'candle_gaps': summary.get(
+                'multi_timeframe',
+                {},
+            ).get('gap_total', 0),
+            'ready_for_selection': summary.get(
+                'entry_routing',
+                {},
+            ).get('ready_for_selection', 0),
+            'wait_for_retest': summary.get(
+                'entry_routing',
+                {},
+            ).get('wait_for_retest', 0),
+            'skip': summary.get(
+                'entry_routing',
+                {},
+            ).get('skip', 0),
+            'orders_submitted': summary.get(
+                'orders',
+                {},
+            ).get('submitted', 0),
+            'positions_opened': summary.get(
+                'positions',
+                {},
+            ).get('opened', 0),
+            'positions_closed': summary.get(
+                'positions',
+                {},
+            ).get('closed', 0),
             'errors': summary.get('errors', {}).get('total', 0),
         }
     _write_json_atomically(manifest_path, manifest)
@@ -240,7 +291,12 @@ def _write_json_atomically(path: Path, value: dict[str, Any]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     temporary_path = path.with_suffix(path.suffix + '.tmp')
     temporary_path.write_text(
-        json.dumps(serialize_value(value), ensure_ascii=False, indent=2) + '\n',
+        json.dumps(
+            serialize_value(value),
+            ensure_ascii=False,
+            indent=2,
+        )
+        + '\n',
         encoding='utf-8',
     )
     temporary_path.replace(path)
