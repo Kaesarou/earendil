@@ -1,7 +1,10 @@
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 
-from app.execution.candidate_economics import CandidateEconomics, EvaluatedTradeCandidate
+from app.execution.candidate_economics import (
+    CandidateEconomics,
+    EvaluatedTradeCandidate,
+)
 from app.execution.candidate_ranking import build_trade_candidate
 from app.market.models import Candle, MarketSnapshot
 from app.runtime.pending_entry import PendingEntryManager
@@ -66,15 +69,21 @@ def evaluated(item):
             raw_runway_score=50.0,
             raw_tp_feasibility_penalty=25.0,
         ),
-        readiness_reason='better_entry_required_at_structure',
+        readiness_reason='entry_decision_required',
     )
 
 
 def test_pending_registration_has_stable_explicit_lineage():
     initial = candidate()
     manager = PendingEntryManager()
-    first = manager.register(evaluated_candidate=evaluated(initial), max_candles=5)
-    second = manager.register(evaluated_candidate=evaluated(initial), max_candles=5)
+    first = manager.register(
+        evaluated_candidate=evaluated(initial),
+        max_candles=5,
+    )
+    second = manager.register(
+        evaluated_candidate=evaluated(initial),
+        max_candles=5,
+    )
 
     registered = first[0].pending
     refreshed = second[0].pending
@@ -118,7 +127,7 @@ def test_reconstructed_candidate_keeps_origin_and_pending_ids_outside_signal_met
     assert 'pending_entry_id' not in rebuilt.signal.metadata
 
 
-def test_spread_invalidation_carries_execution_observation():
+def test_spread_block_carries_execution_observation_and_lineage():
     initial = candidate()
     manager = PendingEntryManager()
     pending = manager.register(
@@ -139,9 +148,10 @@ def test_spread_invalidation_carries_execution_observation():
     )
 
     event = observation.events[0]
-    assert event.event_type == 'pending_entry_invalidated'
+    assert event.event_type == 'pending_entry_confirmation_blocked'
     assert event.pending.pending_entry_id == pending.pending_entry_id
     assert event.reason == 'spread_too_high'
+    assert manager.get_by_id(pending.pending_entry_id) is not None
     assert event.diagnostics == {
         'spread_percent': 0.4,
         'maximum_allowed_spread_percent': 0.1,
@@ -149,5 +159,5 @@ def test_spread_invalidation_carries_execution_observation():
         'ask': 100.2,
         'last': 100.0,
         'observed_at': NOW,
-        'observed_candles': 0,
+        'observed_candles': 1,
     }
