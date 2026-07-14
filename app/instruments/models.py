@@ -66,6 +66,7 @@ class EntryDecisionConfig:
     wait_for_retest_penalty: float = 25.0
     severe_feasibility_penalty: float = 40.0
     minimum_retest_runway_score: float = 25.0
+    maximum_retest_candles: int = 5
     context_opposition_is_hard_reject: bool = True
     require_context: bool = False
 
