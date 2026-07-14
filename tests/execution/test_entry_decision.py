@@ -17,7 +17,6 @@ from app.market.market_context import (
 from app.market.models import Candle, MarketSnapshot
 from app.strategies.signals import Signal
 
-
 NOW = datetime(2026, 7, 14, 9, 0, tzinfo=timezone.utc)
 
 
@@ -61,9 +60,7 @@ def evaluated(
         signal=signal,
         score=120.0,
         rank_reason='test',
-        entry_quality_metadata={
-            'remaining_move_quality': remaining_move_quality,
-        },
+        entry_quality_metadata={'remaining_move_quality': remaining_move_quality},
         market_context=market_context(alignment),
     )
     feasibility = SimpleNamespace(
@@ -87,13 +84,13 @@ def evaluated(
     )
 
 
-def test_enters_now_when_context_and_price_are_healthy():
+def test_routes_to_selection_when_context_and_price_are_healthy():
     decision = EntryDecisionEngine().evaluate(
         evaluated_candidate=evaluated(last=100.05),
         config=EntryDecisionConfig(),
     )
-
-    assert decision.action == EntryAction.ENTER_NOW
+    assert decision.action == EntryAction.READY_FOR_SELECTION
+    assert decision.reason == 'entry_conditions_satisfied'
 
 
 def test_waits_for_retest_when_price_is_moderately_extended():
@@ -101,7 +98,6 @@ def test_waits_for_retest_when_price_is_moderately_extended():
         evaluated_candidate=evaluated(last=100.20),
         config=EntryDecisionConfig(),
     )
-
     assert decision.action == EntryAction.WAIT_FOR_RETEST
     assert decision.retest_eligible is True
 
@@ -111,7 +107,6 @@ def test_skips_when_price_is_severely_extended():
         evaluated_candidate=evaluated(last=100.50),
         config=EntryDecisionConfig(),
     )
-
     assert decision.action == EntryAction.SKIP
     assert decision.reason == 'price_too_extended_for_entry'
 
@@ -121,29 +116,24 @@ def test_skips_when_market_context_is_opposed():
         evaluated_candidate=evaluated(last=100.05, alignment=ContextAlignment.OPPOSED),
         config=EntryDecisionConfig(),
     )
-
     assert decision.action == EntryAction.SKIP
     assert decision.reason == 'market_context_opposed'
 
 
 def test_severe_penalty_without_a_useful_retest_is_skipped():
-    item = evaluated(last=100.05, penalty=40.0, runway=10.0)
     decision = EntryDecisionEngine().evaluate(
-        evaluated_candidate=item,
+        evaluated_candidate=evaluated(last=100.05, penalty=40.0, runway=10.0),
         config=EntryDecisionConfig(),
     )
-
     assert decision.action == EntryAction.SKIP
     assert decision.reason == 'severe_feasibility_penalty_without_useful_retest'
 
 
 def test_severe_penalty_with_usable_structure_waits_for_retest():
-    item = evaluated(last=100.20, penalty=40.0, runway=10.0)
     decision = EntryDecisionEngine().evaluate(
-        evaluated_candidate=item,
+        evaluated_candidate=evaluated(last=100.20, penalty=40.0, runway=10.0),
         config=EntryDecisionConfig(),
     )
-
     assert decision.action == EntryAction.WAIT_FOR_RETEST
     assert decision.retest_eligible is True
     assert decision.diagnostics['structural_retest_score'] == 100.0
@@ -151,17 +141,15 @@ def test_severe_penalty_with_usable_structure_waits_for_retest():
 
 
 def test_poor_structure_does_not_turn_severe_penalty_into_pending():
-    item = evaluated(
-        last=100.20,
-        penalty=40.0,
-        runway=100.0,
-        remaining_move_quality='POOR',
-    )
     decision = EntryDecisionEngine().evaluate(
-        evaluated_candidate=item,
+        evaluated_candidate=evaluated(
+            last=100.20,
+            penalty=40.0,
+            runway=100.0,
+            remaining_move_quality='POOR',
+        ),
         config=EntryDecisionConfig(),
     )
-
     assert decision.action == EntryAction.SKIP
     assert decision.reason == 'severe_feasibility_penalty_without_useful_retest'
     assert decision.diagnostics['structural_retest_score'] == 0.0

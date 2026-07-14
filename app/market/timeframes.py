@@ -14,7 +14,7 @@ SUPPORTED_TIMEFRAMES = tuple(Timeframe)
 AGGREGATED_TIMEFRAMES = tuple(
     timeframe for timeframe in SUPPORTED_TIMEFRAMES if timeframe != BASE_TIMEFRAME
 )
-MULTI_TIMEFRAME_MODEL_VERSION = 'multi_timeframe_features_v1'
+MULTI_TIMEFRAME_MODEL_VERSION = 'multi_timeframe_features_v2'
 
 
 class BarCompleteness(StrEnum):
@@ -27,6 +27,12 @@ class SamplingQuality(StrEnum):
     DENSE = 'dense'
     ACCEPTABLE = 'acceptable'
     SPARSE = 'sparse'
+
+
+class TimeframeMaturity(StrEnum):
+    UNAVAILABLE = 'unavailable'
+    PROVISIONAL = 'provisional'
+    READY = 'ready'
 
 
 class TimeframeDirection(StrEnum):

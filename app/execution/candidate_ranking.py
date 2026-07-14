@@ -11,10 +11,12 @@ from app.market.models import Candle, MarketSnapshot
 from app.strategies.signals import Signal
 from app.utils.commons import spread_percent
 
+
 if TYPE_CHECKING:
     from app.instruments.models import EntryDecisionConfig
     from app.market.market_context import CandidateMarketContext
     from app.market.multi_timeframe import MultiTimeframeContext
+
 
 _DEFAULT_SELL_SCORER = SellSignalScorer()
 
@@ -27,6 +29,8 @@ def build_trade_candidate(
     session_key: str = '',
     *,
     run_id: str = '',
+    origin_candidate_id: str | None = None,
+    pending_entry_id: str | None = None,
     market_context: 'CandidateMarketContext | None' = None,
     multi_timeframe_context: 'MultiTimeframeContext | None' = None,
     entry_decision_config: 'EntryDecisionConfig | None' = None,
@@ -40,6 +44,14 @@ def build_trade_candidate(
     exhaustion = score_breakdown.exhaustion
     entry_quality_metadata = _entry_quality_metadata(score_breakdown)
     sell_score_metadata = score_breakdown.score_metadata.get('sell_score', {})
+    candidate_id = _candidate_id(
+        run_id=run_id,
+        symbol=symbol,
+        signal=signal,
+        session_key=session_key,
+        candle=candle,
+        pending_entry_id=pending_entry_id,
+    )
 
     return TradeCandidate(
         symbol=symbol,
@@ -69,13 +81,9 @@ def build_trade_candidate(
         sell_specific_penalty=score_breakdown.sell_specific_penalty,
         sell_score_cap=score_breakdown.sell_score_cap,
         sell_rejection_reason=score_breakdown.sell_rejection_reason,
-        candidate_id=_candidate_id(
-            run_id=run_id,
-            symbol=symbol,
-            signal=signal,
-            session_key=session_key,
-            candle=candle,
-        ),
+        candidate_id=candidate_id,
+        origin_candidate_id=origin_candidate_id or candidate_id,
+        pending_entry_id=pending_entry_id,
         market_context=market_context,
         multi_timeframe_context=multi_timeframe_context,
         entry_decision_config=entry_decision_config,
@@ -83,11 +91,7 @@ def build_trade_candidate(
 
 
 def rank_trade_candidates(candidates: list[TradeCandidate]) -> list[TradeCandidate]:
-    return sorted(
-        candidates,
-        key=lambda candidate: candidate.score,
-        reverse=True,
-    )
+    return sorted(candidates, key=lambda candidate: candidate.score, reverse=True)
 
 
 def _candidate_id(
@@ -97,6 +101,7 @@ def _candidate_id(
     signal: Signal,
     session_key: str,
     candle: Candle,
+    pending_entry_id: str | None,
 ) -> str:
     metadata = signal.metadata or {}
     level_key = 'range_high' if signal.action == 'BUY' else 'range_low'
@@ -109,6 +114,7 @@ def _candidate_id(
             session_key,
             candle.closed_at.isoformat(),
             str(level),
+            pending_entry_id or '',
         )
     )
     return hashlib.sha256(raw.encode('utf-8')).hexdigest()
@@ -123,9 +129,7 @@ def _score_breakdown(
     metadata = signal.metadata or {}
     close_position_percent = float_metadata(metadata, 'close_position_percent')
     close_quality = (
-        100 - close_position_percent
-        if signal.action == 'SELL'
-        else close_position_percent
+        100 - close_position_percent if signal.action == 'SELL' else close_position_percent
     )
     if signal.action == 'SELL':
         return _DEFAULT_SELL_SCORER.score_breakdown(
@@ -173,7 +177,6 @@ def _rank_reason(
 ) -> str:
     metadata = signal.metadata or {}
     sell_reason = _sell_rank_reason(sell_score_metadata)
-
     return (
         f'score={round(score, 4)} | '
         f'base_score={round(base_score, 4)} | '

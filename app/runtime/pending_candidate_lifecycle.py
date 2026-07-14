@@ -8,6 +8,7 @@ from app.journal.jsonl_journal import JsonlJournal
 from app.runtime.pending_entry import PendingEntryEvent, PendingEntryManager, PendingEntryState
 from app.runtime.pending_entry_flow import write_pending_events
 
+
 _RETRYABLE_SELECTION_REASONS = {
     'candidate_selection_outside_top_n',
     'candidate_selection_score_too_low',
@@ -15,8 +16,9 @@ _RETRYABLE_SELECTION_REASONS = {
 
 
 def pending_entry_key(candidate: TradeCandidate) -> str | None:
-    raw_key = (candidate.signal.metadata or {}).get('pending_entry_id')
-    return str(raw_key) if raw_key else None
+    if candidate.pending_entry_id is None:
+        return None
+    return f'{candidate.symbol}:{candidate.signal.action}:{candidate.session_key}'
 
 
 def economics_rejection_reason(

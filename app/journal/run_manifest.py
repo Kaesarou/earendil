@@ -94,7 +94,7 @@ def build_run_manifest(
     actual_manifest_path = manifest_path or settings.run_manifest_path
     actual_summary_path = summary_path or settings.daily_summary_path
     return {
-        'schema_version': 3,
+        'schema_version': 4,
         'run_id': run_id,
         'status': 'running',
         'started_at': started_at,
@@ -149,10 +149,12 @@ def build_run_manifest(
             'multi_timeframe_bars_retained': True,
             'multi_timeframe_candidate_snapshots_retained': True,
             'candidate_id_enabled': True,
-            'entry_decisions_retained': True,
+            'pending_lineage_enabled': True,
+            'entry_routing_retained': True,
             'analysis_ready_entry_fields': [
                 'candidate_id',
                 'origin_candidate_id',
+                'pending_entry_id',
                 'candidate_timestamp',
                 'symbol',
                 'side',
@@ -162,8 +164,8 @@ def build_run_manifest(
                 'estimated_total_cost_percent',
                 'score',
                 'base_score',
-                'entry_action',
-                'entry_reason',
+                'entry_route_action',
+                'entry_route_reason',
                 'selection_outcome',
                 'selection_reason',
             ],
@@ -219,9 +221,13 @@ def finalize_run_manifest(
             'timeframe_bars_closed': summary.get('multi_timeframe', {}).get('closed_total', 0),
             'timeframe_bars_incomplete': summary.get('multi_timeframe', {}).get('incomplete_total', 0),
             'candle_gaps': summary.get('multi_timeframe', {}).get('gap_total', 0),
-            'enter_now': summary.get('entry_decisions', {}).get('enter_now', 0),
-            'wait_for_retest': summary.get('entry_decisions', {}).get('wait_for_retest', 0),
-            'skip': summary.get('entry_decisions', {}).get('skip', 0),
+            'ready_for_selection': summary.get('entry_routing', {}).get(
+                'ready_for_selection', 0
+            ),
+            'wait_for_retest': summary.get('entry_routing', {}).get(
+                'wait_for_retest', 0
+            ),
+            'skip': summary.get('entry_routing', {}).get('skip', 0),
             'orders_submitted': summary.get('orders', {}).get('submitted', 0),
             'positions_opened': summary.get('positions', {}).get('opened', 0),
             'positions_closed': summary.get('positions', {}).get('closed', 0),

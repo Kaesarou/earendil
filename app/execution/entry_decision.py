@@ -7,11 +7,11 @@ from app.instruments.models import EntryDecisionConfig
 from app.market.market_context import ContextAlignment, MarketRegime
 
 
-ENTRY_DECISION_MODEL_VERSION = 'entry_router_v2'
+ENTRY_DECISION_MODEL_VERSION = 'entry_router_v3'
 
 
 class EntryAction(StrEnum):
-    ENTER_NOW = 'enter_now'
+    READY_FOR_SELECTION = 'ready_for_selection'
     WAIT_FOR_RETEST = 'wait_for_retest'
     SKIP = 'skip'
 
@@ -149,7 +149,7 @@ class EntryDecisionEngine:
             )
 
         return self._decision(
-            EntryAction.ENTER_NOW,
+            EntryAction.READY_FOR_SELECTION,
             'entry_conditions_satisfied',
             alignment,
             False,

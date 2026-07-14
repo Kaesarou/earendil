@@ -6,7 +6,7 @@ from app.journal.analysis_journal import AnalysisJournal
 from app.journal.jsonl_journal import JsonlJournal
 
 
-def test_candidate_selection_emits_standalone_entry_decision_event(tmp_path):
+def test_candidate_selection_emits_standalone_entry_route_event(tmp_path):
     trades_path = tmp_path / 'trades.jsonl'
     journal = AnalysisJournal(
         trade_journal=JsonlJournal(str(trades_path)),
@@ -18,19 +18,21 @@ def test_candidate_selection_emits_standalone_entry_decision_event(tmp_path):
     )
     context = SimpleNamespace(version='market_context_v2', regime='risk_on')
     multi_timeframe_context = SimpleNamespace(
-        model_version='multi_timeframe_features_v1',
-        alignment='aligned',
+        model_version='multi_timeframe_features_v2',
+        ready_alignment='aligned',
+        alignment_including_provisional='mixed',
+        maturity_by_timeframe={'m1': 'ready', 'm5': 'provisional'},
         features_by_timeframe={'m1': {'direction': 'up'}},
-        unavailable_timeframes=('m5', 'm15', 'm30', 'h1'),
+        unavailable_timeframes=('m15', 'm30', 'h1'),
+        opening_ranges=SimpleNamespace(windows={}),
     )
     timestamp = datetime(2026, 7, 14, 10, 32, 8, tzinfo=timezone.utc)
     candidate = SimpleNamespace(
-        candidate_id='candidate-1',
+        candidate_id='candidate-2',
+        origin_candidate_id='candidate-origin',
+        pending_entry_id='pending-1',
         symbol='AAPL',
-        signal=SimpleNamespace(
-            action='BUY',
-            metadata={'origin_candidate_id': 'candidate-origin'},
-        ),
+        signal=SimpleNamespace(action='BUY', metadata={}),
         snapshot=SimpleNamespace(last=201.25, timestamp=timestamp),
         score=120.0,
         base_score=132.0,
@@ -39,9 +41,9 @@ def test_candidate_selection_emits_standalone_entry_decision_event(tmp_path):
         multi_timeframe_context=multi_timeframe_context,
     )
     decision = SimpleNamespace(
-        action='enter_now',
+        action='ready_for_selection',
         reason='entry_conditions_satisfied',
-        model_version='entry_router_v2',
+        model_version='entry_router_v3',
     )
     evaluated = SimpleNamespace(
         candidate=candidate,
@@ -72,10 +74,11 @@ def test_candidate_selection_emits_standalone_entry_decision_event(tmp_path):
         json.loads(line)
         for line in trades_path.read_text(encoding='utf-8').splitlines()
     ]
-    entry_record = next(record for record in records if record['event_type'] == 'entry_decision')
-    payload = entry_record['payload']
-    assert payload['candidate_id'] == 'candidate-1'
+    record = next(record for record in records if record['event_type'] == 'entry_decision')
+    payload = record['payload']
+    assert payload['candidate_id'] == 'candidate-2'
     assert payload['origin_candidate_id'] == 'candidate-origin'
+    assert payload['pending_entry_id'] == 'pending-1'
     assert payload['candidate_timestamp'] == timestamp.isoformat()
     assert payload['entry_reference_price'] == 201.25
     assert payload['effective_stop_loss_percent'] == 0.9
@@ -83,11 +86,13 @@ def test_candidate_selection_emits_standalone_entry_decision_event(tmp_path):
     assert payload['estimated_total_cost_percent'] == 0.35
     assert payload['score'] == 120.0
     assert payload['base_score'] == 132.0
-    assert payload['entry_action'] == 'enter_now'
-    assert payload['entry_reason'] == 'entry_conditions_satisfied'
+    assert payload['entry_route_action'] == 'ready_for_selection'
+    assert payload['entry_route_reason'] == 'entry_conditions_satisfied'
     assert payload['selection_outcome'] == 'selected'
-    assert payload['entry_model_version'] == 'entry_router_v2'
+    assert payload['entry_route_model_version'] == 'entry_router_v3'
     assert payload['market_context_version'] == 'market_context_v2'
-    assert payload['multi_timeframe_model_version'] == 'multi_timeframe_features_v1'
-    assert payload['multi_timeframe_context']['alignment'] == 'aligned'
+    assert payload['multi_timeframe_model_version'] == 'multi_timeframe_features_v2'
+    assert payload['multi_timeframe_context']['ready_alignment'] == 'aligned'
     assert payload['strategy_profile'] == 'balanced'
+    assert 'entry_action' not in payload
+    assert 'entry_reason' not in payload

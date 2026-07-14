@@ -36,7 +36,9 @@ class AnalysisJournal:
         self.partial_summary_path = partial_summary_path
         self.write_partial_summary = write_partial_summary
         self.detail_level = normalize_detail_level(detail_level)
-        self.partial_summary_interval = timedelta(minutes=max(1, partial_summary_interval_minutes))
+        self.partial_summary_interval = timedelta(
+            minutes=max(1, partial_summary_interval_minutes)
+        )
         self._last_partial_summary_at = datetime.now(timezone.utc)
         self._session_state_by_symbol: dict[str, tuple[Any, ...]] = {}
         self.summary = AnalysisReadySummaryAggregator(
@@ -50,42 +52,40 @@ class AnalysisJournal:
         routed = self._normalize_event(event_type, payload)
         if routed is None:
             return
-
         routed_event_type, routed_payload = routed
         self.summary.record(routed_event_type, routed_payload)
-
         if should_write_to_errors_journal(routed_event_type):
             self.errors_journal.write(routed_event_type, routed_payload)
-
         if self.debug_decisions_journal is not None and should_write_to_debug_journal(
             routed_event_type,
             routed_payload,
             self.detail_level,
         ):
             self.debug_decisions_journal.write(routed_event_type, routed_payload)
-
-        if should_write_to_trade_journal(routed_event_type, routed_payload, self.detail_level):
+        if should_write_to_trade_journal(
+            routed_event_type,
+            routed_payload,
+            self.detail_level,
+        ):
             written = self.trade_journal.write(routed_event_type, routed_payload)
             if written is False:
                 self._record_trade_journal_write_failure(
                     routed_event_type,
                     routed_payload,
                 )
-
         if routed_event_type == 'candidate_selection':
             self._write_counterfactual_entry_decisions(routed_payload)
-
         self._maybe_write_partial_summary()
 
     def _write_counterfactual_entry_decisions(self, payload: dict[str, Any]) -> None:
-        for evaluated, selection_outcome, selection_reason in _evaluated_selection_items(payload):
+        for evaluated, selection_outcome, selection_reason in _evaluated_selection_items(
+            payload
+        ):
             candidate = _attribute(evaluated, 'candidate')
             decision = _attribute(evaluated, 'entry_decision')
             if candidate is None or decision is None:
                 continue
-
             signal = _attribute(candidate, 'signal')
-            signal_metadata = _attribute(signal, 'metadata') or {}
             snapshot = _attribute(candidate, 'snapshot')
             economics = _attribute(evaluated, 'economics')
             effective_sl_tp = _attribute(evaluated, 'effective_sl_tp')
@@ -95,10 +95,8 @@ class AnalysisJournal:
             )
             record = {
                 'candidate_id': _attribute(candidate, 'candidate_id'),
-                'origin_candidate_id': _attribute(
-                    signal_metadata,
-                    'origin_candidate_id',
-                ),
+                'origin_candidate_id': _attribute(candidate, 'origin_candidate_id'),
+                'pending_entry_id': _attribute(candidate, 'pending_entry_id'),
                 'candidate_timestamp': _attribute(snapshot, 'timestamp'),
                 'symbol': _attribute(candidate, 'symbol'),
                 'side': _attribute(signal, 'action'),
@@ -121,8 +119,8 @@ class AnalysisJournal:
                     economics,
                     'expected_net_profit_percent',
                 ),
-                'entry_action': _enum_value(_attribute(decision, 'action')),
-                'entry_reason': _attribute(decision, 'reason'),
+                'entry_route_action': _enum_value(_attribute(decision, 'action')),
+                'entry_route_reason': _attribute(decision, 'reason'),
                 'selection_outcome': selection_outcome,
                 'selection_reason': selection_reason,
                 'candidate': candidate,
@@ -141,7 +139,7 @@ class AnalysisJournal:
                     multi_timeframe_context,
                     'model_version',
                 ),
-                'entry_model_version': _attribute(decision, 'model_version'),
+                'entry_route_model_version': _attribute(decision, 'model_version'),
                 'strategy_profile': self.summary.profile,
             }
             written = self.trade_journal.write('entry_decision', record)
@@ -172,8 +170,8 @@ class AnalysisJournal:
         return {
             'market_snapshots': summary['market_data']['snapshots'],
             'candles_closed': summary['market_data']['candles_closed'],
-            'candidates': summary['decisions']['candidate_total'],
-            'selected': summary['decisions']['selected_total'],
+            'candidates': summary['decision_pipeline']['candidates_detected'],
+            'selected': summary['decision_pipeline']['selection_selected'],
             'orders_submitted': summary['orders']['submitted'],
             'positions_opened': summary['positions']['opened'],
             'positions_closed': summary['positions']['closed'],
@@ -217,7 +215,6 @@ class AnalysisJournal:
         session_decision = payload.get('session_decision')
         if symbol is None or session_decision is None:
             return 'session_state_changed', payload
-
         new_state = _session_state_name(session_decision)
         signature = (
             new_state,
@@ -231,13 +228,14 @@ class AnalysisJournal:
         previous_signature = self._session_state_by_symbol.get(str(symbol))
         if previous_signature == signature:
             return None
-
         self._session_state_by_symbol[str(symbol)] = signature
         return (
             'session_state_changed',
             {
                 'symbol': symbol,
-                'previous_state': previous_signature[0] if previous_signature is not None else None,
+                'previous_state': (
+                    previous_signature[0] if previous_signature is not None else None
+                ),
                 'new_state': new_state,
                 'reason': _attribute(session_decision, 'reason'),
                 'session_key': _attribute(session_decision, 'session_key'),
@@ -273,7 +271,10 @@ def build_analysis_journal(
     profile: str = 'balanced',
 ) -> AnalysisJournal:
     detail_level = normalize_detail_level(settings.journal_detail_level)
-    debug_enabled = detail_level in {'debug', 'full'} or settings.journal_keep_debug_decisions
+    debug_enabled = (
+        detail_level in {'debug', 'full'}
+        or settings.journal_keep_debug_decisions
+    )
     return AnalysisJournal(
         trade_journal=JsonlJournal(
             settings.journal_path,
@@ -298,7 +299,9 @@ def build_analysis_journal(
         partial_summary_path=settings.partial_daily_summary_path,
         detail_level=detail_level,
         write_partial_summary=settings.journal_write_partial_summary,
-        partial_summary_interval_minutes=settings.journal_partial_summary_interval_minutes,
+        partial_summary_interval_minutes=(
+            settings.journal_partial_summary_interval_minutes
+        ),
         run_id=run_id,
         strategy='TrendStrategy',
         profile=profile,

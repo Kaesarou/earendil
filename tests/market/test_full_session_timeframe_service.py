@@ -23,15 +23,7 @@ def test_opening_range_remains_available_after_more_than_four_hours():
         time_until_session_end_minutes=390.0,
         session_key='us-session',
     )
-    config = MultiTimeframeConfig(
-        range_lookback_bars=3,
-        ema_fast_bars=2,
-        ema_slow_bars=3,
-        atr_lookback_bars=2,
-        compression_lookback_bars=2,
-        acceleration_window_bars=1,
-        opening_range_minutes=(15,),
-    )
+    config = MultiTimeframeConfig(opening_range_minutes=(15,))
     service = FullSessionMultiTimeframeService({'AAPL': config})
 
     for minute in range(301):
