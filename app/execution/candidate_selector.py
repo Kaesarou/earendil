@@ -6,7 +6,7 @@ from app.execution.candidate_ranking import rank_trade_candidates
 from app.execution.candidate_readiness import CandidateReadiness
 from app.execution.entry_decision import EntryAction, EntryDecisionEngine
 from app.execution.trade_candidate import TradeCandidate
-from app.instruments.models import CandidateSelectionConfig if False else EntryDecisionConfig
+from app.instruments.models import EntryDecisionConfig
 
 
 @dataclass(frozen=True)
