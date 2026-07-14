@@ -87,7 +87,7 @@ class CandidateEconomicsEstimator:
                 estimated_total_cost=estimate.total_estimated_cost,
                 estimated_total_cost_percent=estimate.total_estimated_cost_percent,
                 min_expected_net_profit_percent=estimate.min_expected_net_profit_percent,
-                required_min_expected_net_profit_amount=estimate.required_min_expected_profit_amount,
+                required_min_expected_net_profit_amount=estimate.required_min_expected_net_profit_amount,
                 effective_take_profit_percent=effective_sl_tp.take_profit_percent,
                 effective_stop_loss_percent=effective_sl_tp.stop_loss_percent,
                 cost_to_tp_ratio=_safe_ratio(estimate.total_estimated_cost_percent, effective_sl_tp.take_profit_percent),
