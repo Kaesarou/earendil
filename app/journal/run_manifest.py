@@ -10,6 +10,12 @@ from typing import Any
 from app.config.settings import Settings
 from app.instruments.instrument_registry import InstrumentRegistry
 from app.journal.serialization import serialize_value
+from app.market.multi_timeframe import expected_sampling_quality
+from app.market.timeframes import (
+    BASE_TIMEFRAME,
+    MULTI_TIMEFRAME_MODEL_VERSION,
+    SUPPORTED_TIMEFRAMES,
+)
 
 _SENSITIVE_SETTINGS = {
     'ETORO_API_KEY',
@@ -86,7 +92,7 @@ def build_run_manifest(
     actual_manifest_path = manifest_path or settings.run_manifest_path
     actual_summary_path = summary_path or settings.daily_summary_path
     return {
-        'schema_version': 2,
+        'schema_version': 3,
         'run_id': run_id,
         'status': 'running',
         'started_at': started_at,
@@ -98,6 +104,7 @@ def build_run_manifest(
         },
         'models': {
             'market_context': 'market_context_v1',
+            'multi_timeframe': MULTI_TIMEFRAME_MODEL_VERSION,
             'entry_decision': 'entry_router_v1',
             'tp_probability': 'heuristic_v1',
         },
@@ -111,6 +118,23 @@ def build_run_manifest(
             'context_benchmarks': benchmark_symbols,
             'symbol_profiles': symbol_profiles,
             'settings': sanitized_settings_snapshot(settings),
+            'multi_timeframe': {
+                'base_timeframe_seconds': BASE_TIMEFRAME.value,
+                'supported_timeframes_seconds': [
+                    timeframe.value for timeframe in SUPPORTED_TIMEFRAMES
+                ],
+                'supported_timeframes': [
+                    timeframe.name.lower() for timeframe in SUPPORTED_TIMEFRAMES
+                ],
+                'poll_interval_seconds': settings.poll_interval_seconds,
+                'expected_sampling_quality': expected_sampling_quality(
+                    settings.poll_interval_seconds
+                ),
+                'config_by_symbol': {
+                    symbol: instrument_registry.config_for(symbol).multi_timeframe
+                    for symbol in symbols
+                },
+            },
         },
         'analysis_sources': {
             'run_id': run_id,
@@ -120,6 +144,8 @@ def build_run_manifest(
             'error_stream': settings.errors_journal_path,
             'raw_market_retained': True,
             'raw_candles_retained': True,
+            'multi_timeframe_bars_retained': True,
+            'multi_timeframe_candidate_snapshots_retained': True,
             'candidate_id_enabled': True,
             'entry_decisions_retained': True,
         },
@@ -171,6 +197,9 @@ def finalize_run_manifest(
             'market_data_rejected': summary.get('market_data', {}).get('rejected', 0),
             'market_data_quarantined': summary.get('market_data', {}).get('quarantined', 0),
             'candles_closed': summary.get('market_data', {}).get('candles_closed', 0),
+            'timeframe_bars_closed': summary.get('multi_timeframe', {}).get('closed_total', 0),
+            'timeframe_bars_incomplete': summary.get('multi_timeframe', {}).get('incomplete_total', 0),
+            'candle_gaps': summary.get('multi_timeframe', {}).get('gap_total', 0),
             'enter_now': summary.get('entry_decisions', {}).get('enter_now', 0),
             'wait_for_retest': summary.get('entry_decisions', {}).get('wait_for_retest', 0),
             'skip': summary.get('entry_decisions', {}).get('skip', 0),
