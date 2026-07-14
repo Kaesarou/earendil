@@ -37,8 +37,9 @@ def test_analysis_journal_aggregates_hold_without_writing_it_to_trades(tmp_path)
     assert [event['event_type'] for event in trade_events] == ['position_opened']
 
     summary = json.loads(summary_path.read_text(encoding='utf-8'))
-    assert summary['decisions']['hold_total'] == 1
+    assert summary['strategy_decisions']['hold_total'] == 1
     assert summary['hold_reasons'] == {'market_regime_dead_market': 1}
+    assert 'decisions' not in summary
 
 
 def test_analysis_journal_writes_errors_to_errors_file(tmp_path):
