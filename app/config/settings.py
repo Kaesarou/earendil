@@ -69,9 +69,18 @@ class Settings(BaseSettings):
     crypto_symbols: str = Field(default='', alias='CRYPTO_SYMBOLS')
     equity_us_symbols: str = Field(default='', alias='EQUITY_US_SYMBOLS')
     equity_eu_symbols: str = Field(default='', alias='EQUITY_EU_SYMBOLS')
-    market_benchmark_crypto: str = Field(default='', alias='MARKET_BENCHMARK_CRYPTO')
-    market_benchmark_equity_us: str = Field(default='', alias='MARKET_BENCHMARK_EQUITY_US')
-    market_benchmark_equity_eu: str = Field(default='', alias='MARKET_BENCHMARK_EQUITY_EU')
+    market_benchmark_crypto: str = Field(
+        default='Crypto10',
+        alias='MARKET_BENCHMARK_CRYPTO',
+    )
+    market_benchmark_equity_us: str = Field(
+        default='SPX500',
+        alias='MARKET_BENCHMARK_EQUITY_US',
+    )
+    market_benchmark_equity_eu: str = Field(
+        default='FRA40',
+        alias='MARKET_BENCHMARK_EQUITY_EU',
+    )
     trading_session_timezone: str = Field(default='Europe/Paris', alias='TRADING_SESSION_TIMEZONE')
     trading_sessions_crypto: str = Field(default='', alias='TRADING_SESSIONS_CRYPTO')
     trading_sessions_equity_us: str = Field(default='', alias='TRADING_SESSIONS_EQUITY_US')
