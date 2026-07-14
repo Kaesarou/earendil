@@ -6,6 +6,7 @@ from typing import TYPE_CHECKING, Any
 from app.market.models import Candle, MarketSnapshot
 from app.strategies.signals import Signal
 
+
 if TYPE_CHECKING:
     from app.instruments.models import EntryDecisionConfig
     from app.market.market_context import CandidateMarketContext
@@ -43,6 +44,8 @@ class TradeCandidate:
     tp_probability_model_version: str | None = None
     tp_probability_metadata: dict[str, Any] = field(default_factory=dict)
     candidate_id: str = ''
+    origin_candidate_id: str = ''
+    pending_entry_id: str | None = None
     market_context: CandidateMarketContext | None = None
     multi_timeframe_context: MultiTimeframeContext | None = None
     entry_decision_config: EntryDecisionConfig | None = None
