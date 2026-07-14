@@ -65,9 +65,9 @@ def equity_session(start: datetime) -> TradingSessionDecision:
 
 def small_config() -> MultiTimeframeConfig:
     return MultiTimeframeConfig(
-        range_lookback_bars=3,
+        range_lookback_bars=4,
         ema_fast_bars=2,
-        ema_slow_bars=3,
+        ema_slow_bars=4,
         atr_lookback_bars=2,
         compression_lookback_bars=2,
         acceleration_window_bars=1,
@@ -175,6 +175,7 @@ def test_features_and_opening_range_are_built_from_closed_bars_only():
         candle_at(start, open_price=100, high=102, low=99, close=101),
         candle_at(start + timedelta(minutes=1), open_price=101, high=104, low=100, close=103),
         candle_at(start + timedelta(minutes=2), open_price=103, high=106, low=102, close=105),
+        candle_at(start + timedelta(minutes=3), open_price=105, high=107, low=104, close=106),
     )
     for candle in candles:
         service.on_base_candle(
@@ -186,18 +187,18 @@ def test_features_and_opening_range_are_built_from_closed_bars_only():
     context = service.build_context(
         symbol='AAPL',
         side='BUY',
-        as_of=start + timedelta(minutes=3),
+        as_of=start + timedelta(minutes=4),
         session_decision=session,
     )
 
     m1 = context.features_by_timeframe['m1']
     opening = context.opening_ranges.windows['3']
-    assert m1.latest_bar_closed_at == start + timedelta(minutes=3)
-    assert m1.range_position_percent == pytest.approx(85.714286)
-    assert m1.body_percent_of_range == pytest.approx(50.0)
-    assert m1.upper_wick_percent_of_range == pytest.approx(25.0)
-    assert m1.lower_wick_percent_of_range == pytest.approx(25.0)
-    assert m1.compression_ratio == pytest.approx(1.142857)
+    assert m1.latest_bar_closed_at == start + timedelta(minutes=4)
+    assert m1.range_position_percent == pytest.approx(87.5)
+    assert m1.body_percent_of_range == pytest.approx(33.333333)
+    assert m1.upper_wick_percent_of_range == pytest.approx(33.333333)
+    assert m1.lower_wick_percent_of_range == pytest.approx(33.333333)
+    assert m1.compression_ratio == pytest.approx(0.75)
     assert opening.status == OpeningRangeStatus.READY
     assert opening.high == 106
     assert opening.low == 99
@@ -248,7 +249,7 @@ def test_same_as_of_context_does_not_change_after_future_bars_arrive():
     session = equity_session(start)
     service = MultiTimeframeService({'AAPL': small_config()})
 
-    for minute, close in enumerate((101.0, 102.0, 103.0)):
+    for minute, close in enumerate((101.0, 102.0, 103.0, 104.0)):
         service.on_base_candle(
             symbol='AAPL',
             candle=candle_at(
@@ -261,7 +262,7 @@ def test_same_as_of_context_does_not_change_after_future_bars_arrive():
             session_decision=session,
         )
 
-    as_of = start + timedelta(minutes=3)
+    as_of = start + timedelta(minutes=4)
     original = service.build_context(
         symbol='AAPL',
         side='BUY',
@@ -269,7 +270,7 @@ def test_same_as_of_context_does_not_change_after_future_bars_arrive():
         session_decision=session,
     )
 
-    for minute, close in ((3, 90.0), (4, 80.0), (5, 70.0)):
+    for minute, close in ((4, 90.0), (5, 80.0), (6, 70.0)):
         service.on_base_candle(
             symbol='AAPL',
             candle=candle_at(
