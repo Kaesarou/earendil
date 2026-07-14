@@ -1,6 +1,9 @@
 from datetime import datetime, timezone
 
-from app.execution.candidate_economics import CandidateEconomics, EvaluatedTradeCandidate
+from app.execution.candidate_economics import (
+    CandidateEconomics,
+    EvaluatedTradeCandidate,
+)
 from app.execution.candidate_readiness import CandidateReadiness
 from app.execution.scoring.tp_feasibility import TpFeasibilityAnalysis
 from app.execution.scoring.tp_probability import (
@@ -37,7 +40,11 @@ def _candle() -> Candle:
     )
 
 
-def _candidate(*, side: str = 'BUY', close_position_percent: float = 88.0) -> TradeCandidate:
+def _candidate(
+    *,
+    side: str = 'BUY',
+    close_position_percent: float = 88.0,
+) -> TradeCandidate:
     return TradeCandidate(
         symbol='AMD',
         snapshot=_snapshot(),
@@ -45,7 +52,11 @@ def _candidate(*, side: str = 'BUY', close_position_percent: float = 88.0) -> Tr
         signal=Signal(
             action=side,
             setup_quality=0.8,
-            reason='trend_bullish_breakout' if side == 'BUY' else 'trend_bearish_breakdown',
+            reason=(
+                'trend_bullish_breakout'
+                if side == 'BUY'
+                else 'trend_bearish_breakdown'
+            ),
             metadata={
                 'market_regime': 'TRENDING',
                 'trend_strength_percent': 0.25,
@@ -104,22 +115,24 @@ def _feasibility(
         runway_score=runway_score,
         raw_runway_score=runway_score,
         score_before_tp_feasibility=130.0,
-        score_after_tp_penalty=130.0,
+        adjusted_score=130.0,
         tp_feasibility_penalty=0.0,
         raw_tp_feasibility_penalty=0.0,
-        score_cap=None,
-        adjusted_score=130.0,
         tp_feasibility_hard_rejection_reason=None,
         readiness=CandidateReadiness.TRADABLE_NOW,
-        readiness_reason='tp_feasibility_ready',
+        readiness_reason='entry_decision_required',
         penalty_components=(),
-        cap_components=(),
         hard_rejection_components=(),
-        reason_components=('tp_atr_ok', 'tp_momentum_ok', 'cost_to_tp_ok', 'runway_ok'),
+        reason_components=(
+            'tp_atr_ok',
+            'tp_momentum_ok',
+            'cost_to_tp_ok',
+            'runway_ok',
+        ),
     )
 
 
-def test_tp_probability_decreases_when_tp_is_far_and_move_consumed() -> None:
+def test_tp_probability_decreases_when_tp_is_far_and_move_consumed():
     estimator = TpBeforeSlProbabilityEstimator()
     evaluated_candidate = EvaluatedTradeCandidate(
         candidate=_candidate(),
@@ -143,10 +156,11 @@ def test_tp_probability_decreases_when_tp_is_far_and_move_consumed() -> None:
     )
 
     assert strong.tp_before_sl_probability > weak.tp_before_sl_probability
+    assert strong.net_expected_value_percent > weak.net_expected_value_percent
     assert weak.probability_band in {'VERY_LOW', 'LOW', 'MEDIUM'}
 
 
-def test_candidate_tp_probability_evaluator_logs_probability_without_changing_score() -> None:
+def test_candidate_probability_logs_expectancy_without_changing_score():
     candidate = _candidate()
     evaluated_candidate = EvaluatedTradeCandidate(
         candidate=candidate,
@@ -154,18 +168,49 @@ def test_candidate_tp_probability_evaluator_logs_probability_without_changing_sc
         tp_feasibility=_feasibility(),
     )
 
-    updated = CandidateTpProbabilityEvaluator().evaluate(evaluated_candidate)
+    updated = CandidateTpProbabilityEvaluator().evaluate(
+        evaluated_candidate
+    )
 
     assert updated.candidate.score == candidate.score
     assert updated.candidate.tp_before_sl_probability is not None
     assert updated.candidate.tp_before_sl_probability_band is not None
-    assert updated.candidate.tp_probability_model_version == 'heuristic_v1'
-    assert 'tp_before_sl_probability=' in updated.candidate.rank_reason
+    assert updated.candidate.tp_probability_model_version == 'heuristic_v2'
+    assert updated.candidate.break_even_probability is not None
+    assert updated.candidate.net_expected_value_percent is not None
+    assert updated.candidate.probability_edge is not None
+    assert 'net_expected_value_percent=' in updated.candidate.rank_reason
     assert updated.tp_probability is not None
 
 
-def test_sell_close_quality_is_directional() -> None:
-    candidate = _candidate(side='SELL', close_position_percent=12.0)
+def test_break_even_probability_includes_costs_on_the_losing_side():
+    evaluated_candidate = EvaluatedTradeCandidate(
+        candidate=_candidate(),
+        economics=_economics(),
+        tp_feasibility=_feasibility(),
+    )
+
+    estimate = TpBeforeSlProbabilityEstimator().estimate(
+        evaluated_candidate=evaluated_candidate,
+        tp_feasibility=_feasibility(),
+    )
+
+    expected_break_even = (0.40 + 0.16) / (0.44 + 0.40 + 0.16)
+    assert estimate.break_even_probability == round(
+        expected_break_even,
+        4,
+    )
+    assert estimate.probability_edge == round(
+        estimate.tp_before_sl_probability - expected_break_even,
+        4,
+    )
+
+
+def test_sell_close_quality_is_directional():
+    candidate = _candidate(
+        side='SELL',
+        close_position_percent=12.0,
+    )
     evaluated_candidate = EvaluatedTradeCandidate(
         candidate=candidate,
         economics=_economics(),
