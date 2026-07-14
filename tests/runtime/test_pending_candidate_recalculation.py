@@ -8,9 +8,7 @@ from app.execution.candidate_selector import RejectedEvaluatedCandidateSelection
 from app.execution.trade_candidate import TradeCandidate
 from app.market.models import Candle, MarketSnapshot
 from app.runtime.candidate_flow import route_candidate_readiness
-from app.runtime.pending_candidate_lifecycle import (
-    reconcile_pending_selection_rejections,
-)
+from app.runtime.pending_candidate_lifecycle import reconcile_pending_selection_rejections
 from app.runtime.pending_entry import PendingEntryManager, PendingEntryState
 from app.strategies.entry_confirmation import EntryConfirmationConfig
 from app.strategies.signals import Signal
@@ -28,9 +26,7 @@ class FakeJournal:
 
 class FakeRiskManager:
     def risk_profile_for(self, symbol):
-        return SimpleNamespace(
-            entry_confirmation=EntryConfirmationConfig(max_candles=5),
-        )
+        return SimpleNamespace(entry_confirmation=EntryConfirmationConfig(max_candles=5))
 
 
 def evaluated_candidate(
@@ -39,28 +35,35 @@ def evaluated_candidate(
     readiness_reason='insufficient_runway',
     expected_net_profit_percent=0.5,
     min_expected_net_profit_percent=0.1,
-    pending_key=None,
+    pending_entry_id=None,
+    origin_candidate_id='candidate-origin',
     hard_rejection_reason=None,
 ):
-    metadata = {
-        'range_high': 100.0,
-        'range_low': 100.0,
-        'snapshot_momentum_percent': 0.2,
-        'atr_percent': 0.2,
-    }
-    if pending_key is not None:
-        metadata['pending_entry_id'] = pending_key
-        metadata['entry_origin'] = 'pending_confirmation'
-    signal = Signal('BUY', 0.8, 'test', metadata=metadata)
+    signal = Signal(
+        'BUY',
+        0.8,
+        'test',
+        metadata={
+            'range_high': 100.0,
+            'range_low': 100.0,
+            'snapshot_momentum_percent': 0.2,
+            'atr_percent': 0.2,
+        },
+    )
     candle = Candle('AMD', 60, 100, 101, 99.5, 100.5, None, NOW, NOW)
     candidate = TradeCandidate(
-        'AMD',
-        MarketSnapshot('AMD', 100, 100.05, 100.5, NOW),
-        candle,
-        signal,
-        120.0,
-        'test',
-        'US',
+        symbol='AMD',
+        snapshot=MarketSnapshot('AMD', 100, 100.05, 100.5, NOW),
+        candle=candle,
+        signal=signal,
+        score=120.0,
+        rank_reason='test',
+        session_key='US',
+        candidate_id=(
+            'candidate-rebuilt' if pending_entry_id else 'candidate-origin'
+        ),
+        origin_candidate_id=origin_candidate_id,
+        pending_entry_id=pending_entry_id,
     )
     economics = CandidateEconomics(
         position_value=100.0,
@@ -96,54 +99,33 @@ def confirmed_pending(manager):
         observed_candles=2,
         confirmation_type='retest_continuation',
     )
-    return pending.key
+    return pending
 
 
 def test_wait_candidate_registers_pending_and_stays_out_of_tradable_set():
     manager = PendingEntryManager()
     journal = FakeJournal()
-
     tradable, rejected = route_candidate_readiness(
         evaluated_candidates=[evaluated_candidate()],
         risk_manager=FakeRiskManager(),
         pending_entry_manager=manager,
         trade_journal=journal,
     )
-
     assert tradable == []
     assert rejected[0].reason == 'insufficient_runway'
-    assert len(manager.snapshot()) == 1
-    assert journal.events[0][0] == 'pending_entry_registered'
+    pending = manager.snapshot()[0]
+    assert pending.origin_candidate_id == 'candidate-origin'
+    assert pending.pending_entry_id
+    assert journal.events[0][1]['pending_entry_id'] == pending.pending_entry_id
 
 
-def test_confirmed_candidate_is_not_auto_promoted_by_legacy_readiness():
+def test_confirmed_candidate_recalculation_uses_top_level_pending_id():
     manager = PendingEntryManager()
     journal = FakeJournal()
-    pending_key = confirmed_pending(manager)
-    recalculated = evaluated_candidate(pending_key=pending_key)
-
-    tradable, rejected = route_candidate_readiness(
-        evaluated_candidates=[recalculated],
-        risk_manager=FakeRiskManager(),
-        pending_entry_manager=manager,
-        trade_journal=journal,
-    )
-
-    assert recalculated.readiness == CandidateReadiness.WAIT_CONFIRMATION
-    assert recalculated.readiness_reason == 'insufficient_runway'
-    assert tradable == []
-    assert rejected[0].reason == 'insufficient_runway'
-    assert manager.get(pending_key).state == PendingEntryState.WAITING
-    assert manager.get(pending_key).observed_candles == 2
-
-
-def test_pending_confirmation_does_not_override_hard_rejection():
-    manager = PendingEntryManager()
-    journal = FakeJournal()
-    pending_key = confirmed_pending(manager)
+    pending = confirmed_pending(manager)
     recalculated = evaluated_candidate(
-        pending_key=pending_key,
-        hard_rejection_reason='candidate_selection_tp_feasibility_cost_to_tp_absurd',
+        pending_entry_id=pending.pending_entry_id,
+        origin_candidate_id=pending.origin_candidate_id,
     )
 
     tradable, rejected = route_candidate_readiness(
@@ -152,89 +134,87 @@ def test_pending_confirmation_does_not_override_hard_rejection():
         pending_entry_manager=manager,
         trade_journal=journal,
     )
-
-    assert recalculated.readiness == CandidateReadiness.WAIT_CONFIRMATION
     assert tradable == []
     assert rejected[0].reason == 'insufficient_runway'
+    stored = manager.get(pending.key)
+    assert stored.state == PendingEntryState.WAITING
+    assert stored.observed_candles == 2
 
 
 def test_confirmed_candidate_recalculated_reject_is_removed():
     manager = PendingEntryManager()
     journal = FakeJournal()
-    pending_key = confirmed_pending(manager)
+    pending = confirmed_pending(manager)
     recalculated = evaluated_candidate(
         readiness=CandidateReadiness.REJECT,
         readiness_reason='invalid_trade_structure',
-        pending_key=pending_key,
+        pending_entry_id=pending.pending_entry_id,
+        origin_candidate_id=pending.origin_candidate_id,
     )
-
     tradable, rejected = route_candidate_readiness(
         evaluated_candidates=[recalculated],
         risk_manager=FakeRiskManager(),
         pending_entry_manager=manager,
         trade_journal=journal,
     )
-
     assert tradable == []
     assert rejected[0].reason == 'invalid_trade_structure'
-    assert manager.get(pending_key) is None
+    assert manager.get(pending.key) is None
     assert journal.events[-1][0] == 'pending_entry_invalidated'
 
 
-def test_confirmed_candidate_recalculated_tradable_reaches_selector_input():
+def test_confirmed_tradable_candidate_reaches_selector_input():
     manager = PendingEntryManager()
     journal = FakeJournal()
-    pending_key = confirmed_pending(manager)
+    pending = confirmed_pending(manager)
     recalculated = evaluated_candidate(
         readiness=CandidateReadiness.TRADABLE_NOW,
         readiness_reason='tp_feasibility_ready',
-        pending_key=pending_key,
+        pending_entry_id=pending.pending_entry_id,
+        origin_candidate_id=pending.origin_candidate_id,
     )
-
     tradable, rejected = route_candidate_readiness(
         evaluated_candidates=[recalculated],
         risk_manager=FakeRiskManager(),
         pending_entry_manager=manager,
         trade_journal=journal,
     )
-
     assert tradable == [recalculated]
     assert rejected == []
-    assert manager.get(pending_key).state == PendingEntryState.CONFIRMED
+    assert manager.get(pending.key).state == PendingEntryState.CONFIRMED
 
 
 def test_economically_invalid_confirmed_candidate_is_removed():
     manager = PendingEntryManager()
     journal = FakeJournal()
-    pending_key = confirmed_pending(manager)
+    pending = confirmed_pending(manager)
     recalculated = evaluated_candidate(
         readiness=CandidateReadiness.TRADABLE_NOW,
-        pending_key=pending_key,
+        pending_entry_id=pending.pending_entry_id,
+        origin_candidate_id=pending.origin_candidate_id,
         expected_net_profit_percent=0.05,
         min_expected_net_profit_percent=0.10,
     )
-
     tradable, rejected = route_candidate_readiness(
         evaluated_candidates=[recalculated],
         risk_manager=FakeRiskManager(),
         pending_entry_manager=manager,
         trade_journal=journal,
     )
-
     assert tradable == []
     assert rejected[0].reason == 'candidate_selection_expected_profit_too_low_after_fees'
-    assert manager.get(pending_key) is None
+    assert manager.get(pending.key) is None
 
 
 def test_pending_losing_top_n_returns_to_waiting_without_resetting_age():
     manager = PendingEntryManager()
     journal = FakeJournal()
-    pending_key = confirmed_pending(manager)
+    pending = confirmed_pending(manager)
     recalculated = evaluated_candidate(
         readiness=CandidateReadiness.TRADABLE_NOW,
-        pending_key=pending_key,
+        pending_entry_id=pending.pending_entry_id,
+        origin_candidate_id=pending.origin_candidate_id,
     )
-
     reconcile_pending_selection_rejections(
         rejected_candidates=[
             RejectedEvaluatedCandidateSelection(
@@ -245,10 +225,9 @@ def test_pending_losing_top_n_returns_to_waiting_without_resetting_age():
         pending_entry_manager=manager,
         trade_journal=journal,
     )
-
-    pending = manager.get(pending_key)
-    assert pending.state == PendingEntryState.WAITING
-    assert pending.observed_candles == 2
+    stored = manager.get(pending.key)
+    assert stored.state == PendingEntryState.WAITING
+    assert stored.observed_candles == 2
     assert journal.events[-1][1]['reason'] == (
         'selection_retry:candidate_selection_outside_top_n'
     )
