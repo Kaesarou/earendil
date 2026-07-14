@@ -5,9 +5,12 @@ from app.execution.candidate_selector import RejectedEvaluatedCandidateSelection
 from app.execution.entry_decision import EntryAction
 from app.execution.trade_candidate import TradeCandidate
 from app.journal.jsonl_journal import JsonlJournal
-from app.runtime.pending_entry import PendingEntryEvent, PendingEntryManager, PendingEntryState
+from app.runtime.pending_entry import (
+    PendingEntryEvent,
+    PendingEntryManager,
+    PendingEntryState,
+)
 from app.runtime.pending_entry_flow import write_pending_events
-
 
 _RETRYABLE_SELECTION_REASONS = {
     'candidate_selection_outside_top_n',
@@ -16,16 +19,17 @@ _RETRYABLE_SELECTION_REASONS = {
 
 
 def pending_entry_key(candidate: TradeCandidate) -> str | None:
-    if candidate.pending_entry_id is None:
-        return None
-    return f'{candidate.symbol}:{candidate.signal.action}:{candidate.session_key}'
+    return candidate.pending_entry_id
 
 
 def economics_rejection_reason(
     evaluated_candidate: EvaluatedTradeCandidate,
 ) -> str | None:
     economics = evaluated_candidate.economics
-    if economics.expected_net_profit_percent < economics.min_expected_net_profit_percent:
+    if (
+        economics.expected_net_profit_percent
+        < economics.min_expected_net_profit_percent
+    ):
         return 'candidate_selection_expected_profit_too_low_after_fees'
     return None
 
@@ -48,7 +52,13 @@ def invalidate_pending_candidate(
     invalidated = replace(removed, state=PendingEntryState.INVALIDATED)
     write_pending_events(
         trade_journal,
-        (PendingEntryEvent('pending_entry_invalidated', invalidated, reason),),
+        (
+            PendingEntryEvent(
+                'pending_entry_invalidated',
+                invalidated,
+                reason,
+            ),
+        ),
     )
 
 
@@ -70,7 +80,13 @@ def keep_pending_waiting(
         return
     write_pending_events(
         trade_journal,
-        (PendingEntryEvent('pending_entry_updated', pending, reason),),
+        (
+            PendingEntryEvent(
+                'pending_entry_updated',
+                pending,
+                reason,
+            ),
+        ),
     )
 
 
@@ -93,7 +109,7 @@ def reconcile_pending_selection_rejections(
             if existing_key is not None:
                 keep_pending_waiting(
                     candidate=candidate,
-                    reason=f'entry_decision:{decision.reason}',
+                    reason=f'entry_route:{decision.reason}',
                     pending_entry_manager=pending_entry_manager,
                     trade_journal=trade_journal,
                 )
@@ -109,6 +125,7 @@ def reconcile_pending_selection_rejections(
                     pending_entry_manager.register(
                         evaluated_candidate=evaluated_candidate,
                         max_candles=max_candles,
+                        reason=decision.reason,
                     ),
                 )
             continue
