@@ -55,7 +55,7 @@ def sell_signal(**metadata) -> Signal:
     )
 
 
-def test_strict_sell_scorer_allows_clean_bearish_breakdown():
+def test_sell_scorer_keeps_clean_bearish_breakdown_unpenalized():
     breakdown = SellSignalScorer().score_breakdown(
         snapshot=snapshot(),
         candle=candle(),
@@ -63,61 +63,72 @@ def test_strict_sell_scorer_allows_clean_bearish_breakdown():
     )
 
     sell_metadata = breakdown.score_metadata['sell_score']
-
     assert breakdown.sell_specific_penalty == 0.0
-    assert breakdown.sell_score_cap is None
-    assert breakdown.sell_rejection_reason is None
-    assert sell_metadata['market_context_alignment'] == 'not_available_v1'
-    assert sell_metadata['symbol_relative_strength'] is None
     assert 'breakdown_ok' in sell_metadata['sell_score_components']
-    assert 'short_snapshot_momentum_ok' in sell_metadata['sell_score_components']
+    assert 'short_snapshot_momentum_ok' in (
+        sell_metadata['sell_score_components']
+    )
 
 
-def test_strict_sell_scorer_rejects_momentum_against_short():
-    breakdown = SellSignalScorer().score_breakdown(
+def test_sell_scorer_penalizes_momentum_against_short_without_veto():
+    healthy = SellSignalScorer().score_breakdown(
+        snapshot=snapshot(),
+        candle=candle(),
+        signal=sell_signal(),
+    )
+    opposed = SellSignalScorer().score_breakdown(
         snapshot=snapshot(),
         candle=candle(),
         signal=sell_signal(snapshot_momentum_percent=0.05),
     )
 
-    assert breakdown.sell_rejection_reason == 'candidate_selection_sell_momentum_against_short'
-    assert breakdown.sell_score_cap == 95.0
-    assert breakdown.sell_specific_penalty >= 25.0
-    assert 'snapshot_momentum_against_short' in breakdown.score_metadata['sell_score']['sell_score_components']
+    assert opposed.sell_specific_penalty >= 25.0
+    assert opposed.final_score < healthy.final_score
+    assert 'snapshot_momentum_against_short' in (
+        opposed.score_metadata['sell_score']['sell_score_components']
+    )
 
 
-def test_strict_sell_scorer_caps_weak_breakdown():
-    breakdown = SellSignalScorer().score_breakdown(
+def test_sell_scorer_penalizes_weak_breakdown_without_cap():
+    healthy = SellSignalScorer().score_breakdown(
+        snapshot=snapshot(),
+        candle=candle(),
+        signal=sell_signal(),
+    )
+    weak = SellSignalScorer().score_breakdown(
         snapshot=snapshot(),
         candle=candle(),
         signal=sell_signal(breakdown_percent=0.02),
     )
 
-    assert breakdown.sell_rejection_reason is None
-    assert breakdown.sell_score_cap == 105.0
-    assert breakdown.sell_specific_penalty >= 14.0
-    assert 'weak_breakdown' in breakdown.score_metadata['sell_score']['sell_score_components']
+    assert weak.sell_specific_penalty >= 14.0
+    assert weak.final_score < healthy.final_score
+    assert 'weak_breakdown' in (
+        weak.score_metadata['sell_score']['sell_score_components']
+    )
 
 
-def test_strict_sell_scorer_penalizes_snapshot_rebound_against_short():
+def test_sell_scorer_penalizes_snapshot_rebound_against_short():
     breakdown = SellSignalScorer().score_breakdown(
         snapshot=snapshot(),
         candle=candle(),
         signal=sell_signal(snapshot_close_position_percent=72.0),
     )
 
-    assert breakdown.sell_score_cap == 95.0
     assert breakdown.sell_specific_penalty >= 20.0
-    assert 'severe_snapshot_rebound_against_short' in breakdown.score_metadata['sell_score']['sell_score_components']
+    assert 'severe_snapshot_rebound_against_short' in (
+        breakdown.score_metadata['sell_score']['sell_score_components']
+    )
 
 
-def test_strict_sell_scorer_penalizes_choppy_sell_context():
+def test_sell_scorer_penalizes_choppy_context_without_cap():
     breakdown = SellSignalScorer().score_breakdown(
         snapshot=snapshot(),
         candle=candle(),
         signal=sell_signal(regime_noise_ratio=2.2),
     )
 
-    assert breakdown.sell_score_cap == 105.0
     assert breakdown.sell_specific_penalty >= 12.0
-    assert 'choppy_market_for_sell' in breakdown.score_metadata['sell_score']['sell_score_components']
+    assert 'choppy_market_for_sell' in (
+        breakdown.score_metadata['sell_score']['sell_score_components']
+    )
