@@ -30,7 +30,6 @@ class AnalysisReadySummaryAggregator(DailySummaryAggregator):
             analysis = _attribute(item, 'tp_feasibility')
             candidate = _attribute(item, 'candidate')
             effective_sl_tp = _attribute(item, 'effective_sl_tp')
-
             for component in _as_list(_attribute(analysis, 'penalty_components')):
                 self.tp_penalty_components[str(component)] += 1
             for component in _as_list(_attribute(analysis, 'cap_components')):
@@ -39,14 +38,12 @@ class AnalysisReadySummaryAggregator(DailySummaryAggregator):
                 _attribute(analysis, 'hard_rejection_components')
             ):
                 self.tp_hard_rejection_components[str(component)] += 1
-
             source = _attribute(effective_sl_tp, 'source') or _attribute(
                 analysis,
                 'sl_tp_source',
             )
             if source:
                 self.effective_sl_tp_sources[str(source)] += 1
-
             metadata = _attribute(candidate, 'tp_feasibility_metadata') or {}
             adaptation = _attribute(metadata, 'adaptation')
             if adaptation:
@@ -54,8 +51,6 @@ class AnalysisReadySummaryAggregator(DailySummaryAggregator):
 
     def to_dict(self) -> dict[str, Any]:
         summary = super().to_dict()
-        summary['schema_version'] = 4
-
         market_data = summary['market_data']
         trading_snapshots = market_data.get('accepted', 0)
         market_data['trading_snapshots_processed'] = trading_snapshots
@@ -65,13 +60,6 @@ class AnalysisReadySummaryAggregator(DailySummaryAggregator):
             0,
             accepted_total - trading_snapshots,
         )
-
-        decisions = summary['decisions']
-        decisions['pre_entry_router_tradable_total'] = decisions.pop(
-            'tradable_now_total',
-            0,
-        )
-
         summary['tp_feasibility'] = {
             'penalty_components': dict(self.tp_penalty_components),
             'cap_components': dict(self.tp_cap_components),
