@@ -94,7 +94,7 @@ def confirmed_pending(manager):
         pending,
         state=PendingEntryState.CONFIRMED,
         observed_candles=2,
-        confirmation_type='persistence',
+        confirmation_type='retest_continuation',
     )
     return pending.key
 
@@ -116,7 +116,7 @@ def test_wait_candidate_registers_pending_and_stays_out_of_tradable_set():
     assert journal.events[0][0] == 'pending_entry_registered'
 
 
-def test_confirmed_candidate_does_not_wait_for_the_same_confirmation_twice():
+def test_confirmed_candidate_is_not_auto_promoted_by_legacy_readiness():
     manager = PendingEntryManager()
     journal = FakeJournal()
     pending_key = confirmed_pending(manager)
@@ -129,11 +129,11 @@ def test_confirmed_candidate_does_not_wait_for_the_same_confirmation_twice():
         trade_journal=journal,
     )
 
-    assert recalculated.readiness == CandidateReadiness.TRADABLE_NOW
-    assert recalculated.readiness_reason == 'pending_confirmation_obtained'
-    assert tradable == [recalculated]
-    assert rejected == []
-    assert manager.get(pending_key).state == PendingEntryState.CONFIRMED
+    assert recalculated.readiness == CandidateReadiness.WAIT_CONFIRMATION
+    assert recalculated.readiness_reason == 'insufficient_runway'
+    assert tradable == []
+    assert rejected[0].reason == 'insufficient_runway'
+    assert manager.get(pending_key).state == PendingEntryState.WAITING
     assert manager.get(pending_key).observed_candles == 2
 
 
