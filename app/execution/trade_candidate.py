@@ -9,6 +9,7 @@ from app.strategies.signals import Signal
 if TYPE_CHECKING:
     from app.instruments.models import EntryDecisionConfig
     from app.market.market_context import CandidateMarketContext
+    from app.market.multi_timeframe import MultiTimeframeContext
 
 
 @dataclass(frozen=True)
@@ -43,4 +44,5 @@ class TradeCandidate:
     tp_probability_metadata: dict[str, Any] = field(default_factory=dict)
     candidate_id: str = ''
     market_context: CandidateMarketContext | None = None
+    multi_timeframe_context: MultiTimeframeContext | None = None
     entry_decision_config: EntryDecisionConfig | None = None
