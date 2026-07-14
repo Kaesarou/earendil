@@ -7,6 +7,7 @@ from app.execution.trade_candidate import TradeCandidate
 from app.execution.trade_executor import TradeExecutor
 from app.journal.jsonl_journal import JsonlJournal
 from app.market.candle_builder import CandleBuilder
+from app.market.market_context import CandidateMarketContext, MarketContextService
 from app.market.models import Candle, MarketSnapshot
 from app.market.session_rules import TradingSessionDecision
 from app.persistence.position_store import PositionStore
@@ -42,6 +43,8 @@ def process_symbol(
     loop_id: int | None = None,
     pending_entry_manager: PendingEntryManager | None = None,
     cooldown_guard: TradeCooldownGuard | None = None,
+    market_context_service: MarketContextService | None = None,
+    run_id: str = '',
 ) -> TradeCandidate | None:
     snapshot = snapshot or broker.get_market_snapshot(symbol)
     market_journal.write('market_snapshot', {'symbol': symbol, 'snapshot': snapshot, 'loop_id': loop_id})
@@ -97,6 +100,8 @@ def process_symbol(
         loop_id=loop_id,
         pending_entry_manager=pending_entry_manager,
         cooldown_guard=cooldown_guard,
+        market_context_service=market_context_service,
+        run_id=run_id,
     )
 
 
@@ -113,9 +118,19 @@ def process_closed_candle(
     loop_id: int | None = None,
     pending_entry_manager: PendingEntryManager | None = None,
     cooldown_guard: TradeCooldownGuard | None = None,
+    market_context_service: MarketContextService | None = None,
+    run_id: str = '',
 ) -> TradeCandidate | None:
     candle_journal.write('candle_closed', {'symbol': symbol, 'candle': closed_candle, 'loop_id': loop_id})
     signal = strategy.on_candle(closed_candle)
+    market_context = _market_context_for_signal(
+        symbol=symbol,
+        signal_action=signal.action,
+        closed_candle=closed_candle,
+        market_context_service=market_context_service,
+        pending_entry_manager=pending_entry_manager,
+    )
+
     if pending_entry_manager is not None:
         confirmed_candidate = advance_pending_entry(
             symbol=symbol,
@@ -127,6 +142,8 @@ def process_closed_candle(
             pending_manager=pending_entry_manager,
             cooldown_guard=cooldown_guard,
             trade_journal=trade_journal,
+            market_context=market_context,
+            run_id=run_id,
         )
         if confirmed_candidate is not None:
             return confirmed_candidate
@@ -141,10 +158,59 @@ def process_closed_candle(
     if not session_decision.new_entries_allowed:
         return _write_rejected_decision(symbol=symbol, snapshot=snapshot, closed_candle=closed_candle, signal=signal, reason=session_decision.reason, risk_manager=risk_manager, trade_journal=trade_journal, session_decision=session_decision, loop_id=loop_id)
 
-    candidate = build_trade_candidate(symbol=symbol, snapshot=snapshot, candle=closed_candle, signal=signal, session_key=session_decision.session_key)
-    trade_journal.write('candidate_detected', {'symbol': symbol, 'snapshot': snapshot, 'candle': closed_candle, 'signal': signal, 'candidate': candidate, 'session_decision': session_decision, 'instrument_profile': risk_manager.instrument_profile_for(symbol), 'risk_profile': risk_manager.risk_profile_for(symbol), 'loop_id': loop_id})
-    logger.info('Trade candidate detected | symbol=%s | action=%s | score=%s | reason=%s', symbol, signal.action, candidate.score, candidate.rank_reason)
+    candidate = build_trade_candidate(
+        symbol=symbol,
+        snapshot=snapshot,
+        candle=closed_candle,
+        signal=signal,
+        session_key=session_decision.session_key,
+        run_id=run_id,
+        market_context=market_context,
+    )
+    trade_journal.write(
+        'candidate_detected',
+        {
+            'candidate_id': candidate.candidate_id,
+            'symbol': symbol,
+            'snapshot': snapshot,
+            'candle': closed_candle,
+            'signal': signal,
+            'candidate': candidate,
+            'market_context': market_context,
+            'session_decision': session_decision,
+            'instrument_profile': risk_manager.instrument_profile_for(symbol),
+            'risk_profile': risk_manager.risk_profile_for(symbol),
+            'loop_id': loop_id,
+        },
+    )
+    logger.info('Trade candidate detected | candidate_id=%s | symbol=%s | action=%s | score=%s | reason=%s', candidate.candidate_id, symbol, signal.action, candidate.score, candidate.rank_reason)
     return candidate
+
+
+def _market_context_for_signal(
+    *,
+    symbol: str,
+    signal_action: str,
+    closed_candle: Candle,
+    market_context_service: MarketContextService | None,
+    pending_entry_manager: PendingEntryManager | None,
+) -> CandidateMarketContext | None:
+    if market_context_service is None:
+        return None
+    side = signal_action if signal_action in {'BUY', 'SELL'} else None
+    if side is None and pending_entry_manager is not None:
+        pending = next(
+            (item for item in pending_entry_manager.snapshot() if item.symbol == symbol),
+            None,
+        )
+        side = pending.side if pending is not None else None
+    if side is None:
+        return None
+    return market_context_service.build_candidate_context(
+        symbol=symbol,
+        side=side,
+        as_of=closed_candle.closed_at,
+    )
 
 
 def _write_rejected_decision(*, symbol: str, snapshot: MarketSnapshot, closed_candle: Candle, signal, reason: str, risk_manager: RiskManager, session_decision: TradingSessionDecision | None, trade_journal: JsonlJournal, loop_id: int | None = None) -> None:
