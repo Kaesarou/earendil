@@ -130,6 +130,7 @@ def process_closed_candle(
         market_context_service=market_context_service,
         pending_entry_manager=pending_entry_manager,
     )
+    entry_decision_config = _entry_decision_config(risk_manager, symbol)
 
     if pending_entry_manager is not None:
         confirmed_candidate = advance_pending_entry(
@@ -143,6 +144,7 @@ def process_closed_candle(
             cooldown_guard=cooldown_guard,
             trade_journal=trade_journal,
             market_context=market_context,
+            entry_decision_config=entry_decision_config,
             run_id=run_id,
         )
         if confirmed_candidate is not None:
@@ -166,6 +168,7 @@ def process_closed_candle(
         session_key=session_decision.session_key,
         run_id=run_id,
         market_context=market_context,
+        entry_decision_config=entry_decision_config,
     )
     trade_journal.write(
         'candidate_detected',
@@ -185,6 +188,13 @@ def process_closed_candle(
     )
     logger.info('Trade candidate detected | candidate_id=%s | symbol=%s | action=%s | score=%s | reason=%s', candidate.candidate_id, symbol, signal.action, candidate.score, candidate.rank_reason)
     return candidate
+
+
+def _entry_decision_config(risk_manager: RiskManager, symbol: str):
+    registry = getattr(risk_manager, 'instrument_registry', None)
+    if registry is None:
+        return None
+    return registry.config_for(symbol).entry_decision
 
 
 def _market_context_for_signal(
