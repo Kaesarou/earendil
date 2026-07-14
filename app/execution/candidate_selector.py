@@ -83,9 +83,9 @@ def select_evaluated_trade_candidates(
     selected_candidates: list[EvaluatedTradeCandidate] = []
     rejected_candidates: list[RejectedEvaluatedCandidateSelection] = []
     decision_engine = EntryDecisionEngine()
-    decision_config = EntryDecisionConfig()
 
     for original in rank_evaluated_trade_candidates(evaluated_candidates):
+        decision_config = original.candidate.entry_decision_config or EntryDecisionConfig()
         decision = original.entry_decision or decision_engine.evaluate(
             evaluated_candidate=original,
             config=decision_config,
