@@ -1,6 +1,9 @@
 from datetime import datetime, timezone
 
-from app.execution.candidate_economics import CandidateEconomics, EvaluatedTradeCandidate
+from app.execution.candidate_economics import (
+    CandidateEconomics,
+    EvaluatedTradeCandidate,
+)
 from app.execution.candidate_ranking import build_trade_candidate
 from app.execution.candidate_selector import (
     CandidateSelectionConfig,
@@ -14,7 +17,12 @@ from app.strategies.signals import Signal
 TEST_SESSION_KEY = 'test-session'
 
 
-def snapshot(symbol: str, bid: float = 99.9, ask: float = 100.1, last: float = 100.0) -> MarketSnapshot:
+def snapshot(
+    symbol: str,
+    bid: float = 99.9,
+    ask: float = 100.1,
+    last: float = 100.0,
+) -> MarketSnapshot:
     return MarketSnapshot(
         symbol=symbol,
         bid=bid,
@@ -77,7 +85,9 @@ def candidate(
     )
 
 
-def evaluated_candidate_with_profit(candidate: TradeCandidate) -> EvaluatedTradeCandidate:
+def evaluated_candidate_with_profit(
+    candidate: TradeCandidate,
+) -> EvaluatedTradeCandidate:
     return EvaluatedTradeCandidate(
         candidate=candidate,
         economics=CandidateEconomics(
@@ -99,38 +109,44 @@ def test_candidate_selector_keeps_only_top_n_candidates():
         candidate('TWO', signal(session_move_percent=1.2)),
         candidate('THREE', signal(session_move_percent=0.8)),
     ]
-
     result = select_trade_candidates(
         candidates,
         CandidateSelectionConfig(top_n=2, min_score=0.0),
     )
-
     assert len(result.selected_candidates) == 2
     assert len(result.rejected_candidates) == 1
-    assert result.rejected_candidates[0].reason == 'candidate_selection_outside_top_n'
+    assert result.rejected_candidates[0].reason == (
+        'candidate_selection_outside_top_n'
+    )
 
 
 def test_candidate_selector_only_rejects_candidates_outside_top_n():
     candidates = [
-        candidate('BEST', signal(session_move_percent=2.0, trend_strength_percent=0.6)),
-        candidate('SECOND', signal(session_move_percent=1.5, trend_strength_percent=0.4)),
-        candidate('THIRD', signal(session_move_percent=1.0, trend_strength_percent=0.3)),
-        candidate('FOURTH', signal(session_move_percent=0.5, trend_strength_percent=0.1)),
+        candidate(
+            'BEST',
+            signal(session_move_percent=2.0, trend_strength_percent=0.6),
+        ),
+        candidate(
+            'SECOND',
+            signal(session_move_percent=1.5, trend_strength_percent=0.4),
+        ),
+        candidate(
+            'THIRD',
+            signal(session_move_percent=1.0, trend_strength_percent=0.3),
+        ),
+        candidate(
+            'FOURTH',
+            signal(session_move_percent=0.5, trend_strength_percent=0.1),
+        ),
     ]
-
     result = select_trade_candidates(
         candidates,
         CandidateSelectionConfig(top_n=2, min_score=0.0),
     )
-
-    assert len(result.selected_candidates) == 2
-    assert len(result.rejected_candidates) == 2
-
-    assert [candidate.symbol for candidate in result.selected_candidates] == [
+    assert [item.symbol for item in result.selected_candidates] == [
         'BEST',
         'SECOND',
     ]
-
     assert {
         rejected.candidate.symbol: rejected.reason
         for rejected in result.rejected_candidates
@@ -139,27 +155,25 @@ def test_candidate_selector_only_rejects_candidates_outside_top_n():
         'FOURTH': 'candidate_selection_outside_top_n',
     }
 
-    assert {
-        rejected.reason
-        for rejected in result.rejected_candidates
-    } == {'candidate_selection_outside_top_n'}
 
-
-def test_candidate_selector_does_not_reject_high_spread_candidate_before_risk_manager():
+def test_candidate_selector_does_not_reject_high_spread_before_risk():
     high_spread = candidate(
         'WIDE',
-        candidate_snapshot=snapshot('WIDE', bid=98.0, ask=102.0, last=100.0),
+        candidate_snapshot=snapshot(
+            'WIDE',
+            bid=98.0,
+            ask=102.0,
+            last=100.0,
+        ),
     )
-
     result = select_trade_candidates(
         [high_spread],
         CandidateSelectionConfig(top_n=0, min_score=0.0),
     )
-
     assert result.selected_candidates == [high_spread]
 
 
-def test_evaluated_candidate_selector_rejects_expected_profit_too_low():
+def test_evaluated_selector_rejects_expected_profit_too_low():
     evaluated_candidate = EvaluatedTradeCandidate(
         candidate=TradeCandidate(
             symbol='LOW',
@@ -181,17 +195,17 @@ def test_evaluated_candidate_selector_rejects_expected_profit_too_low():
             required_min_expected_net_profit_amount=0.10,
         ),
     )
-
     result = select_evaluated_trade_candidates(
         [evaluated_candidate],
         CandidateSelectionConfig(top_n=0, min_score=0.0),
     )
-
     assert not result.selected_candidates
-    assert result.rejected_candidates[0].reason == 'candidate_selection_expected_profit_too_low_after_fees'
+    assert result.rejected_candidates[0].reason == (
+        'candidate_selection_expected_profit_too_low_after_fees'
+    )
 
 
-def test_evaluated_candidate_selector_rejects_tp_feasibility_hard_reject_before_min_score():
+def test_evaluated_selector_prioritizes_tp_hard_reject_over_min_score():
     candidate_with_hard_rejection = TradeCandidate(
         symbol='LOW',
         snapshot=snapshot('LOW'),
@@ -200,19 +214,21 @@ def test_evaluated_candidate_selector_rejects_tp_feasibility_hard_reject_before_
         score=10.0,
         rank_reason='test',
         session_key=TEST_SESSION_KEY,
-        tp_feasibility_hard_rejection_reason='candidate_selection_tp_feasibility_cost_to_tp_absurd',
+        tp_feasibility_hard_rejection_reason=(
+            'candidate_selection_tp_feasibility_cost_to_tp_absurd'
+        ),
     )
-
     result = select_evaluated_trade_candidates(
         [evaluated_candidate_with_profit(candidate_with_hard_rejection)],
         CandidateSelectionConfig(top_n=0, min_score=100.0),
     )
-
     assert not result.selected_candidates
-    assert result.rejected_candidates[0].reason == 'candidate_selection_tp_feasibility_cost_to_tp_absurd'
+    assert result.rejected_candidates[0].reason == (
+        'candidate_selection_tp_feasibility_cost_to_tp_absurd'
+    )
 
 
-def test_evaluated_candidate_selector_rejects_penalized_tp_feasibility_candidate_by_min_score():
+def test_penalized_candidate_is_rejected_only_by_visible_min_score():
     penalized_candidate = TradeCandidate(
         symbol='LOW',
         snapshot=snapshot('LOW'),
@@ -222,13 +238,12 @@ def test_evaluated_candidate_selector_rejects_penalized_tp_feasibility_candidate
         rank_reason='test',
         session_key=TEST_SESSION_KEY,
         tp_feasibility_penalty=30.0,
-        tp_feasibility_score_cap=95.0,
     )
-
     result = select_evaluated_trade_candidates(
         [evaluated_candidate_with_profit(penalized_candidate)],
         CandidateSelectionConfig(top_n=0, min_score=100.0),
     )
-
     assert not result.selected_candidates
-    assert result.rejected_candidates[0].reason == 'candidate_selection_score_too_low'
+    assert result.rejected_candidates[0].reason == (
+        'candidate_selection_score_too_low'
+    )
