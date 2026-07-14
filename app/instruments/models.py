@@ -2,6 +2,7 @@ from dataclasses import dataclass, field
 from enum import StrEnum
 
 from app.market.data_quality import MarketDataQualityConfig
+from app.market.multi_timeframe import MultiTimeframeConfig
 from app.risk.stale_position_guard import StalePositionConfig
 from app.risk.trade_cooldown import TradeCooldownConfig
 from app.risk.trade_cost_model import TradeCostConfig
@@ -130,3 +131,4 @@ class InstrumentConfig:
     market_data_quality: MarketDataQualityConfig = field(default_factory=MarketDataQualityConfig)
     market_context: MarketContextConfig = field(default_factory=MarketContextConfig)
     entry_decision: EntryDecisionConfig = field(default_factory=EntryDecisionConfig)
+    multi_timeframe: MultiTimeframeConfig = field(default_factory=MultiTimeframeConfig)
