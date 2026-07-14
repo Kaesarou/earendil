@@ -90,6 +90,22 @@ class PendingEntryManager:
     def get(self, key: str) -> PendingEntry | None:
         return self._entries.get(key)
 
+    def get_by_id(self, pending_entry_id: str) -> PendingEntry | None:
+        return next(
+            (
+                pending
+                for pending in self._entries.values()
+                if pending.pending_entry_id == pending_entry_id
+            ),
+            None,
+        )
+
+    def remove_by_id(self, pending_entry_id: str) -> PendingEntry | None:
+        pending = self.get_by_id(pending_entry_id)
+        if pending is None:
+            return None
+        return self._entries.pop(pending.key, None)
+
     def register(
         self,
         *,
@@ -331,18 +347,15 @@ class PendingEntryManager:
 
     def mark_waiting_after_recalculation(
         self,
-        pending_key: str,
+        pending_entry_id: str,
     ) -> None:
-        pending = self._entries.get(pending_key)
+        pending = self.get_by_id(pending_entry_id)
         if pending is not None:
-            self._entries[pending_key] = replace(
+            self._entries[pending.key] = replace(
                 pending,
                 state=PendingEntryState.WAITING,
                 confirmation_type=None,
             )
-
-    def remove(self, pending_key: str) -> PendingEntry | None:
-        return self._entries.pop(pending_key, None)
 
     def invalidate_session(
         self,
