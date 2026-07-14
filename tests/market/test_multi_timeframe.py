@@ -95,12 +95,15 @@ def add_minutes(
     *,
     symbol: str = 'AAPL',
 ) -> None:
+    session_start = session.session_start_time or start
     for minute in range(count):
-        close = 100 + minute * 0.1
+        opened_at = start + timedelta(minutes=minute)
+        elapsed_minutes = int((opened_at - session_start).total_seconds() // 60)
+        close = 100 + elapsed_minutes * 0.1
         service.on_base_candle(
             symbol=symbol,
             candle=candle_at(
-                start + timedelta(minutes=minute),
+                opened_at,
                 open_price=close - 0.05,
                 high=close + 0.1,
                 low=close - 0.1,
@@ -226,19 +229,7 @@ def test_maturity_moves_from_unavailable_to_provisional_to_ready():
     assert provisional.ready_alignment == MultiTimeframeAlignment.UNKNOWN
     assert provisional.alignment_including_provisional == MultiTimeframeAlignment.ALIGNED
 
-    for minute in range(2, 4):
-        close = 100 + minute * 0.1
-        service.on_base_candle(
-            symbol='AAPL',
-            candle=candle_at(
-                start + timedelta(minutes=minute),
-                open_price=close - 0.05,
-                high=close + 0.1,
-                low=close - 0.1,
-                close=close,
-            ),
-            session_decision=session,
-        )
+    add_minutes(service, session, start + timedelta(minutes=2), 2)
     ready = service.build_context(
         symbol='AAPL', side='BUY', as_of=start + timedelta(minutes=4), session_decision=session
     )
@@ -261,19 +252,7 @@ def test_default_windows_make_m5_provisional_after_8_bars_and_ready_after_15():
     assert provisional.maturity_by_timeframe['m5'] == TimeframeMaturity.PROVISIONAL
     assert provisional.features_by_timeframe['m5'].bar_count == 8
 
-    for minute in range(40, 75):
-        close = 100 + minute * 0.1
-        service.on_base_candle(
-            symbol='AAPL',
-            candle=candle_at(
-                start + timedelta(minutes=minute),
-                open_price=close - 0.05,
-                high=close + 0.1,
-                low=close - 0.1,
-                close=close,
-            ),
-            session_decision=session,
-        )
+    add_minutes(service, session, start + timedelta(minutes=40), 35)
     ready = service.build_context(
         symbol='AAPL', side='BUY', as_of=start + timedelta(minutes=75), session_decision=session
     )
@@ -291,8 +270,8 @@ def test_features_and_opening_range_are_built_from_closed_bars_only():
         candle_at(start + timedelta(minutes=2), open_price=103, high=106, low=102, close=105),
         candle_at(start + timedelta(minutes=3), open_price=105, high=107, low=104, close=106),
     )
-    for candle in candles:
-        service.on_base_candle(symbol='AAPL', candle=candle, session_decision=session)
+    for item in candles:
+        service.on_base_candle(symbol='AAPL', candle=item, session_decision=session)
 
     context = service.build_context(
         symbol='AAPL', side='BUY', as_of=start + timedelta(minutes=4), session_decision=session
