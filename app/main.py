@@ -16,7 +16,8 @@ from app.journal.run_manifest import build_run_id, build_run_manifest, finalize_
 from app.market.candle_builder import CandleBuilder
 from app.market.data_quality import MarketDataStatus, MarketDataValidator
 from app.market.market_context import MarketContextService
-from app.market.multi_timeframe import MultiTimeframeService, expected_sampling_quality
+from app.market.multi_timeframe import expected_sampling_quality
+from app.market.session_timeframe_service import FullSessionMultiTimeframeService
 from app.market.timeframes import BarCompleteness
 from app.persistence.position_store import PositionStore
 from app.persistence.trade_cooldown_store import TradeCooldownStore
@@ -140,7 +141,7 @@ def main() -> None:
         instrument_registry=instrument_registry,
         benchmark_symbols=settings.benchmark_symbols_by_asset_class(),
     )
-    multi_timeframe_service = MultiTimeframeService(
+    multi_timeframe_service = FullSessionMultiTimeframeService(
         {
             symbol: instrument_registry.config_for(symbol).multi_timeframe
             for symbol in symbols
