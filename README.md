@@ -430,7 +430,7 @@ Python 3.12 or newer is required.
 python -m venv .venv
 source .venv/bin/activate
 python -m pip install --upgrade pip
-python -m pip install -e "[dev]"
+python -m pip install -e ".[dev]"
 cp .env.example .env
 python -m app.main
 ```
@@ -514,7 +514,7 @@ The raw snapshot and candle streams make counterfactual simulation possible: rej
 Install development dependencies:
 
 ```bash
-python -m pip install -e "[dev]"
+python -m pip install -e ".[dev]"
 ```
 
 Run the full test suite:
