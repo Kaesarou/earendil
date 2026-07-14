@@ -9,7 +9,13 @@ from app.journal.jsonl_journal import JsonlJournal
 from app.market.candle_builder import CandleBuilder
 from app.market.market_context import CandidateMarketContext, MarketContextService
 from app.market.models import Candle, MarketSnapshot
+from app.market.multi_timeframe import (
+    MultiTimeframeContext,
+    MultiTimeframeService,
+    MultiTimeframeUpdate,
+)
 from app.market.session_rules import TradingSessionDecision
+from app.market.timeframes import BarCompleteness
 from app.persistence.position_store import PositionStore
 from app.persistence.trade_cooldown_store import TradeCooldownStore
 from app.risk.models import TradePlan
@@ -44,6 +50,7 @@ def process_symbol(
     pending_entry_manager: PendingEntryManager | None = None,
     cooldown_guard: TradeCooldownGuard | None = None,
     market_context_service: MarketContextService | None = None,
+    multi_timeframe_service: MultiTimeframeService | None = None,
     run_id: str = '',
 ) -> TradeCandidate | None:
     snapshot = snapshot or broker.get_market_snapshot(symbol)
@@ -101,6 +108,7 @@ def process_symbol(
         pending_entry_manager=pending_entry_manager,
         cooldown_guard=cooldown_guard,
         market_context_service=market_context_service,
+        multi_timeframe_service=multi_timeframe_service,
         run_id=run_id,
     )
 
@@ -119,17 +127,52 @@ def process_closed_candle(
     pending_entry_manager: PendingEntryManager | None = None,
     cooldown_guard: TradeCooldownGuard | None = None,
     market_context_service: MarketContextService | None = None,
+    multi_timeframe_service: MultiTimeframeService | None = None,
     run_id: str = '',
 ) -> TradeCandidate | None:
     candle_journal.write('candle_closed', {'symbol': symbol, 'candle': closed_candle, 'loop_id': loop_id})
+    if multi_timeframe_service is not None and session_decision is not None:
+        update = multi_timeframe_service.on_base_candle(
+            symbol=symbol,
+            candle=closed_candle,
+            session_decision=session_decision,
+        )
+        _write_multi_timeframe_update(
+            candle_journal=candle_journal,
+            symbol=symbol,
+            update=update,
+            loop_id=loop_id,
+        )
+
     signal = strategy.on_candle(closed_candle)
-    market_context = _market_context_for_signal(
+    side = _side_for_signal(
         symbol=symbol,
         signal_action=signal.action,
-        closed_candle=closed_candle,
-        market_context_service=market_context_service,
         pending_entry_manager=pending_entry_manager,
     )
+    market_context = _market_context_for_side(
+        symbol=symbol,
+        side=side,
+        closed_candle=closed_candle,
+        market_context_service=market_context_service,
+    )
+    multi_timeframe_context = _multi_timeframe_context_for_side(
+        symbol=symbol,
+        side=side,
+        closed_candle=closed_candle,
+        session_decision=session_decision,
+        multi_timeframe_service=multi_timeframe_service,
+    )
+    if multi_timeframe_context is not None:
+        trade_journal.write(
+            'multi_timeframe_context_built',
+            {
+                'symbol': symbol,
+                'side': side,
+                'multi_timeframe_context': multi_timeframe_context,
+                'loop_id': loop_id,
+            },
+        )
     entry_decision_config = _entry_decision_config(risk_manager, symbol)
 
     if pending_entry_manager is not None:
@@ -144,6 +187,7 @@ def process_closed_candle(
             cooldown_guard=cooldown_guard,
             trade_journal=trade_journal,
             market_context=market_context,
+            multi_timeframe_context=multi_timeframe_context,
             entry_decision_config=entry_decision_config,
             run_id=run_id,
         )
@@ -168,6 +212,7 @@ def process_closed_candle(
         session_key=session_decision.session_key,
         run_id=run_id,
         market_context=market_context,
+        multi_timeframe_context=multi_timeframe_context,
         entry_decision_config=entry_decision_config,
     )
     trade_journal.write(
@@ -180,6 +225,7 @@ def process_closed_candle(
             'signal': signal,
             'candidate': candidate,
             'market_context': market_context,
+            'multi_timeframe_context': multi_timeframe_context,
             'session_decision': session_decision,
             'instrument_profile': risk_manager.instrument_profile_for(symbol),
             'risk_profile': risk_manager.risk_profile_for(symbol),
@@ -190,6 +236,39 @@ def process_closed_candle(
     return candidate
 
 
+def _write_multi_timeframe_update(
+    *,
+    candle_journal: JsonlJournal,
+    symbol: str,
+    update: MultiTimeframeUpdate,
+    loop_id: int | None,
+) -> None:
+    for gap in update.gaps:
+        candle_journal.write(
+            'candle_gap_detected',
+            {
+                'symbol': symbol,
+                'gap': gap,
+                'loop_id': loop_id,
+            },
+        )
+    for bar in update.closed_bars:
+        event_type = 'timeframe_bar_closed'
+        if bar.completeness == BarCompleteness.INCOMPLETE:
+            event_type = 'timeframe_bar_incomplete'
+        elif bar.completeness == BarCompleteness.PARTIAL:
+            event_type = 'timeframe_bar_partial'
+        candle_journal.write(
+            event_type,
+            {
+                'symbol': symbol,
+                'timeframe': bar.timeframe.name.lower(),
+                'timeframe_bar': bar,
+                'loop_id': loop_id,
+            },
+        )
+
+
 def _entry_decision_config(risk_manager: RiskManager, symbol: str):
     registry = getattr(risk_manager, 'instrument_registry', None)
     if registry is None:
@@ -197,29 +276,58 @@ def _entry_decision_config(risk_manager: RiskManager, symbol: str):
     return registry.config_for(symbol).entry_decision
 
 
-def _market_context_for_signal(
+def _side_for_signal(
     *,
     symbol: str,
     signal_action: str,
+    pending_entry_manager: PendingEntryManager | None,
+) -> str | None:
+    if signal_action in {'BUY', 'SELL'}:
+        return signal_action
+    if pending_entry_manager is None:
+        return None
+    pending = next(
+        (item for item in pending_entry_manager.snapshot() if item.symbol == symbol),
+        None,
+    )
+    return pending.side if pending is not None else None
+
+
+def _market_context_for_side(
+    *,
+    symbol: str,
+    side: str | None,
     closed_candle: Candle,
     market_context_service: MarketContextService | None,
-    pending_entry_manager: PendingEntryManager | None,
 ) -> CandidateMarketContext | None:
-    if market_context_service is None:
-        return None
-    side = signal_action if signal_action in {'BUY', 'SELL'} else None
-    if side is None and pending_entry_manager is not None:
-        pending = next(
-            (item for item in pending_entry_manager.snapshot() if item.symbol == symbol),
-            None,
-        )
-        side = pending.side if pending is not None else None
-    if side is None:
+    if market_context_service is None or side is None:
         return None
     return market_context_service.build_candidate_context(
         symbol=symbol,
         side=side,
         as_of=closed_candle.closed_at,
+    )
+
+
+def _multi_timeframe_context_for_side(
+    *,
+    symbol: str,
+    side: str | None,
+    closed_candle: Candle,
+    session_decision: TradingSessionDecision | None,
+    multi_timeframe_service: MultiTimeframeService | None,
+) -> MultiTimeframeContext | None:
+    if (
+        multi_timeframe_service is None
+        or session_decision is None
+        or side is None
+    ):
+        return None
+    return multi_timeframe_service.build_context(
+        symbol=symbol,
+        side=side,
+        as_of=closed_candle.closed_at,
+        session_decision=session_decision,
     )
 
 
