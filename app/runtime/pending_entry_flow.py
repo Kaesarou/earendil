@@ -70,7 +70,8 @@ def advance_pending_entry(
         cooldown_active=cooldown_active,
     )
     write_pending_events(trade_journal, observation.events)
-    if observation.confirmed_pending is None or observation.confirmation_signal is None:
+    confirmed = observation.confirmed_pending
+    if confirmed is None or observation.confirmation_signal is None:
         return None
 
     candidate = build_trade_candidate(
@@ -78,8 +79,10 @@ def advance_pending_entry(
         snapshot=snapshot,
         candle=candle,
         signal=observation.confirmation_signal,
-        session_key=observation.confirmed_pending.session_key,
+        session_key=confirmed.session_key,
         run_id=run_id,
+        origin_candidate_id=confirmed.origin_candidate_id,
+        pending_entry_id=confirmed.pending_entry_id,
         market_context=market_context,
         multi_timeframe_context=multi_timeframe_context,
         entry_decision_config=entry_decision_config,
@@ -88,6 +91,8 @@ def advance_pending_entry(
         'candidate_detected',
         {
             'candidate_id': candidate.candidate_id,
+            'origin_candidate_id': candidate.origin_candidate_id,
+            'pending_entry_id': candidate.pending_entry_id,
             'symbol': symbol,
             'snapshot': snapshot,
             'candle': candle,
@@ -98,7 +103,6 @@ def advance_pending_entry(
             'session_decision': session_decision,
             'instrument_profile': risk_manager.instrument_profile_for(symbol),
             'risk_profile': risk_profile,
-            'entry_origin': 'pending_confirmation',
         },
     )
     return candidate
@@ -109,18 +113,20 @@ def write_pending_events(
     events: tuple[PendingEntryEvent, ...],
 ) -> None:
     for event in events:
-        trade_journal.write(
-            event.event_type,
-            {
-                'symbol': event.pending.symbol,
-                'side': event.pending.side,
-                'session_key': event.pending.session_key,
-                'pending_entry': event.pending,
-                'reason': event.reason,
-                'observed_candles': event.pending.observed_candles,
-                'confirmation_type': event.pending.confirmation_type,
-                'structural_invalidation_price': (
-                    event.pending.structural_invalidation_price
-                ),
-            },
-        )
+        payload = {
+            'candidate_id': event.pending.origin_candidate_id,
+            'origin_candidate_id': event.pending.origin_candidate_id,
+            'pending_entry_id': event.pending.pending_entry_id,
+            'symbol': event.pending.symbol,
+            'side': event.pending.side,
+            'session_key': event.pending.session_key,
+            'pending_entry': event.pending,
+            'reason': event.reason,
+            'observed_candles': event.pending.observed_candles,
+            'confirmation_type': event.pending.confirmation_type,
+            'structural_invalidation_price': (
+                event.pending.structural_invalidation_price
+            ),
+        }
+        payload.update(event.diagnostics)
+        trade_journal.write(event.event_type, payload)
