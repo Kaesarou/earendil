@@ -12,6 +12,7 @@ from app.strategies.signals import Signal
 from app.utils.commons import spread_percent
 
 if TYPE_CHECKING:
+    from app.instruments.models import EntryDecisionConfig
     from app.market.market_context import CandidateMarketContext
 
 _DEFAULT_SELL_SCORER = SellSignalScorer()
@@ -26,6 +27,7 @@ def build_trade_candidate(
     *,
     run_id: str = '',
     market_context: 'CandidateMarketContext | None' = None,
+    entry_decision_config: 'EntryDecisionConfig | None' = None,
 ) -> TradeCandidate:
     score_breakdown = _score_breakdown(
         snapshot=snapshot,
@@ -73,6 +75,7 @@ def build_trade_candidate(
             candle=candle,
         ),
         market_context=market_context,
+        entry_decision_config=entry_decision_config,
     )
 
 
