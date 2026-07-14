@@ -1,5 +1,8 @@
 from datetime import datetime, timezone
 
+import pytest
+from pydantic import ValidationError
+
 from app.config.settings import Settings
 from app.instruments.instrument_registry import InstrumentRegistry
 from app.journal.run_manifest import (
@@ -39,25 +42,46 @@ def test_run_manifest_captures_analysis_configuration_without_broker_secrets():
     snapshot = manifest['runtime']['settings']
     assert 'ETORO_API_KEY' not in snapshot
     assert 'ETORO_USER_KEY' not in snapshot
+    assert 'CANDLE_TIMEFRAME_SECONDS' not in snapshot
     assert manifest['strategy']['profile'] == 'balanced'
     assert manifest['runtime']['watchlist'] == ['AAPL']
     assert manifest['analysis_sources']['run_id'] == 'run-test'
     assert manifest['analysis_sources']['raw_market_retained'] is True
+    assert manifest['analysis_sources']['multi_timeframe_bars_retained'] is True
     assert manifest['files']['manifest'].endswith('runs/run-test/run_manifest.json')
     assert manifest['code']['source_sha256']
+    assert manifest['models']['multi_timeframe'] == 'multi_timeframe_features_v1'
+    assert manifest['runtime']['multi_timeframe']['base_timeframe_seconds'] == 60
+    assert manifest['runtime']['multi_timeframe']['supported_timeframes_seconds'] == [
+        60,
+        300,
+        900,
+        1800,
+        3600,
+    ]
 
 
-def test_sanitized_settings_keeps_non_sensitive_analysis_values():
+def test_removed_candle_timeframe_setting_is_rejected():
+    with pytest.raises(ValidationError):
+        Settings(
+            WATCHLIST='AAPL',
+            EQUITY_US_SYMBOLS='AAPL',
+            CANDLE_TIMEFRAME_SECONDS=300,
+        )
+
+
+def test_sanitized_settings_keeps_non_sensitive_runtime_values():
     settings = Settings(
         WATCHLIST='AAPL',
         EQUITY_US_SYMBOLS='AAPL',
-        CANDLE_TIMEFRAME_SECONDS=300,
+        POLL_INTERVAL_SECONDS=15,
     )
 
     snapshot = sanitized_settings_snapshot(settings)
 
     assert snapshot['WATCHLIST'] == 'AAPL'
-    assert snapshot['CANDLE_TIMEFRAME_SECONDS'] == 300
+    assert snapshot['POLL_INTERVAL_SECONDS'] == 15
+    assert 'CANDLE_TIMEFRAME_SECONDS' not in snapshot
 
 
 def test_run_artifact_path_creates_stable_per_run_location():
