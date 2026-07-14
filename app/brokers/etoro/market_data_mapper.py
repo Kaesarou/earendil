@@ -3,7 +3,7 @@ from app.brokers.etoro.scalar_extractors import (
     extract_int,
     extract_optional_float,
 )
-from app.market.models import MarketSnapshot
+from app.market.models import MarketSnapshot, PriceSource
 
 
 def to_market_snapshot(
@@ -28,11 +28,9 @@ def to_market_snapshots(
 
     for rate in rates:
         instrument_id = extract_int(rate, ('instrumentID', 'instrumentId'))
-
         symbol = symbol_by_instrument_id.get(instrument_id)
         if symbol is None:
             raise ValueError(f'Unable to find cached symbol by instrument_id={instrument_id}.')
-
         bid = extract_float(rate, ('Bid', 'bid', 'bidPrice'))
         ask = extract_float(rate, ('Ask', 'ask', 'askPrice'))
 
@@ -40,15 +38,17 @@ def to_market_snapshots(
             rate,
             ('Last', 'last', 'lastPrice', 'Price', 'price', 'lastExecution'),
         )
-
+        price_source = PriceSource.BROKER_LAST
         if last is None:
             last = (bid + ask) / 2
+            price_source = PriceSource.BID_ASK_MIDPOINT
 
         result[symbol] = MarketSnapshot.now(
             symbol=symbol,
             bid=bid,
             ask=ask,
             last=last,
+            price_source=price_source,
         )
 
     return result
