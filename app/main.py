@@ -8,11 +8,14 @@ from app.execution.position_tracker import PositionTracker
 from app.execution.trade_candidate import TradeCandidate
 from app.execution.trade_executor import TradeExecutor
 from app.instruments.instrument_registry import InstrumentRegistry
+from app.instruments.models import AssetClass
 from app.journal.analysis_journal import build_analysis_journal
 from app.journal.jsonl_journal import JsonlJournal
 from app.journal.raw_data_journal import RawDataJournal
 from app.journal.run_manifest import build_run_id, build_run_manifest, finalize_run_manifest, run_artifact_path, write_run_manifest
 from app.market.candle_builder import CandleBuilder
+from app.market.data_quality import MarketDataStatus, MarketDataValidator
+from app.market.market_context import MarketContextService
 from app.persistence.position_store import PositionStore
 from app.persistence.trade_cooldown_store import TradeCooldownStore
 from app.risk.position_sizing import FixedPercentPositionSizing
@@ -56,6 +59,25 @@ def build_strategies(symbols: list[str], instrument_registry: InstrumentRegistry
     return {symbol: TrendStrategy(instrument_registry.config_for(symbol).trend) for symbol in symbols}
 
 
+def _context_symbols_for_active_assets(
+    *,
+    settings: Settings,
+    instrument_registry: InstrumentRegistry,
+    active_symbols: list[str],
+) -> dict[str, AssetClass]:
+    active_assets = {
+        instrument_registry.resolve(symbol).asset_class for symbol in active_symbols
+    }
+    result: dict[str, AssetClass] = {}
+    for asset_class, symbols in settings.benchmark_symbols_by_asset_class().items():
+        if asset_class not in active_assets:
+            continue
+        for symbol in symbols:
+            if symbol not in active_symbols:
+                result[symbol] = asset_class
+    return result
+
+
 def main() -> None:
     started_at = datetime.now(timezone.utc)
     run_id = build_run_id(started_at)
@@ -87,11 +109,12 @@ def main() -> None:
     cooldown_store = TradeCooldownStore(settings.position_store_path)
     cooldown_guard = TradeCooldownGuard(cooldown_store)
     pending_entry_manager = PendingEntryManager()
-    trade_journal = build_analysis_journal(
-        settings,
-        run_id=run_id,
-        profile=strategy_profile.name,
+    market_data_validator = MarketDataValidator()
+    market_context_service = MarketContextService(
+        instrument_registry=instrument_registry,
+        benchmark_symbols=settings.benchmark_symbols_by_asset_class(),
     )
+    trade_journal = build_analysis_journal(settings, run_id=run_id, profile=strategy_profile.name)
     market_journal = RawDataJournal(JsonlJournal(settings.market_log_path, run_id=run_id, stream_name='market'), trade_journal.record_raw_event)
     candle_journal = RawDataJournal(JsonlJournal(settings.candle_journal_path, run_id=run_id, stream_name='candles'), trade_journal.record_raw_event)
     heartbeat = RuntimeHeartbeat(settings.runtime_heartbeat_minutes)
@@ -111,26 +134,82 @@ def main() -> None:
         while True:
             loop_id += 1
             try:
-                cooldown_store.delete_expired(datetime.now(timezone.utc))
+                loop_now = datetime.now(timezone.utc)
+                cooldown_store.delete_expired(loop_now)
                 reconcile_externally_closed_positions(broker=broker, position_tracker=position_tracker, risk_manager=risk_manager, position_store=position_store, cooldown_store=cooldown_store, trade_journal=trade_journal, is_broker_authorization_error=is_broker_authorization_error)
                 candidates: list[TradeCandidate] = []
-                symbols_to_fetch, session_decisions, started_symbols, completed_session_keys = filter_symbols_by_trading_session(symbols=symbols, instrument_registry=instrument_registry, trading_session_service=trading_session_service, trading_session_state=trading_session_state, now=datetime.now(timezone.utc))
+                symbols_to_fetch, session_decisions, started_symbols, completed_session_keys = filter_symbols_by_trading_session(symbols=symbols, instrument_registry=instrument_registry, trading_session_service=trading_session_service, trading_session_state=trading_session_state, now=loop_now)
                 for session_key in completed_session_keys:
                     risk_manager.reset_session_trades(session_key)
+                    market_context_service.reset_session(session_key)
                     write_pending_events(trade_journal, pending_entry_manager.invalidate_session(session_key))
                     trade_journal.write('session_trades_reset', {'session_key': session_key, 'loop_id': loop_id})
                 for symbol in started_symbols:
+                    market_data_validator.reset_symbol(symbol)
                     candle_builders[symbol] = CandleBuilder(timeframe_seconds=settings.candle_timeframe_seconds)
                     strategies[symbol] = TrendStrategy(instrument_registry.config_for(symbol).trend)
                     trade_journal.write('session_started', {'symbol': symbol, 'session_decision': session_decisions[symbol], 'loop_id': loop_id})
                 for symbol, session_decision in session_decisions.items():
                     trade_journal.write('session_state', {'symbol': symbol, 'session_decision': session_decision, 'loop_id': loop_id})
 
-                snapshots = broker.get_market_snapshots(symbols_to_fetch) if symbols_to_fetch else {}
+                trading_snapshots = broker.get_market_snapshots(symbols_to_fetch) if symbols_to_fetch else {}
+                context_asset_classes = _context_symbols_for_active_assets(
+                    settings=settings,
+                    instrument_registry=instrument_registry,
+                    active_symbols=symbols_to_fetch,
+                )
+                context_snapshots = {}
+                if context_asset_classes:
+                    try:
+                        context_snapshots = broker.get_market_snapshots(list(context_asset_classes))
+                    except Exception as exc:
+                        if is_broker_authorization_error(exc):
+                            raise
+                        trade_journal.write('market_context_fetch_error', {'symbols': list(context_asset_classes), 'message': str(exc), 'loop_id': loop_id})
+
+                all_snapshots = {**context_snapshots, **trading_snapshots}
+                requested_symbols = [*symbols_to_fetch, *context_asset_classes]
+                for symbol, snapshot in all_snapshots.items():
+                    market_journal.write('market_snapshot_received', {'symbol': symbol, 'snapshot': snapshot, 'loop_id': loop_id})
+                quality_configs = {
+                    symbol: instrument_registry.config_for(symbol).market_data_quality
+                    for symbol in symbols_to_fetch
+                }
+                quality_configs.update(
+                    {
+                        symbol: strategy_profile.instrument_config_for_asset_class(asset_class).market_data_quality
+                        for symbol, asset_class in context_asset_classes.items()
+                    }
+                )
+                validated_batch = market_data_validator.validate_batch(
+                    loop_id=loop_id,
+                    requested_symbols=requested_symbols,
+                    snapshots=all_snapshots,
+                    configs=quality_configs,
+                    now=loop_now,
+                )
+                trade_journal.write('market_batch_validated', {'batch': validated_batch, 'loop_id': loop_id})
+                for result in validated_batch.results.values():
+                    if result.status == MarketDataStatus.ACCEPTED:
+                        if result.reasons:
+                            trade_journal.write('market_data_jump_confirmed', {'symbol': result.symbol, 'validation': result, 'loop_id': loop_id})
+                    elif result.status == MarketDataStatus.QUARANTINED:
+                        trade_journal.write('market_data_quarantined', {'symbol': result.symbol, 'validation': result, 'loop_id': loop_id})
+                    else:
+                        trade_journal.write('market_data_rejected', {'symbol': result.symbol, 'validation': result, 'loop_id': loop_id})
+
+                market_context_service.update(
+                    snapshots=validated_batch.accepted,
+                    session_decisions=session_decisions,
+                    context_asset_classes=context_asset_classes,
+                )
+
                 for symbol in symbols_to_fetch:
+                    snapshot = validated_batch.accepted.get(symbol)
+                    if snapshot is None:
+                        continue
                     try:
                         session_decision = session_decisions[symbol]
-                        snapshot = snapshots[symbol]
                         candidate = process_symbol(
                             symbol=symbol,
                             broker=broker,
@@ -150,6 +229,8 @@ def main() -> None:
                             loop_id=loop_id,
                             pending_entry_manager=pending_entry_manager,
                             cooldown_guard=cooldown_guard,
+                            market_context_service=market_context_service,
+                            run_id=run_id,
                         )
                         force_close_positions_before_session_end(symbol=symbol, snapshot=snapshot, session_decision=session_decision, executor=executor, position_tracker=position_tracker, risk_manager=risk_manager, trade_journal=trade_journal, position_store=position_store, cooldown_store=cooldown_store, is_broker_authorization_error=is_broker_authorization_error)
                         if candidate is not None:
