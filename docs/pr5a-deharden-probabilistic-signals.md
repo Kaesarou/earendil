@@ -52,7 +52,8 @@ PR5-A removes rather than deprecates:
 - late-entry, SELL and TP-feasibility score caps;
 - late-entry and SELL rejection fields;
 - TP-feasibility `cap_components`;
-- the diagnostic `WAIT_CONFIRMATION` readiness state.
+- the diagnostic `WAIT_CONFIRMATION` readiness state;
+- spread-invalidation summary fields from schema v5.
 
 The canonical candidate score is now the base setup score minus explicit probabilistic penalties. There is no hidden cap below the selection threshold.
 
@@ -90,6 +91,10 @@ The TP-probability model is versioned as `heuristic_v2` and now logs:
 
 These values are diagnostic only in PR5-A. They do not select or reject a candidate.
 
+## Analysis contract
+
+PR5-A publishes **summary and run-manifest schema v6**. The schema change is intentional because spread invalidation metrics are removed and replaced by confirmation-block metrics, while expectancy fields are added to standalone entry decisions.
+
 ## Deliberate non-goals
 
 PR5-A does not change:
@@ -123,6 +128,7 @@ After the first full PR5-A run, PR5-B design will evaluate:
 
 The next run must show:
 
+- summary and run-manifest schema v6;
 - `entry_router_v4`;
 - `heuristic_v2`;
 - no `market_context_opposed` hard rejection;
