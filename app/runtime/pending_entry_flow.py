@@ -1,6 +1,7 @@
 from app.execution.candidate_ranking import build_trade_candidate
 from app.execution.trade_candidate import TradeCandidate
 from app.journal.jsonl_journal import JsonlJournal
+from app.market.market_context import CandidateMarketContext, ContextAlignment
 from app.market.models import Candle, MarketSnapshot
 from app.market.session_rules import TradingSessionDecision
 from app.risk.risk_manager import RiskManager
@@ -21,12 +22,21 @@ def advance_pending_entry(
     pending_manager: PendingEntryManager,
     cooldown_guard: TradeCooldownGuard | None,
     trade_journal: JsonlJournal,
+    market_context: CandidateMarketContext | None = None,
+    run_id: str = '',
 ) -> TradeCandidate | None:
     active_pending = next(
         (item for item in pending_manager.snapshot() if item.symbol == symbol),
         None,
     )
     if active_pending is None:
+        return None
+
+    if market_context is not None and market_context.alignment == ContextAlignment.OPPOSED:
+        write_pending_events(
+            trade_journal,
+            pending_manager.invalidate_symbol(symbol, 'market_context_opposed'),
+        )
         return None
 
     risk_profile = risk_manager.risk_profile_for(symbol)
@@ -65,15 +75,19 @@ def advance_pending_entry(
         candle=candle,
         signal=observation.confirmation_signal,
         session_key=observation.confirmed_pending.session_key,
+        run_id=run_id,
+        market_context=market_context,
     )
     trade_journal.write(
         'candidate_detected',
         {
+            'candidate_id': candidate.candidate_id,
             'symbol': symbol,
             'snapshot': snapshot,
             'candle': candle,
             'signal': observation.confirmation_signal,
             'candidate': candidate,
+            'market_context': market_context,
             'session_decision': session_decision,
             'instrument_profile': risk_manager.instrument_profile_for(symbol),
             'risk_profile': risk_profile,
