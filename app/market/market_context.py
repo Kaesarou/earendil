@@ -1,5 +1,6 @@
+from collections import deque
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from enum import StrEnum
 from typing import Mapping
 
@@ -10,7 +11,8 @@ from app.market.models import MarketSnapshot
 from app.market.session_rules import TradingSessionDecision
 
 
-MARKET_CONTEXT_VERSION = 'market_context_v1'
+MARKET_CONTEXT_VERSION = 'market_context_v2'
+MARKET_CONTEXT_HISTORY_RETENTION_SECONDS = 24 * 60 * 60
 
 
 class MarketDirection(StrEnum):
@@ -87,6 +89,12 @@ class CandidateMarketContext:
     reasons: tuple[str, ...]
 
 
+@dataclass(frozen=True)
+class _HistoricalSnapshot:
+    session_key: str | None
+    snapshot: MarketSnapshot
+
+
 class MarketContextService:
     def __init__(
         self,
@@ -105,6 +113,7 @@ class MarketContextService:
             for symbol, sector in (sector_by_symbol or DEFAULT_SECTOR_BY_SYMBOL).items()
         }
         self._latest: dict[str, MarketSnapshot] = {}
+        self._history: dict[str, deque[_HistoricalSnapshot]] = {}
         self._asset_class_by_symbol: dict[str, AssetClass] = {}
         self._session_key_by_symbol: dict[str, str] = {}
         self._session_open: dict[tuple[str, str], float] = {}
@@ -120,6 +129,10 @@ class MarketContextService:
             symbol: key
             for symbol, key in self._session_key_by_symbol.items()
             if key != session_key
+        }
+        self._history = {
+            symbol: deque(item for item in history if item.session_key != session_key)
+            for symbol, history in self._history.items()
         }
 
     def update(
@@ -156,12 +169,14 @@ class MarketContextService:
                 asset_class = context_assets.get(symbol)
             if asset_class is None:
                 continue
+
             self._latest[symbol] = snapshot
             self._asset_class_by_symbol[symbol] = asset_class
             session_key = self._session_key_by_symbol.get(symbol) or active_session_by_asset.get(asset_class)
             if session_key:
                 self._session_key_by_symbol[symbol] = session_key
                 self._session_open.setdefault((session_key, symbol), snapshot.last)
+            self._append_history(symbol=symbol, snapshot=snapshot, session_key=session_key)
 
     def build_candidate_context(
         self,
@@ -238,7 +253,12 @@ class MarketContextService:
             if snapshot is None or not self._is_fresh(snapshot, as_of, config):
                 continue
             session_return = self._session_return(symbol, session_key)
-            momentum = self._momentum_percent(symbol, config.momentum_window_seconds)
+            momentum = self._momentum_percent(
+                symbol=symbol,
+                session_key=session_key,
+                window_seconds=config.momentum_window_seconds,
+                maximum_reference_lag_seconds=config.maximum_context_age_seconds,
+            )
             return BenchmarkContext(
                 symbol=symbol,
                 available=True,
@@ -333,7 +353,11 @@ class MarketContextService:
             if value is not None
         ]
         valid = len(returns)
-        advancing_ratio = sum(value > config.unchanged_band_percent for value in returns) / valid if valid else None
+        advancing_ratio = (
+            sum(value > config.unchanged_band_percent for value in returns) / valid
+            if valid
+            else None
+        )
         available = valid >= config.minimum_sector_sample_size
         direction = (
             _breadth_direction(advancing_ratio or 0.0, config)
@@ -359,15 +383,64 @@ class MarketContextService:
             return None
         return ((snapshot.last - opening) / opening) * 100
 
-    def _momentum_percent(self, symbol: str, window_seconds: int) -> float | None:
+    def _append_history(
+        self,
+        *,
+        symbol: str,
+        snapshot: MarketSnapshot,
+        session_key: str | None,
+    ) -> None:
+        history = self._history.setdefault(symbol, deque())
+        actual_timestamp = _as_utc(snapshot.timestamp)
+        if history:
+            latest_timestamp = _as_utc(history[-1].snapshot.timestamp)
+            if actual_timestamp < latest_timestamp:
+                return
+            item = _HistoricalSnapshot(session_key=session_key, snapshot=snapshot)
+            if actual_timestamp == latest_timestamp:
+                history[-1] = item
+            else:
+                history.append(item)
+        else:
+            history.append(_HistoricalSnapshot(session_key=session_key, snapshot=snapshot))
+
+        cutoff = actual_timestamp - timedelta(
+            seconds=MARKET_CONTEXT_HISTORY_RETENTION_SECONDS
+        )
+        while history and _as_utc(history[0].snapshot.timestamp) < cutoff:
+            history.popleft()
+
+    def _momentum_percent(
+        self,
+        *,
+        symbol: str,
+        session_key: str | None,
+        window_seconds: int,
+        maximum_reference_lag_seconds: int,
+    ) -> float | None:
         snapshot = self._latest.get(symbol)
-        if snapshot is None:
+        if snapshot is None or session_key is None or window_seconds <= 0:
             return None
-        session_key = self._session_key_by_symbol.get(symbol)
-        opening = self._session_open.get((session_key, symbol)) if session_key else None
-        if opening is None or opening <= 0:
+
+        target_time = _as_utc(snapshot.timestamp) - timedelta(seconds=window_seconds)
+        reference: MarketSnapshot | None = None
+        for item in reversed(self._history.get(symbol, ())):
+            if item.session_key != session_key:
+                continue
+            if _as_utc(item.snapshot.timestamp) <= target_time:
+                reference = item.snapshot
+                break
+
+        if reference is None or reference.last <= 0:
             return None
-        return ((snapshot.last - opening) / opening) * 100
+
+        reference_lag = (
+            target_time - _as_utc(reference.timestamp)
+        ).total_seconds()
+        if reference_lag > maximum_reference_lag_seconds:
+            return None
+
+        return ((snapshot.last - reference.last) / reference.last) * 100
 
     def _is_symbol_fresh(
         self,
@@ -392,7 +465,11 @@ def _market_regime(
     benchmark: MarketDirection,
     breadth: MarketDirection,
 ) -> MarketRegime:
-    known = [direction for direction in (benchmark, breadth) if direction != MarketDirection.UNKNOWN]
+    known = [
+        direction
+        for direction in (benchmark, breadth)
+        if direction != MarketDirection.UNKNOWN
+    ]
     if not known:
         return MarketRegime.UNKNOWN
     if all(direction == MarketDirection.BULLISH for direction in known):
@@ -413,10 +490,14 @@ def _context_alignment(
     if regime == MarketRegime.UNKNOWN:
         return ContextAlignment.UNKNOWN
     aligned_regime = (
-        regime == MarketRegime.RISK_ON if normalized_side == 'BUY' else regime == MarketRegime.RISK_OFF
+        regime == MarketRegime.RISK_ON
+        if normalized_side == 'BUY'
+        else regime == MarketRegime.RISK_OFF
     )
     opposed_regime = (
-        regime == MarketRegime.RISK_OFF if normalized_side == 'BUY' else regime == MarketRegime.RISK_ON
+        regime == MarketRegime.RISK_OFF
+        if normalized_side == 'BUY'
+        else regime == MarketRegime.RISK_ON
     )
     opposed_sector = (
         sector_direction == MarketDirection.BEARISH
@@ -438,13 +519,13 @@ def _context_reasons(
     regime: MarketRegime,
     alignment: ContextAlignment,
 ) -> tuple[str, ...]:
-    reasons: list[str] = []
-    reasons.append('benchmark_available' if benchmark.available else 'benchmark_unavailable')
-    reasons.append('breadth_available' if breadth.available else 'breadth_unavailable')
-    reasons.append('sector_available' if sector.available else 'sector_unavailable')
-    reasons.append(f'market_regime_{regime.value}')
-    reasons.append(f'context_alignment_{alignment.value}')
-    return tuple(reasons)
+    return (
+        'benchmark_available' if benchmark.available else 'benchmark_unavailable',
+        'breadth_available' if breadth.available else 'breadth_unavailable',
+        'sector_available' if sector.available else 'sector_unavailable',
+        f'market_regime_{regime.value}',
+        f'context_alignment_{alignment.value}',
+    )
 
 
 def _direction_from_return(
