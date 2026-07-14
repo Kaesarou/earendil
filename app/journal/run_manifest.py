@@ -104,7 +104,7 @@ def build_run_manifest(
     actual_manifest_path = manifest_path or settings.run_manifest_path
     actual_summary_path = summary_path or settings.daily_summary_path
     return {
-        'schema_version': 5,
+        'schema_version': 6,
         'run_id': run_id,
         'status': 'running',
         'started_at': started_at,
