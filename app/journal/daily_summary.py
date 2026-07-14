@@ -32,14 +32,20 @@ class DailySummaryAggregator:
         self.orders_by_symbol = Counter()
         self.cooldowns_by_symbol = Counter()
         self.wait_confirmation_by_reason = Counter()
+        self.entry_decisions_by_reason = Counter()
+        self.market_data_rejections_by_reason = Counter()
+        self.market_context_regimes = Counter()
         self.total_decisions = self.hold_total = self.candidate_total = 0
         self.selected_total = self.rejected_total = 0
         self.orders_submitted = self.orders_failed = self.orders_filled = 0
         self.positions_opened = self.positions_closed = self.positions_restored = 0
         self.force_closed = self.broker_failures = 0
         self.market_snapshots = self.candles_closed = 0
+        self.market_data_received = self.market_data_accepted = 0
+        self.market_data_quarantined = self.market_data_rejected = 0
         self.tradable_now_total = self.wait_confirmation_total = 0
         self.rejected_by_feasibility_total = self.orders_from_pending = 0
+        self.enter_now_total = self.wait_for_retest_total = self.skip_total = 0
         self.pending_position_ids = set()
         self.gross_pnl_estimated = self.estimated_costs = self.net_pnl_estimated = 0.0
         self.pnl_from_pending = 0.0
@@ -51,7 +57,21 @@ class DailySummaryAggregator:
 
     def record(self, event_type: str, payload: dict[str, Any]) -> None:
         self.event_counts[event_type] += 1
-        if event_type == 'market_snapshot': self.market_snapshots += 1
+        if event_type == 'market_snapshot_received':
+            self.market_data_received += 1
+        elif event_type == 'market_snapshot':
+            self.market_snapshots += 1
+            self.market_data_accepted += 1
+        elif event_type == 'market_data_quarantined':
+            self.market_data_quarantined += 1
+            self._record_market_data_reason(payload)
+        elif event_type == 'market_data_rejected':
+            self.market_data_rejected += 1
+            self._record_market_data_reason(payload)
+        elif event_type == 'market_context_built':
+            regime = _attribute(payload.get('market_context'), 'regime')
+            value = _attribute(regime, 'value') or regime or 'unknown'
+            self.market_context_regimes[str(value)] += 1
         elif event_type == 'candle_closed': self.candles_closed += 1
         elif event_type == 'candidate_detected': self._record_candidate_detected(payload)
         elif event_type == 'candidate_tp_feasibility': self._record_candidate_readiness(payload)
@@ -81,6 +101,11 @@ class DailySummaryAggregator:
         elif event_type == 'session_state_changed': self._append_limited(self.session_transitions, self._session_transition_summary(payload))
         elif self._is_error_event(event_type): self._record_error(event_type, payload)
 
+    def _record_market_data_reason(self, payload):
+        validation = payload.get('validation')
+        for reason in _as_list(_attribute(validation, 'reasons')):
+            self.market_data_rejections_by_reason[str(reason)] += 1
+
     def _record_candidate_readiness(self, payload):
         for item in _as_list(payload.get('evaluated_candidates')):
             readiness = _attribute(item, 'readiness')
@@ -91,6 +116,25 @@ class DailySummaryAggregator:
                 self.wait_confirmation_total += 1
                 self.wait_confirmation_by_reason[str(reason)] += 1
             elif value == 'reject': self.rejected_by_feasibility_total += 1
+
+    def _record_entry_decision(self, item):
+        candidate = _candidate_from_selection_item(item)
+        evaluated = _attribute(item, 'evaluated_candidate') or item
+        decision = _attribute(evaluated, 'entry_decision')
+        if decision is None:
+            return
+        action = _attribute(decision, 'action')
+        value = _attribute(action, 'value') or action
+        reason = _attribute(decision, 'reason') or 'unknown_entry_decision'
+        self.entry_decisions_by_reason[str(reason)] += 1
+        if value == 'enter_now': self.enter_now_total += 1
+        elif value == 'wait_for_retest': self.wait_for_retest_total += 1
+        elif value == 'skip': self.skip_total += 1
+        context = _attribute(candidate, 'market_context')
+        regime = _attribute(context, 'regime')
+        regime_value = _attribute(regime, 'value') or regime
+        if regime_value is not None:
+            self.market_context_regimes[str(regime_value)] += 1
 
     def finalize(self):
         self.ended_at = datetime.now(timezone.utc)
@@ -103,11 +147,26 @@ class DailySummaryAggregator:
 
     def to_dict(self):
         return {
-            'schema_version': 1, 'run_id': self.run_id, 'strategy': self.strategy,
+            'schema_version': 2, 'run_id': self.run_id, 'strategy': self.strategy,
             'profile': self.profile, 'journal_detail_level': self.journal_detail_level,
             'started_at': self.started_at, 'ended_at': self.ended_at,
             'events': {'by_type': dict(self.event_counts)},
-            'market_data': {'snapshots': self.market_snapshots, 'candles_closed': self.candles_closed},
+            'market_data': {
+                'snapshots': self.market_snapshots,
+                'candles_closed': self.candles_closed,
+                'received': self.market_data_received,
+                'accepted': self.market_data_accepted,
+                'quarantined': self.market_data_quarantined,
+                'rejected': self.market_data_rejected,
+                'rejections_by_reason': dict(self.market_data_rejections_by_reason),
+            },
+            'market_context': {'by_regime': dict(self.market_context_regimes)},
+            'entry_decisions': {
+                'enter_now': self.enter_now_total,
+                'wait_for_retest': self.wait_for_retest_total,
+                'skip': self.skip_total,
+                'by_reason': dict(self.entry_decisions_by_reason),
+            },
             'decisions': {
                 'total': self.total_decisions, 'hold_total': self.hold_total,
                 'candidate_total': self.candidate_total, 'selected_total': self.selected_total,
@@ -155,8 +214,11 @@ class DailySummaryAggregator:
         rejected_source = _as_list(payload.get('rejected_evaluated_candidates')) or rejected
         self.selected_total += len(selected_source)
         self.rejected_total += len(rejected_source)
-        for item in selected_source: self._append_limited(self.selected_candidates, self._selected_candidate_summary(item))
+        for item in selected_source:
+            self._record_entry_decision(item)
+            self._append_limited(self.selected_candidates, self._selected_candidate_summary(item))
         for item in rejected_source:
+            self._record_entry_decision(item)
             reason = _attribute(item, 'reason') or 'unknown_rejection'
             self.rejection_reasons[str(reason)] += 1
             self._remember_top_rejected_candidate(item, str(reason))
@@ -228,21 +290,31 @@ def _is_pending_candidate(candidate):
     metadata = _attribute(_attribute(candidate, 'signal'), 'metadata') or {}
     return _attribute(metadata, 'entry_origin') == 'pending_confirmation'
 
+
 def _candidate_from_selection_item(item):
     direct = _attribute(item, 'candidate')
     if direct is not None: return direct
     evaluated = _attribute(item, 'evaluated_candidate')
     if evaluated is not None: return _attribute(evaluated, 'candidate')
-    return item
+    direct_evaluated = _attribute(item, 'candidate')
+    return direct_evaluated or item
+
 
 def _candidate_summary(candidate):
     signal = _attribute(candidate, 'signal')
-    return {'symbol': _attribute(candidate, 'symbol'), 'side': _attribute(signal, 'action'), 'score': _candidate_score(candidate), 'reason': _attribute(candidate, 'rank_reason')}
+    return {'candidate_id': _attribute(candidate, 'candidate_id'), 'symbol': _attribute(candidate, 'symbol'), 'side': _attribute(signal, 'action'), 'score': _candidate_score(candidate), 'reason': _attribute(candidate, 'rank_reason')}
+
+
 def _candidate_score(candidate):
     score = _attribute(candidate, 'score'); return None if score is None else float(score)
+
+
 def _attribute(value, name):
     if value is None: return None
     return value.get(name) if isinstance(value, dict) else getattr(value, name, None)
+
+
 def _as_list(value):
     if value is None: return []
-    return value if isinstance(value, list) else list(value)
+    if isinstance(value, (list, tuple)): return list(value)
+    return list(value)
