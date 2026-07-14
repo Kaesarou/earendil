@@ -4,6 +4,7 @@ import pytest
 from pydantic import ValidationError
 
 from app.config.settings import Settings
+from app.execution.entry_decision import ENTRY_DECISION_MODEL_VERSION
 from app.instruments.instrument_registry import InstrumentRegistry
 from app.journal.run_manifest import (
     build_run_manifest,
@@ -48,8 +49,11 @@ def test_run_manifest_captures_analysis_configuration_without_broker_secrets():
     assert manifest['analysis_sources']['run_id'] == 'run-test'
     assert manifest['analysis_sources']['raw_market_retained'] is True
     assert manifest['analysis_sources']['multi_timeframe_bars_retained'] is True
+    assert 'candidate_timestamp' in manifest['analysis_sources']['analysis_ready_entry_fields']
+    assert 'estimated_total_cost_percent' in manifest['analysis_sources']['analysis_ready_entry_fields']
     assert manifest['files']['manifest'].endswith('runs/run-test/run_manifest.json')
     assert manifest['code']['source_sha256']
+    assert manifest['models']['entry_decision'] == ENTRY_DECISION_MODEL_VERSION
     assert manifest['models']['multi_timeframe'] == 'multi_timeframe_features_v1'
     assert manifest['runtime']['multi_timeframe']['base_timeframe_seconds'] == 60
     assert manifest['runtime']['multi_timeframe']['supported_timeframes_seconds'] == [
