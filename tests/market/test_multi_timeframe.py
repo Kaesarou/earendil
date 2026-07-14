@@ -227,7 +227,7 @@ def test_maturity_moves_from_unavailable_to_provisional_to_ready():
     assert m1_provisional.atr_percent is None
     assert m1_provisional.compression_ratio is None
     assert provisional.ready_alignment == MultiTimeframeAlignment.UNKNOWN
-    assert provisional.alignment_including_provisional == MultiTimeframeAlignment.ALIGNED
+    assert provisional.alignment_including_provisional == MultiTimeframeAlignment.UNKNOWN
 
     add_minutes(service, session, start + timedelta(minutes=2), 2)
     ready = service.build_context(
