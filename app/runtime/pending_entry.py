@@ -1,7 +1,9 @@
+import hashlib
 import math
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
 from enum import StrEnum
+from typing import Any
 
 from app.execution.candidate_economics import EvaluatedTradeCandidate
 from app.execution.trade_candidate import TradeCandidate
@@ -21,6 +23,8 @@ class PendingEntryState(StrEnum):
 
 @dataclass(frozen=True)
 class PendingEntry:
+    pending_entry_id: str
+    origin_candidate_id: str
     symbol: str
     side: str
     session_key: str
@@ -58,6 +62,7 @@ class PendingEntryEvent:
     event_type: str
     pending: PendingEntry
     reason: str
+    diagnostics: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -140,7 +145,10 @@ class PendingEntryManager:
             )
             return tuple(events)
 
+        origin_candidate_id = candidate.origin_candidate_id or candidate.candidate_id
         pending = PendingEntry(
+            pending_entry_id=_pending_entry_id(origin_candidate_id),
+            origin_candidate_id=origin_candidate_id,
             symbol=symbol,
             side=side,
             session_key=session_key,
@@ -207,7 +215,24 @@ class PendingEntryManager:
                 and max_spread_percent > 0
                 and spread_percent > max_spread_percent
             ):
-                events.append(self._invalidate(pending, 'spread_too_high'))
+                events.append(
+                    self._invalidate(
+                        pending,
+                        'spread_too_high',
+                        diagnostics={
+                            'spread_percent': round(float(spread_percent), 6),
+                            'maximum_allowed_spread_percent': round(
+                                float(max_spread_percent),
+                                6,
+                            ),
+                            'bid': snapshot.bid,
+                            'ask': snapshot.ask,
+                            'last': snapshot.last,
+                            'observed_at': snapshot.timestamp,
+                            'observed_candles': pending.observed_candles,
+                        },
+                    )
+                )
                 continue
 
             observed_candles = pending.observed_candles + 1
@@ -313,17 +338,25 @@ class PendingEntryManager:
             if pending.symbol == normalized_symbol
         )
 
-    def _invalidate(self, pending: PendingEntry, reason: str) -> PendingEntryEvent:
+    def _invalidate(
+        self,
+        pending: PendingEntry,
+        reason: str,
+        diagnostics: dict[str, Any] | None = None,
+    ) -> PendingEntryEvent:
         invalidated = replace(pending, state=PendingEntryState.INVALIDATED)
         self._entries.pop(pending.key, None)
-        return PendingEntryEvent('pending_entry_invalidated', invalidated, reason)
+        return PendingEntryEvent(
+            'pending_entry_invalidated',
+            invalidated,
+            reason,
+            diagnostics or {},
+        )
 
     def _confirmation_signal(self, *, signal: Signal, pending: PendingEntry) -> Signal:
         metadata = dict(signal.metadata or {})
         metadata.update(
             {
-                'entry_origin': 'pending_confirmation',
-                'pending_entry_id': pending.key,
                 'confirmation_type': pending.confirmation_type,
                 'structural_invalidation_price': pending.structural_invalidation_price,
                 'pending_observed_candles': pending.observed_candles,
@@ -370,3 +403,8 @@ class PendingEntryManager:
             and float(value) > 0
             for value in values
         )
+
+
+def _pending_entry_id(origin_candidate_id: str) -> str:
+    raw = f'pending|{origin_candidate_id}'
+    return hashlib.sha256(raw.encode('utf-8')).hexdigest()
