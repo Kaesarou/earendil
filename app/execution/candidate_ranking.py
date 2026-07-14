@@ -50,6 +50,7 @@ def build_trade_candidate(
         signal=signal,
         session_key=session_key,
         candle=candle,
+        pending_entry_id=pending_entry_id,
     )
 
     return TradeCandidate(
@@ -100,6 +101,7 @@ def _candidate_id(
     signal: Signal,
     session_key: str,
     candle: Candle,
+    pending_entry_id: str | None,
 ) -> str:
     metadata = signal.metadata or {}
     level_key = 'range_high' if signal.action == 'BUY' else 'range_low'
@@ -112,6 +114,7 @@ def _candidate_id(
             session_key,
             candle.closed_at.isoformat(),
             str(level),
+            pending_entry_id or '',
         )
     )
     return hashlib.sha256(raw.encode('utf-8')).hexdigest()
