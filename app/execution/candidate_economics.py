@@ -1,9 +1,8 @@
 from __future__ import annotations
 
-from dataclasses import dataclass, replace
+from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
-from app.execution.candidate_readiness import CandidateReadiness
 from app.execution.sl_tp_profile import EffectiveSlTp, EffectiveSlTpResolver
 from app.execution.trade_candidate import TradeCandidate
 from app.instruments.instrument_registry import InstrumentRegistry
@@ -12,6 +11,7 @@ from app.risk.trade_cost_model import TradeCostModel
 from app.utils.commons import spread_percent
 
 if TYPE_CHECKING:
+    from app.execution.entry_decision import EntryDecision
     from app.execution.scoring.tp_feasibility import TpFeasibilityAnalysis
     from app.execution.scoring.tp_probability import TpBeforeSlProbabilityEstimate
 
@@ -40,44 +40,7 @@ class EvaluatedTradeCandidate:
     effective_sl_tp: EffectiveSlTp | None = None
     tp_feasibility: TpFeasibilityAnalysis | None = None
     tp_probability: TpBeforeSlProbabilityEstimate | None = None
-    readiness: CandidateReadiness | None = None
-    readiness_reason: str | None = None
-
-    def __post_init__(self) -> None:
-        self._promote_confirmed_pending_candidate()
-
-    def _promote_confirmed_pending_candidate(self) -> None:
-        if self.readiness != CandidateReadiness.WAIT_CONFIRMATION:
-            return
-        metadata = self.candidate.signal.metadata or {}
-        if metadata.get('entry_origin') != 'pending_confirmation':
-            return
-        if not metadata.get('pending_entry_id'):
-            return
-
-        feasibility = self.tp_feasibility
-        hard_rejection_reason = getattr(
-            feasibility,
-            'tp_feasibility_hard_rejection_reason',
-            None,
-        )
-        if hard_rejection_reason is not None:
-            return
-
-        reason = 'pending_confirmation_obtained'
-        object.__setattr__(self, 'readiness', CandidateReadiness.TRADABLE_NOW)
-        object.__setattr__(self, 'readiness_reason', reason)
-
-        if feasibility is not None and hasattr(feasibility, 'readiness'):
-            object.__setattr__(
-                self,
-                'tp_feasibility',
-                replace(
-                    feasibility,
-                    readiness=CandidateReadiness.TRADABLE_NOW,
-                    readiness_reason=reason,
-                ),
-            )
+    entry_decision: EntryDecision | None = None
 
 
 class CandidateEconomicsEstimator:
@@ -124,7 +87,7 @@ class CandidateEconomicsEstimator:
                 estimated_total_cost=estimate.total_estimated_cost,
                 estimated_total_cost_percent=estimate.total_estimated_cost_percent,
                 min_expected_net_profit_percent=estimate.min_expected_net_profit_percent,
-                required_min_expected_net_profit_amount=estimate.required_min_expected_net_profit_amount,
+                required_min_expected_net_profit_amount=estimate.required_min_expected_profit_amount,
                 effective_take_profit_percent=effective_sl_tp.take_profit_percent,
                 effective_stop_loss_percent=effective_sl_tp.stop_loss_percent,
                 cost_to_tp_ratio=_safe_ratio(estimate.total_estimated_cost_percent, effective_sl_tp.take_profit_percent),
