@@ -1,5 +1,6 @@
 from app.execution.candidate_ranking import build_trade_candidate
 from app.execution.trade_candidate import TradeCandidate
+from app.instruments.models import EntryDecisionConfig
 from app.journal.jsonl_journal import JsonlJournal
 from app.market.market_context import CandidateMarketContext, ContextAlignment
 from app.market.models import Candle, MarketSnapshot
@@ -23,6 +24,7 @@ def advance_pending_entry(
     cooldown_guard: TradeCooldownGuard | None,
     trade_journal: JsonlJournal,
     market_context: CandidateMarketContext | None = None,
+    entry_decision_config: EntryDecisionConfig | None = None,
     run_id: str = '',
 ) -> TradeCandidate | None:
     active_pending = next(
@@ -77,6 +79,7 @@ def advance_pending_entry(
         session_key=observation.confirmed_pending.session_key,
         run_id=run_id,
         market_context=market_context,
+        entry_decision_config=entry_decision_config,
     )
     trade_journal.write(
         'candidate_detected',
