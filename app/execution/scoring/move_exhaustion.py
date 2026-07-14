@@ -3,8 +3,6 @@ from dataclasses import dataclass
 from app.market.models import Candle
 from app.strategies.signals import Signal
 
-LATE_ENTRY_REJECTION_PREFIX = 'candidate_selection_late_entry_'
-
 
 @dataclass(frozen=True)
 class MoveExhaustionConfig:
@@ -17,11 +15,6 @@ class MoveExhaustionConfig:
     medium_risk_threshold: float = 25.0
     high_risk_threshold: float = 50.0
     severe_risk_threshold: float = 75.0
-    reject_risk_threshold: float = 85.0
-    high_score_cap: float = 120.0
-    severe_score_cap: float = 95.0
-    reject_extension_atr_ratio: float = 5.0
-    reject_on_deceleration: bool = True
 
 
 @dataclass(frozen=True)
@@ -36,8 +29,6 @@ class MoveExhaustionAnalysis:
     momentum_deceleration_detected: bool
     remaining_move_quality: str
     reason_exhaustion_components: tuple[str, ...]
-    late_entry_score_cap: float | None = None
-    late_entry_rejection_reason: str | None = None
     late_entry_severity: str = 'LOW'
 
 
@@ -56,7 +47,10 @@ class MoveExhaustionAnalyzer:
         side = signal.action
         session_move_percent = self._float_metadata(metadata, 'session_move_percent')
         atr_percent = self._float_metadata(metadata, 'atr_percent')
-        snapshot_momentum_percent = self._float_metadata(metadata, 'snapshot_momentum_percent')
+        snapshot_momentum_percent = self._float_metadata(
+            metadata,
+            'snapshot_momentum_percent',
+        )
         has_momentum_metadata = 'snapshot_momentum_percent' in metadata
 
         directional_session_move = self._directional_value(
@@ -111,14 +105,6 @@ class MoveExhaustionAnalyzer:
         late_entry_risk += 20.0 * extension_factor * weak_close_factor
         late_entry_risk = min(late_entry_risk, 100.0)
 
-        reason_components = self._reason_components(
-            extension_factor=extension_factor,
-            proximity_factor=proximity_factor,
-            momentum_deceleration_detected=momentum_deceleration_detected,
-            weak_close_factor=weak_close_factor,
-        )
-        severity = self._late_entry_severity(late_entry_risk)
-
         return MoveExhaustionAnalysis(
             late_entry_risk=round(late_entry_risk, 4),
             exhaustion_penalty=round(
@@ -127,20 +113,27 @@ class MoveExhaustionAnalyzer:
             ),
             move_extension_percent=round(move_extension_percent, 4),
             extension_atr_ratio=round(extension_atr_ratio, 4),
-            distance_to_recent_high_percent=round(distance_to_recent_high_percent, 4),
-            distance_to_recent_low_percent=round(distance_to_recent_low_percent, 4),
-            momentum_acceleration_percent=round(momentum_acceleration_percent, 4),
+            distance_to_recent_high_percent=round(
+                distance_to_recent_high_percent,
+                4,
+            ),
+            distance_to_recent_low_percent=round(
+                distance_to_recent_low_percent,
+                4,
+            ),
+            momentum_acceleration_percent=round(
+                momentum_acceleration_percent,
+                4,
+            ),
             momentum_deceleration_detected=momentum_deceleration_detected,
             remaining_move_quality=self._remaining_move_quality(late_entry_risk),
-            reason_exhaustion_components=reason_components,
-            late_entry_score_cap=self._late_entry_score_cap(severity),
-            late_entry_rejection_reason=self._late_entry_rejection_reason(
-                late_entry_risk=late_entry_risk,
-                extension_atr_ratio=extension_atr_ratio,
+            reason_exhaustion_components=self._reason_components(
+                extension_factor=extension_factor,
                 proximity_factor=proximity_factor,
                 momentum_deceleration_detected=momentum_deceleration_detected,
+                weak_close_factor=weak_close_factor,
             ),
-            late_entry_severity=severity,
+            late_entry_severity=self._late_entry_severity(late_entry_risk),
         )
 
     def _directional_value(self, *, value: float, side: str) -> float:
@@ -210,38 +203,10 @@ class MoveExhaustionAnalyzer:
             return 'MEDIUM'
         return 'LOW'
 
-    def _late_entry_score_cap(self, severity: str) -> float | None:
-        if severity == 'SEVERE':
-            return self.config.severe_score_cap
-        if severity == 'HIGH':
-            return self.config.high_score_cap
-        return None
-
-    def _late_entry_rejection_reason(
-        self,
-        *,
-        late_entry_risk: float,
-        extension_atr_ratio: float,
-        proximity_factor: float,
-        momentum_deceleration_detected: bool,
-    ) -> str | None:
-        if late_entry_risk < self.config.reject_risk_threshold:
-            return None
-        if self.config.reject_on_deceleration and momentum_deceleration_detected:
-            return f'{LATE_ENTRY_REJECTION_PREFIX}exhausted_decelerating'
-        if (
-            extension_atr_ratio >= self.config.reject_extension_atr_ratio
-            and proximity_factor > 0
-        ):
-            return f'{LATE_ENTRY_REJECTION_PREFIX}extreme_exhaustion'
-        return None
-
     def _float_metadata(self, metadata: dict, key: str) -> float:
         value = metadata.get(key, 0.0)
-
         if value is None:
             return 0.0
-
         try:
             return float(value)
         except (TypeError, ValueError):
