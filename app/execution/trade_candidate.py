@@ -7,6 +7,7 @@ from app.market.models import Candle, MarketSnapshot
 from app.strategies.signals import Signal
 
 if TYPE_CHECKING:
+    from app.instruments.models import EntryDecisionConfig
     from app.market.market_context import CandidateMarketContext
 
 
@@ -42,3 +43,4 @@ class TradeCandidate:
     tp_probability_metadata: dict[str, Any] = field(default_factory=dict)
     candidate_id: str = ''
     market_context: CandidateMarketContext | None = None
+    entry_decision_config: EntryDecisionConfig | None = None
