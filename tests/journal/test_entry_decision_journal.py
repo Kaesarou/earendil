@@ -16,6 +16,12 @@ def test_candidate_selection_emits_standalone_entry_decision_event(tmp_path):
         profile='balanced',
     )
     context = SimpleNamespace(version='market_context_v1', regime='risk_on')
+    multi_timeframe_context = SimpleNamespace(
+        model_version='multi_timeframe_features_v1',
+        alignment='aligned',
+        features_by_timeframe={'m1': {'direction': 'up'}},
+        unavailable_timeframes=('m5', 'm15', 'm30', 'h1'),
+    )
     candidate = SimpleNamespace(
         candidate_id='candidate-1',
         symbol='AAPL',
@@ -23,6 +29,7 @@ def test_candidate_selection_emits_standalone_entry_decision_event(tmp_path):
         score=120.0,
         rank_reason='test',
         market_context=context,
+        multi_timeframe_context=multi_timeframe_context,
     )
     decision = SimpleNamespace(
         action='enter_now',
@@ -58,4 +65,6 @@ def test_candidate_selection_emits_standalone_entry_decision_event(tmp_path):
     assert payload['selection_outcome'] == 'selected'
     assert payload['entry_model_version'] == 'entry_router_v1'
     assert payload['market_context_version'] == 'market_context_v1'
+    assert payload['multi_timeframe_model_version'] == 'multi_timeframe_features_v1'
+    assert payload['multi_timeframe_context']['alignment'] == 'aligned'
     assert payload['strategy_profile'] == 'balanced'
