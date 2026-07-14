@@ -42,7 +42,7 @@ def test_run_manifest_captures_pr5a_contract_without_broker_secrets():
     )
 
     snapshot = manifest['runtime']['settings']
-    assert manifest['schema_version'] == 5
+    assert manifest['schema_version'] == 6
     assert 'ETORO_API_KEY' not in snapshot
     assert 'ETORO_USER_KEY' not in snapshot
     assert manifest['strategy']['profile'] == 'balanced'
