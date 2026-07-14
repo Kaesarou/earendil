@@ -70,28 +70,38 @@ class Settings(BaseSettings):
     crypto_symbols: str = Field(default='', alias='CRYPTO_SYMBOLS')
     equity_us_symbols: str = Field(default='', alias='EQUITY_US_SYMBOLS')
     equity_eu_symbols: str = Field(default='', alias='EQUITY_EU_SYMBOLS')
+    market_benchmark_crypto: str = Field(default='', alias='MARKET_BENCHMARK_CRYPTO')
+    market_benchmark_equity_us: str = Field(default='', alias='MARKET_BENCHMARK_EQUITY_US')
+    market_benchmark_equity_eu: str = Field(default='', alias='MARKET_BENCHMARK_EQUITY_EU')
     trading_session_timezone: str = Field(default='Europe/Paris', alias='TRADING_SESSION_TIMEZONE')
     trading_sessions_crypto: str = Field(default='', alias='TRADING_SESSIONS_CRYPTO')
     trading_sessions_equity_us: str = Field(default='', alias='TRADING_SESSIONS_EQUITY_US')
     trading_sessions_equity_eu: str = Field(default='', alias='TRADING_SESSIONS_EQUITY_EU')
 
     def watchlist_symbols(self) -> list[str]:
-        raw_symbols = self.watchlist.strip()
+        symbols = self._parse_symbols(self.watchlist)
+        if not symbols:
+            raise ValueError('Watchlist cannot be empty.')
+        return symbols
+
+    def benchmark_symbols_by_asset_class(self):
+        from app.instruments.models import AssetClass
+
+        return {
+            AssetClass.CRYPTO: tuple(self._parse_symbols(self.market_benchmark_crypto)),
+            AssetClass.EQUITY_US: tuple(self._parse_symbols(self.market_benchmark_equity_us)),
+            AssetClass.EQUITY_EU: tuple(self._parse_symbols(self.market_benchmark_equity_eu)),
+        }
+
+    def _parse_symbols(self, raw_symbols: str) -> list[str]:
         symbols: list[str] = []
         seen_symbols: set[str] = set()
-
-        for raw_symbol in raw_symbols.split(','):
+        for raw_symbol in raw_symbols.strip().split(','):
             symbol = raw_symbol.strip().upper()
-            if not symbol:
-                continue
-            if symbol in seen_symbols:
+            if not symbol or symbol in seen_symbols:
                 continue
             symbols.append(symbol)
             seen_symbols.add(symbol)
-
-        if not symbols:
-            raise ValueError('Watchlist cannot be empty.')
-
         return symbols
 
 
