@@ -5,14 +5,10 @@ from app.market.timeframes import BASE_TIMEFRAME
 
 
 class CandleBuilder:
-    def __init__(
-        self,
-        timeframe_seconds: int = BASE_TIMEFRAME.value,
-    ):
-        if timeframe_seconds <= 0:
-            raise ValueError('timeframe_seconds must be greater than 0')
+    """Build the canonical fixed M1 candle stream from accepted snapshots."""
 
-        self.timeframe_seconds = timeframe_seconds
+    def __init__(self) -> None:
+        self.timeframe_seconds = BASE_TIMEFRAME.value
         self._current_bucket_start: datetime | None = None
         self._prices: list[float] = []
         self._symbol: str | None = None
