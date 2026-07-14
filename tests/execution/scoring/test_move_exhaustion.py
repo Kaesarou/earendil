@@ -8,7 +8,6 @@ from app.execution.scoring.signal_scorer import directional_score_breakdown
 from app.market.models import Candle, MarketSnapshot
 from app.strategies.signals import Signal
 
-
 BASE_TIME = datetime(2026, 6, 29, 12, 0, tzinfo=timezone.utc)
 
 
@@ -76,8 +75,6 @@ def test_move_exhaustion_keeps_healthy_accelerating_buy_penalty_low():
     assert analysis.late_entry_risk == 0.0
     assert analysis.exhaustion_penalty == 0.0
     assert analysis.remaining_move_quality == 'GOOD'
-    assert analysis.late_entry_score_cap is None
-    assert analysis.late_entry_rejection_reason is None
     assert analysis.late_entry_severity == 'LOW'
 
 
@@ -96,7 +93,6 @@ def test_move_exhaustion_penalizes_extended_buy_with_deceleration_near_high():
     assert analysis.late_entry_risk > 40
     assert analysis.exhaustion_penalty > 7
     assert analysis.late_entry_severity == 'HIGH'
-    assert analysis.late_entry_score_cap == 120.0
     assert analysis.momentum_deceleration_detected is True
     assert 'extended_move' in analysis.reason_exhaustion_components
     assert 'near_trade_extreme' in analysis.reason_exhaustion_components
@@ -105,7 +101,12 @@ def test_move_exhaustion_penalizes_extended_buy_with_deceleration_near_high():
 
 def test_move_exhaustion_penalizes_extended_sell_near_low():
     analysis = MoveExhaustionAnalyzer().analyze(
-        candle=candle(open_price=103.0, high=103.5, low=100.0, close=100.01),
+        candle=candle(
+            open_price=103.0,
+            high=103.5,
+            low=100.0,
+            close=100.01,
+        ),
         signal=signal(
             action='SELL',
             session_move_percent=-3.0,
@@ -120,11 +121,10 @@ def test_move_exhaustion_penalizes_extended_sell_near_low():
     assert analysis.exhaustion_penalty > 7
     assert analysis.distance_to_recent_low_percent < 0.02
     assert analysis.late_entry_severity == 'HIGH'
-    assert analysis.late_entry_score_cap == 120.0
     assert analysis.momentum_deceleration_detected is True
 
 
-def test_move_exhaustion_rejects_extreme_decelerating_late_entry():
+def test_extreme_decelerating_late_entry_is_penalized_not_rejected():
     analysis = MoveExhaustionAnalyzer().analyze(
         candle=candle(high=106.001, close=106.0, low=104.0),
         signal=signal(
@@ -138,11 +138,10 @@ def test_move_exhaustion_rejects_extreme_decelerating_late_entry():
 
     assert analysis.late_entry_risk >= 85.0
     assert analysis.late_entry_severity == 'SEVERE'
-    assert analysis.late_entry_score_cap == 95.0
-    assert analysis.late_entry_rejection_reason == 'candidate_selection_late_entry_exhausted_decelerating'
+    assert analysis.exhaustion_penalty <= 18.0
 
 
-def test_directional_score_applies_late_entry_cap_after_exhaustion_penalty():
+def test_directional_score_subtracts_exhaustion_without_cap():
     breakdown = directional_score_breakdown(
         snapshot=snapshot(),
         candle=candle(high=103.01, low=101.0, close=103.0),
@@ -156,15 +155,12 @@ def test_directional_score_applies_late_entry_cap_after_exhaustion_penalty():
     )
 
     assert breakdown.exhaustion.exhaustion_penalty > 0
-    assert breakdown.score_before_late_entry_cap == pytest.approx(
+    assert breakdown.final_score == pytest.approx(
         breakdown.base_score - breakdown.exhaustion.exhaustion_penalty
     )
-    assert breakdown.exhaustion.late_entry_score_cap == 120.0
-    assert breakdown.final_score == 120.0
-    assert breakdown.score_after_late_entry_cap == 120.0
 
 
-def test_trade_candidate_exposes_late_entry_cap_metadata_for_logs():
+def test_trade_candidate_exposes_penalty_metadata_without_cap_fields():
     candidate = build_trade_candidate(
         symbol='BTC',
         snapshot=snapshot(),
@@ -177,16 +173,17 @@ def test_trade_candidate_exposes_late_entry_cap_metadata_for_logs():
         ),
     )
 
-    assert candidate.score == 120.0
-    assert candidate.score_before_late_entry_cap > candidate.score_after_late_entry_cap
-    assert candidate.score_after_late_entry_cap == 120.0
-    assert candidate.late_entry_score_cap == 120.0
+    assert candidate.score == pytest.approx(
+        candidate.base_score - candidate.exhaustion_penalty
+    )
     assert candidate.late_entry_severity == 'HIGH'
     assert candidate.late_entry_risk > 0
     assert candidate.entry_quality_metadata['move_extension_percent'] == 3.0
-    assert candidate.entry_quality_metadata['momentum_deceleration_detected'] is True
-    assert candidate.entry_quality_metadata['late_entry_score_cap'] == 120.0
+    assert (
+        candidate.entry_quality_metadata[
+            'momentum_deceleration_detected'
+        ]
+        is True
+    )
     assert 'late_entry_risk=' in candidate.rank_reason
-    assert 'late_entry_score_cap=120.0' in candidate.rank_reason
-    assert 'score_before_late_entry_cap=' in candidate.rank_reason
-    assert 'score_after_late_entry_cap=120.0' in candidate.rank_reason
+    assert 'late_entry_score_cap=' not in candidate.rank_reason
