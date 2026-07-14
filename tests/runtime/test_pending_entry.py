@@ -2,7 +2,10 @@ from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 
-from app.execution.candidate_economics import CandidateEconomics, EvaluatedTradeCandidate
+from app.execution.candidate_economics import (
+    CandidateEconomics,
+    EvaluatedTradeCandidate,
+)
 from app.execution.trade_candidate import TradeCandidate
 from app.market.models import Candle, MarketSnapshot
 from app.runtime.pending_entry import PendingEntryManager, PendingEntryState
@@ -12,7 +15,13 @@ from app.strategies.signals import Signal
 NOW = datetime(2026, 7, 10, 15, 0, tzinfo=timezone.utc)
 
 
-def candle(close=100.2, low=99.9, high=100.5, open_=100.0, minute=0):
+def candle(
+    close=100.2,
+    low=99.9,
+    high=100.5,
+    open_=100.0,
+    minute=0,
+):
     timestamp = NOW + timedelta(minutes=minute)
     return Candle(
         'AMD',
@@ -35,7 +44,9 @@ def evaluated(side='BUY', score=120.0):
         metadata={
             'range_high': 100.0,
             'range_low': 100.0,
-            'snapshot_momentum_percent': 0.2 if side == 'BUY' else -0.2,
+            'snapshot_momentum_percent': (
+                0.2 if side == 'BUY' else -0.2
+            ),
             'atr_percent': 0.2,
         },
     )
@@ -48,8 +59,19 @@ def evaluated(side='BUY', score=120.0):
         score,
         'test',
         'US',
+        candidate_id='candidate-origin',
+        origin_candidate_id='candidate-origin',
     )
-    economics = CandidateEconomics(100, 1, 0.5, 0.5, 0.5, 0.5, 0.1, 0.1)
+    economics = CandidateEconomics(
+        100,
+        1,
+        0.5,
+        0.5,
+        0.5,
+        0.5,
+        0.1,
+        0.1,
+    )
     analysis = SimpleNamespace(
         raw_runway_score=20.0,
         raw_tp_feasibility_penalty=39.98,
@@ -58,7 +80,7 @@ def evaluated(side='BUY', score=120.0):
         candidate,
         economics,
         tp_feasibility=analysis,
-        readiness_reason='insufficient_runway',
+        readiness_reason='entry_decision_required',
     )
 
 
@@ -129,7 +151,6 @@ def test_expired_setup_cannot_be_registered_again_in_same_session():
         spread_percent=0.05,
         config=EntryConfirmationConfig(max_candles=1),
     )
-
     events = manager.register(
         evaluated_candidate=evaluated(score=130.0),
         max_candles=5,
@@ -210,7 +231,7 @@ def test_cooldown_invalidates_pending():
     assert manager.snapshot() == []
 
 
-def test_spread_too_high_invalidates_pending():
+def test_spread_too_high_blocks_confirmation_without_invalidating_pending():
     manager = PendingEntryManager()
     manager.register(evaluated_candidate=evaluated(), max_candles=5)
 
@@ -226,7 +247,33 @@ def test_spread_too_high_invalidates_pending():
         config=EntryConfirmationConfig(),
     )
 
+    assert result.events[0].event_type == (
+        'pending_entry_confirmation_blocked'
+    )
     assert result.events[0].reason == 'spread_too_high'
+    pending = manager.snapshot()[0]
+    assert pending.state == PendingEntryState.WAITING
+    assert pending.observed_candles == 1
+    assert result.events[0].diagnostics['spread_percent'] == 0.25
+
+
+def test_spread_blocked_pending_still_expires_normally():
+    manager = PendingEntryManager()
+    manager.register(evaluated_candidate=evaluated(), max_candles=1)
+
+    result = manager.observe(
+        symbol='AMD',
+        candle=candle(),
+        snapshot=evaluated().candidate.snapshot,
+        signal=Signal.hold('wait'),
+        session_key='US',
+        session_tradable=True,
+        spread_percent=0.25,
+        max_spread_percent=0.10,
+        config=EntryConfirmationConfig(max_candles=1),
+    )
+
+    assert result.events[0].event_type == 'pending_entry_expired'
     assert manager.snapshot() == []
 
 
