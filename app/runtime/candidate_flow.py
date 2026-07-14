@@ -35,7 +35,7 @@ from app.runtime.pending_candidate_lifecycle import (
     economics_rejection_reason,
     invalidate_pending_candidate,
     keep_pending_waiting,
-    pending_entry_key,
+    pending_entry_id,
     reconcile_pending_selection_rejections,
 )
 from app.runtime.pending_entry import PendingEntryManager
@@ -715,9 +715,9 @@ def execute_ranked_candidates(
                 session_key=candidate.session_key,
             )
             if pending_entry_manager is not None:
-                pending_key = pending_entry_key(candidate)
-                if pending_key is not None:
-                    pending_entry_manager.remove(pending_key)
+                identifier = pending_entry_id(candidate)
+                if identifier is not None:
+                    pending_entry_manager.remove_by_id(identifier)
 
             if position_store is not None:
                 try:
