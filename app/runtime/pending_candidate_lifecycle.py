@@ -96,11 +96,17 @@ def reconcile_pending_selection_rejections(
                     trade_journal=trade_journal,
                 )
             else:
+                decision_config = candidate.entry_decision_config
+                max_candles = (
+                    decision_config.maximum_retest_candles
+                    if decision_config is not None
+                    else 5
+                )
                 write_pending_events(
                     trade_journal,
                     pending_entry_manager.register(
                         evaluated_candidate=evaluated_candidate,
-                        max_candles=5,
+                        max_candles=max_candles,
                     ),
                 )
             continue
