@@ -4,6 +4,7 @@ from app.instruments.models import EntryDecisionConfig
 from app.journal.jsonl_journal import JsonlJournal
 from app.market.market_context import CandidateMarketContext, ContextAlignment
 from app.market.models import Candle, MarketSnapshot
+from app.market.multi_timeframe import MultiTimeframeContext
 from app.market.session_rules import TradingSessionDecision
 from app.risk.risk_manager import RiskManager
 from app.risk.trade_cooldown_guard import TradeCooldownGuard
@@ -24,6 +25,7 @@ def advance_pending_entry(
     cooldown_guard: TradeCooldownGuard | None,
     trade_journal: JsonlJournal,
     market_context: CandidateMarketContext | None = None,
+    multi_timeframe_context: MultiTimeframeContext | None = None,
     entry_decision_config: EntryDecisionConfig | None = None,
     run_id: str = '',
 ) -> TradeCandidate | None:
@@ -79,6 +81,7 @@ def advance_pending_entry(
         session_key=observation.confirmed_pending.session_key,
         run_id=run_id,
         market_context=market_context,
+        multi_timeframe_context=multi_timeframe_context,
         entry_decision_config=entry_decision_config,
     )
     trade_journal.write(
@@ -91,6 +94,7 @@ def advance_pending_entry(
             'signal': observation.confirmation_signal,
             'candidate': candidate,
             'market_context': market_context,
+            'multi_timeframe_context': multi_timeframe_context,
             'session_decision': session_decision,
             'instrument_profile': risk_manager.instrument_profile_for(symbol),
             'risk_profile': risk_profile,

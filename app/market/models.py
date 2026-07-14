@@ -66,6 +66,7 @@ class Candle:
     volume: float | None
     opened_at: datetime
     closed_at: datetime
+    sample_count: int = 0
 
 
 def _as_utc(value: datetime) -> datetime:

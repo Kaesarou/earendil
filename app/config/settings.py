@@ -52,7 +52,6 @@ class Settings(BaseSettings):
     broker: str = Field(default='paper', alias='BROKER')
     log_level: str = Field(default='INFO', alias='LOG_LEVEL')
     poll_interval_seconds: int = Field(default=60, alias='POLL_INTERVAL_SECONDS')
-    candle_timeframe_seconds: int = Field(default=60, alias='CANDLE_TIMEFRAME_SECONDS')
 
     etoro_api_key: str = Field(default='', alias='ETORO_API_KEY')
     etoro_user_key: str = Field(default='', alias='ETORO_USER_KEY')

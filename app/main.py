@@ -16,6 +16,9 @@ from app.journal.run_manifest import build_run_id, build_run_manifest, finalize_
 from app.market.candle_builder import CandleBuilder
 from app.market.data_quality import MarketDataStatus, MarketDataValidator
 from app.market.market_context import MarketContextService
+from app.market.multi_timeframe import expected_sampling_quality
+from app.market.session_timeframe_service import FullSessionMultiTimeframeService
+from app.market.timeframes import BarCompleteness
 from app.persistence.position_store import PositionStore
 from app.persistence.trade_cooldown_store import TradeCooldownStore
 from app.risk.position_sizing import FixedPercentPositionSizing
@@ -51,8 +54,8 @@ def build_candidate_economics_estimator(instrument_registry: InstrumentRegistry)
     return CandidateEconomicsEstimator(position_sizing_strategy=FixedPercentPositionSizing(), instrument_registry=instrument_registry)
 
 
-def build_candle_builders(settings: Settings, symbols: list[str]) -> dict[str, CandleBuilder]:
-    return {symbol: CandleBuilder(timeframe_seconds=settings.candle_timeframe_seconds) for symbol in symbols}
+def build_candle_builders(symbols: list[str]) -> dict[str, CandleBuilder]:
+    return {symbol: CandleBuilder() for symbol in symbols}
 
 
 def build_strategies(symbols: list[str], instrument_registry: InstrumentRegistry) -> dict[str, TrendStrategy]:
@@ -78,6 +81,24 @@ def _context_symbols_for_active_assets(
     return result
 
 
+def _write_partial_timeframe_bars(candle_journal, symbol: str, bars, loop_id: int | None) -> None:
+    for bar in bars:
+        event_type = (
+            'timeframe_bar_partial'
+            if bar.completeness == BarCompleteness.PARTIAL
+            else 'timeframe_bar_incomplete'
+        )
+        candle_journal.write(
+            event_type,
+            {
+                'symbol': symbol,
+                'timeframe': bar.timeframe.name.lower(),
+                'timeframe_bar': bar,
+                'loop_id': loop_id,
+            },
+        )
+
+
 def main() -> None:
     started_at = datetime.now(timezone.utc)
     run_id = build_run_id(started_at)
@@ -95,10 +116,16 @@ def main() -> None:
     write_run_manifest(archived_manifest_path, manifest)
     write_run_manifest(settings.run_manifest_path, manifest)
     logger.info('Starting Goblin! | run_id=%s | broker=%s | strategy_profile=%s | watchlist=%s | journal_detail=%s', run_id, settings.broker, strategy_profile.name, symbols, settings.journal_detail_level)
+    sampling_quality = expected_sampling_quality(settings.poll_interval_seconds)
+    if sampling_quality.value == 'sparse':
+        logger.warning(
+            'Sparse M1 sampling expected | poll_interval_seconds=%s | fixed_base_timeframe_seconds=60',
+            settings.poll_interval_seconds,
+        )
 
     broker = build_broker(settings)
     strategies = build_strategies(symbols, instrument_registry)
-    candle_builders = build_candle_builders(settings, symbols)
+    candle_builders = build_candle_builders(symbols)
     trading_session_service = trading_session_service_from_settings(settings)
     trading_session_state = TradingSessionState()
     risk_manager = build_risk_manager(settings, instrument_registry)
@@ -113,6 +140,12 @@ def main() -> None:
     market_context_service = MarketContextService(
         instrument_registry=instrument_registry,
         benchmark_symbols=settings.benchmark_symbols_by_asset_class(),
+    )
+    multi_timeframe_service = FullSessionMultiTimeframeService(
+        {
+            symbol: instrument_registry.config_for(symbol).multi_timeframe
+            for symbol in symbols
+        }
     )
     trade_journal = build_analysis_journal(settings, run_id=run_id, profile=strategy_profile.name)
     market_journal = RawDataJournal(JsonlJournal(settings.market_log_path, run_id=run_id, stream_name='market'), trade_journal.record_raw_event)
@@ -146,7 +179,13 @@ def main() -> None:
                     trade_journal.write('session_trades_reset', {'session_key': session_key, 'loop_id': loop_id})
                 for symbol in started_symbols:
                     market_data_validator.reset_symbol(symbol)
-                    candle_builders[symbol] = CandleBuilder(timeframe_seconds=settings.candle_timeframe_seconds)
+                    _write_partial_timeframe_bars(
+                        candle_journal,
+                        symbol,
+                        multi_timeframe_service.reset_symbol(symbol),
+                        loop_id,
+                    )
+                    candle_builders[symbol] = CandleBuilder()
                     strategies[symbol] = TrendStrategy(instrument_registry.config_for(symbol).trend)
                     trade_journal.write('session_started', {'symbol': symbol, 'session_decision': session_decisions[symbol], 'loop_id': loop_id})
                 for symbol, session_decision in session_decisions.items():
@@ -230,6 +269,7 @@ def main() -> None:
                             pending_entry_manager=pending_entry_manager,
                             cooldown_guard=cooldown_guard,
                             market_context_service=market_context_service,
+                            multi_timeframe_service=multi_timeframe_service,
                             run_id=run_id,
                         )
                         force_close_positions_before_session_end(symbol=symbol, snapshot=snapshot, session_decision=session_decision, executor=executor, position_tracker=position_tracker, risk_manager=risk_manager, trade_journal=trade_journal, position_store=position_store, cooldown_store=cooldown_store, is_broker_authorization_error=is_broker_authorization_error)
@@ -262,6 +302,13 @@ def main() -> None:
     finally:
         if run_status == 'running':
             run_status = 'completed'
+        for symbol in symbols:
+            _write_partial_timeframe_bars(
+                candle_journal,
+                symbol,
+                multi_timeframe_service.reset_symbol(symbol),
+                loop_id,
+            )
         trade_journal.write('runtime_stopped', {'run_id': run_id, 'status': run_status, 'loop_id': loop_id})
         summary = trade_journal.finalize()
         write_run_manifest(archived_summary_path, summary)
