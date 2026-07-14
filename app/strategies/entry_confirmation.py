@@ -105,31 +105,10 @@ class EntryConfirmationEvaluator:
                 ),
             )
 
-        beyond_level = self._closed_beyond_level(
-            side=normalized_side,
-            candle=candle,
-            breakout_level=breakout_level,
-        )
-        consecutive_closes = (
-            previous_consecutive_closes + 1 if beyond_level and momentum_aligned else 0
-        )
-        if (
-            consecutive_closes >= max(1, config.consecutive_closes)
-            and signal.action == normalized_side
-        ):
-            return EntryConfirmationDecision(
-                state='confirmed',
-                reason='persistent_breakout_confirmed',
-                confirmation_type='persistence',
-                consecutive_closes=consecutive_closes,
-                retest_extreme_price=retest_extreme,
-                structural_invalidation_price=structure_extreme,
-            )
-
         return EntryConfirmationDecision(
             state=next_state,
-            reason='retest_detected' if next_state == 'retest_detected' else 'confirmation_pending',
-            consecutive_closes=consecutive_closes,
+            reason='retest_detected' if next_state == 'retest_detected' else 'waiting_for_retest',
+            consecutive_closes=0,
             retest_extreme_price=retest_extreme,
             structural_invalidation_price=structure_extreme,
         )
@@ -164,14 +143,28 @@ class EntryConfirmationEvaluator:
             return False
         return momentum < 0 if side == 'BUY' else momentum > 0
 
-    def _structure_invalidated(self, *, side: str, candle: Candle, breakout_level: float, tolerance_price: float) -> bool:
+    def _structure_invalidated(
+        self,
+        *,
+        side: str,
+        candle: Candle,
+        breakout_level: float,
+        tolerance_price: float,
+    ) -> bool:
         return (
             candle.close < breakout_level - tolerance_price
             if side == 'BUY'
             else candle.close > breakout_level + tolerance_price
         )
 
-    def _retest_detected(self, *, side: str, candle: Candle, breakout_level: float, tolerance_price: float) -> bool:
+    def _retest_detected(
+        self,
+        *,
+        side: str,
+        candle: Candle,
+        breakout_level: float,
+        tolerance_price: float,
+    ) -> bool:
         if side == 'BUY':
             return candle.low <= breakout_level + tolerance_price and candle.close >= breakout_level - tolerance_price
         return candle.high >= breakout_level - tolerance_price and candle.close <= breakout_level + tolerance_price
@@ -180,9 +173,6 @@ class EntryConfirmationEvaluator:
         if side == 'BUY':
             return candle.close > candle.open and candle.close > breakout_level
         return candle.close < candle.open and candle.close < breakout_level
-
-    def _closed_beyond_level(self, *, side: str, candle: Candle, breakout_level: float) -> bool:
-        return candle.close > breakout_level if side == 'BUY' else candle.close < breakout_level
 
     def _updated_retest_extreme(self, *, side: str, previous: float | None, candle: Candle) -> float:
         current = candle.low if side == 'BUY' else candle.high
