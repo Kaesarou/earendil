@@ -11,7 +11,6 @@ class AnalysisReadySummaryAggregator(DailySummaryAggregator):
         super().__init__(**kwargs)
         self.validated_accepted_total = 0
         self.tp_penalty_components = Counter()
-        self.tp_cap_components = Counter()
         self.tp_hard_rejection_components = Counter()
         self.effective_sl_tp_sources = Counter()
         self.candidate_adaptations = Counter()
@@ -30,10 +29,10 @@ class AnalysisReadySummaryAggregator(DailySummaryAggregator):
             analysis = _attribute(item, 'tp_feasibility')
             candidate = _attribute(item, 'candidate')
             effective_sl_tp = _attribute(item, 'effective_sl_tp')
-            for component in _as_list(_attribute(analysis, 'penalty_components')):
+            for component in _as_list(
+                _attribute(analysis, 'penalty_components')
+            ):
                 self.tp_penalty_components[str(component)] += 1
-            for component in _as_list(_attribute(analysis, 'cap_components')):
-                self.tp_cap_components[str(component)] += 1
             for component in _as_list(
                 _attribute(analysis, 'hard_rejection_components')
             ):
@@ -62,7 +61,6 @@ class AnalysisReadySummaryAggregator(DailySummaryAggregator):
         )
         summary['tp_feasibility'] = {
             'penalty_components': dict(self.tp_penalty_components),
-            'cap_components': dict(self.tp_cap_components),
             'hard_rejection_components': dict(
                 self.tp_hard_rejection_components
             ),
