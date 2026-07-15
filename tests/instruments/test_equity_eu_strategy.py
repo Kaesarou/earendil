@@ -1,5 +1,5 @@
 from app.execution.sl_tp_profile import EffectiveSlTpResolver
-from app.instruments.equity_eu_config import EQUITY_EU_CONFIG
+from app.instruments.base_configs import EQUITY_EU_CONFIG
 from app.strategies.signals import Signal
 
 
