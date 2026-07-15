@@ -1,9 +1,12 @@
+from dataclasses import replace
 from datetime import datetime, timezone
 
 from app.config.settings import Settings
 from app.execution.candidate_economics import CandidateEconomics, EvaluatedTradeCandidate
+from app.execution.candidate_selector import CandidateSelectionConfig
 from app.execution.trade_candidate import TradeCandidate
 from app.instruments.instrument_registry import InstrumentRegistry
+from app.instruments.models import AssetClass
 from app.market.models import Candle, MarketSnapshot
 from app.risk.position_sizing import FixedPercentPositionSizing
 from app.risk.risk_manager import RiskManager
@@ -17,42 +20,32 @@ from app.strategies.signals import Signal
 
 def make_candidate(symbol: str, score: float) -> TradeCandidate:
     now = datetime(2026, 7, 4, 18, 0, tzinfo=timezone.utc)
-    snapshot = MarketSnapshot(
-        symbol=symbol,
-        bid=99.95,
-        ask=100.05,
-        last=100.0,
-        timestamp=now,
-    )
-    candle = Candle(
-        symbol=symbol,
-        timeframe_seconds=60,
-        open=99.5,
-        high=100.2,
-        low=99.4,
-        close=100.0,
-        volume=None,
-        opened_at=now,
-        closed_at=now,
-    )
-    signal = Signal(
-        action='BUY',
-        setup_quality=0.8,
-        reason='test_signal',
-        metadata={
-            'session_move_percent': 1.0,
-            'trend_strength_percent': 0.2,
-            'breakout_percent': 0.1,
-            'candle_range_percent': 0.8,
-            'close_position_percent': 85.0,
-        },
-    )
-
     return TradeCandidate(
         symbol=symbol,
-        snapshot=snapshot,
-        candle=candle,
-        signal=signal,
+        snapshot=MarketSnapshot(symbol, 99.95, 100.05, 100.0, now),
+        candle=Candle(
+            symbol,
+            60,
+            99.5,
+            100.2,
+            99.4,
+            100.0,
+            None,
+            now,
+            now,
+        ),
+        signal=Signal(
+            action='BUY',
+            setup_quality=0.8,
+            reason='test_signal',
+            metadata={
+                'session_move_percent': 1.0,
+                'trend_strength_percent': 0.2,
+                'breakout_percent': 0.1,
+                'candle_range_percent': 0.8,
+                'close_position_percent': 85.0,
+            },
+        ),
         score=score,
         rank_reason=f'test_score={score}',
     )
@@ -75,7 +68,10 @@ def make_evaluated_candidate(symbol: str, score: float) -> EvaluatedTradeCandida
 
 
 def build_risk_manager() -> RiskManager:
-    settings = Settings(EQUITY_US_SYMBOLS='AAPL,MSFT,NVDA')
+    settings = Settings(
+        EQUITY_US_SYMBOLS='AAPL,MSFT,NVDA',
+        EQUITY_EU_SYMBOLS='SAP.DE,ASML.NV',
+    )
     return RiskManager(
         settings=settings,
         position_sizing_strategy=FixedPercentPositionSizing(),
@@ -84,9 +80,23 @@ def build_risk_manager() -> RiskManager:
 
 
 def build_strategy_profile() -> BalancedStrategyConfig:
-    return BalancedStrategyConfig(
-        candidate_selection_top_n=2,
-        candidate_selection_min_score=0.0,
+    profile = BalancedStrategyConfig()
+    return replace(
+        profile,
+        candidate_selection_configs={
+            AssetClass.CRYPTO: CandidateSelectionConfig(
+                top_n=2,
+                min_score=0.0,
+            ),
+            AssetClass.EQUITY_US: CandidateSelectionConfig(
+                top_n=2,
+                min_score=0.0,
+            ),
+            AssetClass.EQUITY_EU: CandidateSelectionConfig(
+                top_n=1,
+                min_score=0.0,
+            ),
+        },
     )
 
 
@@ -107,7 +117,9 @@ def test_profile_candidate_selection_rejects_raw_overflow_with_top_n_reason():
     ]
     assert len(result.rejected_candidates) == 1
     assert result.rejected_candidates[0].candidate.symbol == 'NVDA'
-    assert result.rejected_candidates[0].reason == 'candidate_selection_outside_top_n'
+    assert result.rejected_candidates[0].reason == (
+        'candidate_selection_outside_top_n'
+    )
 
 
 def test_profile_candidate_selection_rejects_evaluated_overflow_with_top_n_reason():
@@ -122,12 +134,37 @@ def test_profile_candidate_selection_rejects_evaluated_overflow_with_top_n_reaso
     )
 
     assert [
-        evaluated_candidate.candidate.symbol
-        for evaluated_candidate in result.selected_candidates
-    ] == [
+        item.candidate.symbol for item in result.selected_candidates
+    ] == ['AAPL', 'MSFT']
+    assert len(result.rejected_candidates) == 1
+    assert (
+        result.rejected_candidates[0].evaluated_candidate.candidate.symbol
+        == 'NVDA'
+    )
+    assert result.rejected_candidates[0].reason == (
+        'candidate_selection_outside_top_n'
+    )
+
+
+def test_eu_top_one_does_not_reduce_us_top_two():
+    result = select_trade_candidates_with_strategy_profile(
+        candidates=[
+            make_candidate('AAPL', score=130.0),
+            make_candidate('MSFT', score=120.0),
+            make_candidate('SAP.DE', score=125.0),
+            make_candidate('ASML.NV', score=115.0),
+        ],
+        risk_manager=build_risk_manager(),
+        strategy_profile=build_strategy_profile(),
+    )
+
+    assert {item.symbol for item in result.selected_candidates} == {
         'AAPL',
         'MSFT',
-    ]
-    assert len(result.rejected_candidates) == 1
-    assert result.rejected_candidates[0].evaluated_candidate.candidate.symbol == 'NVDA'
-    assert result.rejected_candidates[0].reason == 'candidate_selection_outside_top_n'
+        'SAP.DE',
+    }
+    rejected = {
+        item.candidate.symbol: item.reason
+        for item in result.rejected_candidates
+    }
+    assert rejected == {'ASML.NV': 'candidate_selection_outside_top_n'}
