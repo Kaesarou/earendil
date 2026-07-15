@@ -9,77 +9,47 @@ from app.execution.scoring.tp_feasibility import (
     TpFeasibilityAnalyzer,
 )
 from app.execution.trade_candidate import TradeCandidate
-from app.instruments.models import (
-    AssetClass,
-    RiskProfile,
-    TpFeasibilityConfig,
-)
+from app.instruments.models import AssetClass, RiskProfile, TpFeasibilityConfig
 from app.market.models import Candle, MarketSnapshot
 from app.strategies.signals import Signal
 
-SESSION_KEY = 'test-session'
+
 TIMESTAMP = datetime(2026, 7, 6, 12, 0, tzinfo=timezone.utc)
 
 
-def snapshot(symbol: str = 'TEST') -> MarketSnapshot:
-    return MarketSnapshot(
-        symbol=symbol,
-        bid=99.9,
-        ask=100.1,
-        last=100.0,
-        timestamp=TIMESTAMP,
-    )
-
-
-def candle(symbol: str = 'TEST') -> Candle:
-    return Candle(
-        symbol=symbol,
-        timeframe_seconds=60,
-        open=99.0,
-        high=101.0,
-        low=98.5,
-        close=100.0,
-        volume=None,
-        opened_at=TIMESTAMP,
-        closed_at=TIMESTAMP,
-    )
-
-
-def signal(side: str = 'BUY', metadata: dict | None = None) -> Signal:
-    return Signal(
-        action=side,
-        setup_quality=0.8,
-        reason='test_signal',
-        metadata=metadata or {},
-    )
-
-
 def candidate(
-    side: str = 'BUY',
-    score: float = 150.0,
-    metadata: dict | None = None,
-    entry_quality_metadata: dict | None = None,
+    *,
+    side='BUY',
+    score=150.0,
+    metadata=None,
 ) -> TradeCandidate:
     return TradeCandidate(
         symbol='TEST',
-        snapshot=snapshot(),
-        candle=candle(),
-        signal=signal(side, metadata),
-        score=score,
-        rank_reason='test_score',
-        session_key=SESSION_KEY,
-        base_score=score,
-        entry_quality_metadata=(
-            entry_quality_metadata
-            or {
-                'distance_to_recent_high_percent': 1.0,
-                'distance_to_recent_low_percent': 1.0,
-            }
+        snapshot=MarketSnapshot('TEST', 99.9, 100.1, 100.0, TIMESTAMP),
+        candle=Candle(
+            'TEST',
+            60,
+            99.0,
+            101.0,
+            98.5,
+            100.0,
+            None,
+            TIMESTAMP,
+            TIMESTAMP,
         ),
+        signal=Signal(side, 0.8, 'test', metadata=metadata or {}),
+        score=score,
+        rank_reason='test',
+        session_key='session',
+        base_score=score,
+        entry_quality_metadata={
+            'distance_to_recent_high_percent': 1.0,
+            'distance_to_recent_low_percent': 1.0,
+        },
     )
 
 
-def economics(cost_percent: float = 0.15) -> CandidateEconomics:
+def economics(cost_percent=0.15) -> CandidateEconomics:
     return CandidateEconomics(
         position_value=1000.0,
         expected_gross_profit=10.0,
@@ -92,16 +62,19 @@ def economics(cost_percent: float = 0.15) -> CandidateEconomics:
     )
 
 
-def risk_profile(
-    take_profit_percent: float = 1.0,
-    stop_loss_percent: float = 0.8,
-    config: TpFeasibilityConfig | None = None,
-) -> RiskProfile:
+def evaluated(*, side='BUY', score=150.0, metadata=None, cost_percent=0.15):
+    return EvaluatedTradeCandidate(
+        candidate=candidate(side=side, score=score, metadata=metadata),
+        economics=economics(cost_percent),
+    )
+
+
+def risk_profile(tp=1.0, sl=0.8) -> RiskProfile:
     return RiskProfile(
         asset_class=AssetClass.EQUITY_US,
         max_position_size_percent=1.0,
-        stop_loss_percent=stop_loss_percent,
-        take_profit_percent=take_profit_percent,
+        stop_loss_percent=sl,
+        take_profit_percent=tp,
         force_close_enabled=False,
         force_close_hour=21,
         force_close_minute=55,
@@ -114,29 +87,11 @@ def risk_profile(
         max_stop_loss_percent=2.0,
         min_take_profit_percent=0.0,
         max_take_profit_percent=3.0,
-        tp_feasibility=config or TpFeasibilityConfig(),
+        tp_feasibility=TpFeasibilityConfig(),
     )
 
 
-def evaluated(
-    side: str = 'BUY',
-    score: float = 150.0,
-    metadata: dict | None = None,
-    cost_percent: float = 0.15,
-    entry_quality_metadata: dict | None = None,
-) -> EvaluatedTradeCandidate:
-    return EvaluatedTradeCandidate(
-        candidate=candidate(
-            side=side,
-            score=score,
-            metadata=metadata,
-            entry_quality_metadata=entry_quality_metadata,
-        ),
-        economics=economics(cost_percent),
-    )
-
-
-def test_tp_feasibility_easy_tp_has_low_penalty():
+def test_easy_tp_has_high_feasibility_and_positive_contribution():
     analysis = TpFeasibilityAnalyzer().analyze(
         evaluated_candidate=evaluated(
             metadata={
@@ -145,111 +100,102 @@ def test_tp_feasibility_easy_tp_has_low_penalty():
                 'session_move_percent': 0.3,
             }
         ),
-        risk_profile=risk_profile(take_profit_percent=1.0),
+        risk_profile=risk_profile(tp=1.0),
     )
 
-    assert analysis.tp_feasibility_penalty == 0.0
+    assert analysis.feasibility_score >= 75.0
+    assert analysis.score_contribution > 0
+    assert analysis.adjusted_score > 150.0
     assert analysis.tp_feasibility_hard_rejection_reason is None
-    assert analysis.runway_score == 100.0
-    assert analysis.adjusted_score == 150.0
 
 
-def test_tp_far_from_atr_is_penalized_without_cap_or_hard_reject():
+def test_far_tp_reduces_score_without_hidden_cap_or_veto():
     analysis = TpFeasibilityAnalyzer().analyze(
         evaluated_candidate=evaluated(
             metadata={
                 'atr_percent': 0.25,
-                'snapshot_momentum_percent': 0.5,
+                'snapshot_momentum_percent': 0.15,
+                'session_move_percent': 1.8,
+            }
+        ),
+        risk_profile=risk_profile(tp=1.6),
+    )
+
+    assert analysis.component_scores['tp_vs_atr'] == 0.0
+    assert analysis.feasibility_score < 50.0
+    assert -15.0 <= analysis.score_contribution < 0
+    assert analysis.adjusted_score == (
+        analysis.score_before_tp_feasibility + analysis.score_contribution
+    )
+    assert analysis.tp_feasibility_hard_rejection_reason is None
+
+
+def test_opposite_snapshot_momentum_is_a_continuous_weak_component():
+    analysis = TpFeasibilityAnalyzer().analyze(
+        evaluated_candidate=evaluated(
+            metadata={
+                'atr_percent': 0.8,
+                'snapshot_momentum_percent': -0.2,
                 'session_move_percent': 0.3,
             }
         ),
-        risk_profile=risk_profile(take_profit_percent=1.6),
+        risk_profile=risk_profile(),
     )
 
-    assert analysis.tp_to_atr_ratio == 6.4
-    assert analysis.tp_feasibility_penalty == 30.0
-    assert analysis.score_before_tp_feasibility == 150.0
-    assert analysis.adjusted_score == 120.0
+    assert analysis.component_scores['tp_vs_momentum'] == 0.0
     assert analysis.tp_feasibility_hard_rejection_reason is None
-    assert 'tp_too_far_vs_atr_severe' in analysis.penalty_components
+    assert analysis.adjusted_score > 0
 
 
-def test_opposite_snapshot_momentum_is_penalty_only():
-    analysis = TpFeasibilityAnalyzer().analyze(
+def test_cost_equal_to_tp_is_the_only_feasibility_hard_rejection():
+    soft = TpFeasibilityAnalyzer().analyze(
         evaluated_candidate=evaluated(
-            side='BUY',
             metadata={
                 'atr_percent': 0.8,
-                'snapshot_momentum_percent': -0.1,
+                'snapshot_momentum_percent': 0.4,
                 'session_move_percent': 0.3,
             },
+            cost_percent=0.9,
         ),
-        risk_profile=risk_profile(take_profit_percent=1.0),
+        risk_profile=risk_profile(tp=1.0),
     )
-
-    assert analysis.directional_snapshot_momentum_percent == -0.1
-    assert analysis.tp_feasibility_hard_rejection_reason is None
-    assert analysis.adjusted_score == 132.0
-    assert 'opposite_snapshot_momentum' in analysis.penalty_components
-
-
-def test_high_costs_below_tp_are_penalized_without_hard_reject():
-    analysis = TpFeasibilityAnalyzer().analyze(
+    hard = TpFeasibilityAnalyzer().analyze(
         evaluated_candidate=evaluated(
             metadata={
-                'atr_percent': 1.0,
-                'snapshot_momentum_percent': 0.5,
+                'atr_percent': 0.8,
+                'snapshot_momentum_percent': 0.4,
                 'session_move_percent': 0.3,
             },
-            cost_percent=1.1,
+            cost_percent=1.0,
         ),
-        risk_profile=risk_profile(take_profit_percent=1.5),
+        risk_profile=risk_profile(tp=1.0),
     )
 
-    assert analysis.cost_to_tp_ratio == 0.7333
-    assert analysis.tp_feasibility_hard_rejection_reason is None
-    assert 'cost_to_tp_too_high_severe' in analysis.penalty_components
-
-
-def test_costs_equal_or_greater_than_tp_are_hard_rejected():
-    analysis = TpFeasibilityAnalyzer().analyze(
-        evaluated_candidate=evaluated(
-            metadata={
-                'atr_percent': 1.0,
-                'snapshot_momentum_percent': 0.5,
-                'session_move_percent': 0.3,
-            },
-            cost_percent=1.6,
-        ),
-        risk_profile=risk_profile(take_profit_percent=1.5),
-    )
-
-    assert analysis.cost_to_tp_ratio == 1.0667
-    assert analysis.tp_feasibility_hard_rejection_reason == (
+    assert soft.tp_feasibility_hard_rejection_reason is None
+    assert soft.component_scores['cost_vs_tp'] < 25.0
+    assert hard.tp_feasibility_hard_rejection_reason == (
         'candidate_selection_tp_feasibility_cost_to_tp_absurd'
     )
-    assert 'cost_to_tp_absurd_hard_reject' in (
-        analysis.hard_rejection_components
+    assert hard.hard_rejection_components == (
+        'cost_to_tp_absurd_hard_reject',
     )
 
 
-def test_missing_data_is_prudent_but_not_a_veto():
+def test_missing_data_uses_explicit_neutral_prudent_score():
     analysis = TpFeasibilityAnalyzer().analyze(
         evaluated_candidate=evaluated(metadata={}),
-        risk_profile=risk_profile(take_profit_percent=1.0),
+        risk_profile=risk_profile(),
     )
 
+    assert analysis.component_scores['tp_vs_atr'] == 45.0
+    assert analysis.component_scores['tp_vs_momentum'] == 45.0
+    assert analysis.component_scores['movement_remaining'] == 45.0
+    assert 'missing_atr' in analysis.reason_components
     assert analysis.tp_feasibility_hard_rejection_reason is None
-    assert analysis.tp_feasibility_penalty == 24.0
-    assert {
-        'missing_atr',
-        'missing_snapshot_momentum',
-        'missing_session_move',
-    }.issubset(set(analysis.reason_components))
 
 
-def test_tp_feasibility_uses_sell_directional_momentum():
-    good_sell = TpFeasibilityAnalyzer().analyze(
+def test_sell_uses_directional_momentum():
+    good = TpFeasibilityAnalyzer().analyze(
         evaluated_candidate=evaluated(
             side='SELL',
             metadata={
@@ -258,49 +204,46 @@ def test_tp_feasibility_uses_sell_directional_momentum():
                 'session_move_percent': -0.3,
             },
         ),
-        risk_profile=risk_profile(take_profit_percent=1.0),
+        risk_profile=risk_profile(),
     )
-    bad_sell = TpFeasibilityAnalyzer().analyze(
+    bad = TpFeasibilityAnalyzer().analyze(
         evaluated_candidate=evaluated(
             side='SELL',
             metadata={
                 'atr_percent': 0.8,
                 'snapshot_momentum_percent': 0.4,
-                'session_move_percent': -0.3,
-            },
-        ),
-        risk_profile=risk_profile(take_profit_percent=1.0),
-    )
-
-    assert good_sell.directional_snapshot_momentum_percent == 0.4
-    assert good_sell.tp_feasibility_penalty == 0.0
-    assert bad_sell.directional_snapshot_momentum_percent == -0.4
-    assert bad_sell.adjusted_score < good_sell.adjusted_score
-
-
-def test_candidate_evaluator_applies_penalty_without_hidden_cap():
-    result = CandidateTpFeasibilityEvaluator().evaluate(
-        evaluated_candidate=evaluated(
-            score=160.0,
-            metadata={
-                'atr_percent': 0.4,
-                'snapshot_momentum_percent': 0.5,
                 'session_move_percent': 0.3,
             },
         ),
-        risk_profile=risk_profile(take_profit_percent=1.6),
+        risk_profile=risk_profile(),
     )
 
-    assert result.candidate.score == 138.0
-    assert result.candidate.tp_feasibility_penalty == 22.0
-    assert result.candidate.tp_feasibility_hard_rejection_reason is None
-    assert result.tp_feasibility is not None
-    assert result.candidate.tp_feasibility_metadata[
-        'tp_to_atr_ratio'
-    ] == 4.0
-    assert result.candidate.tp_feasibility_metadata[
-        'score_before_tp_feasibility'
-    ] == 160.0
-    assert result.candidate.tp_feasibility_metadata[
-        'adjusted_score'
-    ] == 138.0
+    assert good.component_scores['tp_vs_momentum'] > (
+        bad.component_scores['tp_vs_momentum']
+    )
+    assert good.feasibility_score > bad.feasibility_score
+
+
+def test_evaluator_persists_score_contribution_and_probability():
+    result = CandidateTpFeasibilityEvaluator().evaluate(
+        evaluated_candidate=evaluated(
+            metadata={
+                'atr_percent': 0.8,
+                'snapshot_momentum_percent': 0.4,
+                'session_move_percent': 0.3,
+                'trend_strength_percent': 0.2,
+                'close_position_percent': 90.0,
+            }
+        ),
+        risk_profile=risk_profile(),
+    )
+
+    assert result.candidate.tp_feasibility_score == (
+        result.tp_feasibility.feasibility_score
+    )
+    assert result.candidate.tp_feasibility_contribution == (
+        result.tp_feasibility.score_contribution
+    )
+    assert result.candidate.raw_tp_before_sl_probability is not None
+    assert result.candidate.tp_before_sl_probability is not None
+    assert 'tp_feasibility_score=' in result.candidate.rank_reason
