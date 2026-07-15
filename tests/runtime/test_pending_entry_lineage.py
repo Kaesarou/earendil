@@ -11,6 +11,7 @@ from app.runtime.pending_entry import PendingEntryManager
 from app.strategies.entry_confirmation import EntryConfirmationConfig
 from app.strategies.signals import Signal
 
+
 UTC = timezone.utc
 NOW = datetime(2026, 7, 15, 14, 0, tzinfo=UTC)
 
@@ -66,8 +67,8 @@ def evaluated(item):
             required_min_expected_net_profit_amount=0.1,
         ),
         tp_feasibility=SimpleNamespace(
-            raw_runway_score=50.0,
-            raw_tp_feasibility_penalty=25.0,
+            feasibility_score=50.0,
+            score_contribution=0.0,
         ),
         readiness_reason='entry_decision_required',
     )
@@ -91,6 +92,7 @@ def test_pending_registration_has_stable_explicit_lineage():
     assert registered.pending_entry_id
     assert refreshed.pending_entry_id == registered.pending_entry_id
     assert refreshed.origin_candidate_id == registered.origin_candidate_id
+    assert registered.initial_feasibility_score == 50.0
 
 
 def test_reconstructed_candidate_keeps_origin_and_pending_ids_outside_signal_metadata():
