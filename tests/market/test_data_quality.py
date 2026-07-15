@@ -50,21 +50,67 @@ def test_rejects_stale_snapshot():
     assert result.reasons == ('snapshot_too_old',)
 
 
+def test_live_fetch_start_time_does_not_create_false_future_snapshot():
+    wall_clock = datetime.now(timezone.utc)
+    request_started_at = wall_clock - timedelta(seconds=2)
+    live_snapshot = snapshot(
+        timestamp=wall_clock - timedelta(seconds=1)
+    )
+
+    result = MarketDataValidator().validate(
+        live_snapshot,
+        MarketDataQualityConfig(
+            max_future_skew_seconds=0,
+            max_snapshot_age_seconds=120,
+        ),
+        now=request_started_at,
+    )
+
+    assert result.status == MarketDataStatus.ACCEPTED
+    assert 'snapshot_from_future' not in result.reasons
+
+
+def test_historical_replay_time_remains_deterministic():
+    replay_snapshot = snapshot(timestamp=NOW + timedelta(seconds=2))
+
+    result = MarketDataValidator().validate(
+        replay_snapshot,
+        MarketDataQualityConfig(max_future_skew_seconds=0),
+        now=NOW,
+    )
+
+    assert result.status == MarketDataStatus.REJECTED
+    assert 'snapshot_from_future' in result.reasons
+
+
 def test_large_jump_requires_a_second_snapshot_near_the_new_level():
     validator = MarketDataValidator()
     config = MarketDataQualityConfig(
         max_jump_percent=2.0,
         jump_confirmation_tolerance_percent=0.5,
     )
-    assert validator.validate(snapshot(), config, now=NOW).status == MarketDataStatus.ACCEPTED
+    assert (
+        validator.validate(snapshot(), config, now=NOW).status
+        == MarketDataStatus.ACCEPTED
+    )
 
     jump = validator.validate(
-        snapshot(bid=109.9, ask=110.1, last=110.0, timestamp=NOW + timedelta(seconds=10)),
+        snapshot(
+            bid=109.9,
+            ask=110.1,
+            last=110.0,
+            timestamp=NOW + timedelta(seconds=10),
+        ),
         config,
         now=NOW + timedelta(seconds=10),
     )
     confirmation = validator.validate(
-        snapshot(bid=110.0, ask=110.2, last=110.1, timestamp=NOW + timedelta(seconds=20)),
+        snapshot(
+            bid=110.0,
+            ask=110.2,
+            last=110.1,
+            timestamp=NOW + timedelta(seconds=20),
+        ),
         config,
         now=NOW + timedelta(seconds=20),
     )
