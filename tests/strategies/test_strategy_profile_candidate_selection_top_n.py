@@ -4,24 +4,28 @@ from app.instruments.models import AssetClass
 from app.strategies.balanced_strategy_config import BalancedStrategyConfig
 
 
-def test_strategy_profile_resolves_candidate_selection_config_for_every_asset_class():
-    profile = BalancedStrategyConfig(
-        candidate_selection_top_n=3,
-        candidate_selection_min_score=115.0,
+def test_strategy_profile_resolves_asset_specific_selection_configs():
+    profile = BalancedStrategyConfig()
+
+    crypto = profile.candidate_selection_config_for_asset_class(
+        AssetClass.CRYPTO
+    )
+    us = profile.candidate_selection_config_for_asset_class(
+        AssetClass.EQUITY_US
+    )
+    eu = profile.candidate_selection_config_for_asset_class(
+        AssetClass.EQUITY_EU
     )
 
-    crypto_config = profile.candidate_selection_config_for_asset_class(AssetClass.CRYPTO)
-    equity_us_config = profile.candidate_selection_config_for_asset_class(AssetClass.EQUITY_US)
-    equity_eu_config = profile.candidate_selection_config_for_asset_class(AssetClass.EQUITY_EU)
-
-    assert profile.candidate_selection_top_n == 3
-    assert profile.candidate_selection_min_score == 115.0
-    assert crypto_config.top_n == 3
-    assert crypto_config.min_score == 115.0
-    assert equity_us_config.top_n == 3
-    assert equity_us_config.min_score == 115.0
-    assert equity_eu_config.top_n == 3
-    assert equity_eu_config.min_score == 115.0
+    assert crypto.top_n == 2
+    assert crypto.min_score == 115.0
+    assert crypto.dynamic_min_score is None
+    assert us.top_n == 2
+    assert us.min_score == 115.0
+    assert us.dynamic_min_score == 100.0
+    assert eu.top_n == 1
+    assert eu.min_score == 110.0
+    assert eu.dynamic_min_score is None
 
 
 def test_strategy_profile_rejects_invalid_asset_class():
