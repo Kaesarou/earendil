@@ -15,11 +15,21 @@ NOW = datetime(2026, 7, 10, 15, 0, tzinfo=timezone.utc)
 
 def _candle(*, minute=0, close=100.0, high=100.2, low=99.8, open_=100.0):
     closed_at = NOW + timedelta(minutes=minute)
-    return Candle('AMD', 60, open_, high, low, close, None, closed_at - timedelta(minutes=1), closed_at)
+    return Candle(
+        'AMD',
+        60,
+        open_,
+        high,
+        low,
+        close,
+        None,
+        closed_at - timedelta(minutes=1),
+        closed_at,
+    )
 
 
 def _evaluated(*, level=100.0):
-    candle = _candle()
+    current_candle = _candle()
     signal = Signal(
         action='BUY',
         setup_quality=0.8,
@@ -33,21 +43,23 @@ def _evaluated(*, level=100.0):
     candidate = TradeCandidate(
         'AMD',
         MarketSnapshot('AMD', 99.95, 100.05, 100.0, NOW),
-        candle,
+        current_candle,
         signal,
         120.0,
         'test',
         'US',
     )
-    economics = CandidateEconomics(100, 1, 0.5, 0.5, 0.5, 0.5, 0.1, 0.1)
+    economics = CandidateEconomics(
+        100, 1, 0.5, 0.5, 0.5, 0.5, 0.1, 0.1
+    )
     return EvaluatedTradeCandidate(
         candidate=candidate,
         economics=economics,
         tp_feasibility=SimpleNamespace(
-            raw_runway_score=20.0,
-            raw_tp_feasibility_penalty=40.0,
+            feasibility_score=20.0,
+            score_contribution=-9.0,
         ),
-        readiness_reason='insufficient_runway',
+        readiness_reason='entry_decision_required',
     )
 
 
@@ -87,12 +99,15 @@ def test_new_breakout_level_can_register_after_previous_setup_expired():
         config=EntryConfirmationConfig(max_candles=1),
     )
 
-    events = manager.register(evaluated_candidate=_evaluated(level=101.0), max_candles=1)
+    events = manager.register(
+        evaluated_candidate=_evaluated(level=101.0),
+        max_candles=1,
+    )
 
     assert events[0].event_type == 'pending_entry_registered'
 
 
-def test_confirmed_pending_is_rearmed_on_next_candle_instead_of_sticking():
+def test_confirmed_pending_stays_confirmed_until_selection_outcome():
     manager = PendingEntryManager()
     evaluated = _evaluated()
     manager.register(evaluated_candidate=evaluated, max_candles=5)
@@ -104,7 +119,7 @@ def test_confirmed_pending_is_rearmed_on_next_candle_instead_of_sticking():
         confirmation_type='persistence',
     )
 
-    manager.observe(
+    observation = manager.observe(
         symbol='AMD',
         candle=_candle(minute=1, close=100.0),
         snapshot=evaluated.candidate.snapshot,
@@ -115,4 +130,6 @@ def test_confirmed_pending_is_rearmed_on_next_candle_instead_of_sticking():
         config=EntryConfirmationConfig(max_candles=5),
     )
 
-    assert manager.get(pending.key).state != PendingEntryState.CONFIRMED
+    assert observation.events == ()
+    assert manager.get(pending.key).state == PendingEntryState.CONFIRMED
+    assert manager.get(pending.key).observed_candles == 2
