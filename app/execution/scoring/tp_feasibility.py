@@ -10,6 +10,8 @@ from app.execution.sl_tp_profile import EffectiveSlTpResolver
 from app.execution.trade_candidate import TradeCandidate
 from app.instruments.models import RiskProfile, TpFeasibilityConfig
 
+
+TP_FEASIBILITY_MODEL_VERSION = 'tp_feasibility_score_v2'
 TP_FEASIBILITY_HARD_REJECTION_PREFIX = 'candidate_selection_tp_feasibility_'
 
 
@@ -32,18 +34,17 @@ class TpFeasibilityAnalysis:
     sl_tp_source: str
     distance_to_trade_extreme_percent: float | None
     movement_consumed_percent: float | None
-    runway_score: float
-    raw_runway_score: float
+    feasibility_score: float
+    component_scores: dict[str, float]
     score_before_tp_feasibility: float
+    score_contribution: float
     adjusted_score: float
-    tp_feasibility_penalty: float
-    raw_tp_feasibility_penalty: float
     tp_feasibility_hard_rejection_reason: str | None
     readiness: CandidateReadiness
     readiness_reason: str
-    penalty_components: tuple[str, ...]
     hard_rejection_components: tuple[str, ...]
     reason_components: tuple[str, ...]
+    model_version: str = TP_FEASIBILITY_MODEL_VERSION
 
 
 class TpFeasibilityAnalyzer:
@@ -58,14 +59,6 @@ class TpFeasibilityAnalyzer:
     ) -> TpFeasibilityAnalysis:
         candidate = evaluated_candidate.candidate
         config = risk_profile.tp_feasibility
-        if not config.enabled:
-            return self._disabled_analysis(
-                evaluated_candidate=evaluated_candidate,
-                risk_profile=risk_profile,
-            )
-
-        metadata = candidate.signal.metadata or {}
-        side = candidate.signal.action
         effective_sl_tp = (
             evaluated_candidate.effective_sl_tp
             or self.sl_tp_resolver.resolve_for_signal(
@@ -73,13 +66,23 @@ class TpFeasibilityAnalyzer:
                 risk_profile=risk_profile,
             )
         )
+        if not config.enabled:
+            return self._disabled_analysis(
+                evaluated_candidate=evaluated_candidate,
+                effective_sl_tp=effective_sl_tp,
+            )
+
+        metadata = candidate.signal.metadata or {}
+        side = candidate.signal.action
         effective_take_profit_percent = effective_sl_tp.take_profit_percent
         effective_stop_loss_percent = effective_sl_tp.stop_loss_percent
         atr_percent = effective_sl_tp.atr_percent
         snapshot_momentum_percent = _optional_float(
             metadata.get('snapshot_momentum_percent')
         )
-        session_move_percent = _optional_float(metadata.get('session_move_percent'))
+        session_move_percent = _optional_float(
+            metadata.get('session_move_percent')
+        )
         directional_snapshot_momentum_percent = _directional_value(
             side,
             snapshot_momentum_percent,
@@ -120,65 +123,75 @@ class TpFeasibilityAnalyzer:
                 + evaluated_candidate.economics.estimated_total_cost_percent,
             )
         )
-        distance_to_trade_extreme_percent = _distance_to_trade_extreme(candidate)
+        distance_to_trade_extreme_percent = _distance_to_trade_extreme(
+            candidate
+        )
         movement_consumed_percent = (
             max(directional_session_move_percent, 0.0)
             if directional_session_move_percent is not None
             else None
         )
 
-        penalty = 0.0
-        hard_rejection_reason: str | None = None
-        components: list[str] = []
-        penalty_components: list[str] = []
-        hard_rejection_components: list[str] = []
-
-        penalty = self._apply_atr_rules(
-            tp_to_atr_ratio=tp_to_atr_ratio,
-            penalty=penalty,
-            components=components,
-            penalty_components=penalty_components,
-            config=config,
-        )
-        penalty = self._apply_momentum_rules(
-            directional_snapshot_momentum_percent=(
-                directional_snapshot_momentum_percent
+        component_scores = {
+            'tp_vs_atr': _score_high_value_is_bad(
+                tp_to_atr_ratio,
+                good=config.good_tp_to_atr_ratio,
+                bad=config.bad_tp_to_atr_ratio,
+                missing=config.missing_component_score,
             ),
-            tp_to_snapshot_momentum_ratio=tp_to_snapshot_momentum_ratio,
-            penalty=penalty,
-            components=components,
-            penalty_components=penalty_components,
-            config=config,
+            'tp_vs_momentum': _momentum_score(
+                directional_momentum=directional_snapshot_momentum_percent,
+                tp_to_momentum_ratio=tp_to_snapshot_momentum_ratio,
+                config=config,
+            ),
+            'cost_vs_tp': _score_high_value_is_bad(
+                cost_to_tp_ratio,
+                good=config.good_cost_to_tp_ratio,
+                bad=config.bad_cost_to_tp_ratio,
+                missing=config.missing_component_score,
+            ),
+            'movement_remaining': _score_high_value_is_bad(
+                movement_consumed_percent,
+                good=config.good_movement_consumed_percent,
+                bad=config.bad_movement_consumed_percent,
+                missing=config.missing_component_score,
+            ),
+        }
+        feasibility_score = _weighted_feasibility_score(
+            component_scores,
+            config,
         )
-        penalty, hard_rejection_reason = self._apply_cost_rules(
-            cost_to_tp_ratio=cost_to_tp_ratio,
-            penalty=penalty,
-            components=components,
-            penalty_components=penalty_components,
-            hard_rejection_components=hard_rejection_components,
-            config=config,
-        )
-        penalty = self._apply_runway_rules(
-            movement_consumed_percent=movement_consumed_percent,
-            penalty=penalty,
-            components=components,
-            penalty_components=penalty_components,
-            config=config,
-        )
-
-        raw_penalty = min(penalty, config.max_penalty_points)
-        raw_runway_score = max(0.0, min(100.0, 100.0 - raw_penalty * 2.0))
-        readiness_decision = evaluate_candidate_readiness(
+        contribution = _score_contribution(feasibility_score, config)
+        hard_rejection_reason = None
+        hard_rejection_components: tuple[str, ...] = ()
+        if cost_to_tp_ratio >= config.cost_to_tp_hard_reject_ratio:
+            hard_rejection_reason = _reason('cost_to_tp_absurd')
+            hard_rejection_components = ('cost_to_tp_absurd_hard_reject',)
+        readiness = evaluate_candidate_readiness(
             hard_rejection_reason=hard_rejection_reason,
         )
-        score_before_tp_feasibility = round(candidate.score, 4)
-        adjusted_score = _score_after_penalty(candidate.score, raw_penalty)
+        score_before = round(candidate.score, 4)
+        adjusted_score = max(0.0, score_before + contribution)
+        reasons = _reason_components(
+            component_scores=component_scores,
+            atr_missing=tp_to_atr_ratio is None,
+            momentum_missing=directional_snapshot_momentum_percent is None,
+            session_move_missing=movement_consumed_percent is None,
+        )
 
         return TpFeasibilityAnalysis(
-            effective_take_profit_percent=round(effective_take_profit_percent, 4),
-            effective_stop_loss_percent=round(effective_stop_loss_percent, 4),
+            effective_take_profit_percent=round(
+                effective_take_profit_percent,
+                4,
+            ),
+            effective_stop_loss_percent=round(
+                effective_stop_loss_percent,
+                4,
+            ),
             atr_percent=_round_optional(atr_percent),
-            snapshot_momentum_percent=_round_optional(snapshot_momentum_percent),
+            snapshot_momentum_percent=_round_optional(
+                snapshot_momentum_percent
+            ),
             directional_snapshot_momentum_percent=_round_optional(
                 directional_snapshot_momentum_percent
             ),
@@ -199,36 +212,31 @@ class TpFeasibilityAnalyzer:
             distance_to_trade_extreme_percent=_round_optional(
                 distance_to_trade_extreme_percent
             ),
-            movement_consumed_percent=_round_optional(movement_consumed_percent),
-            runway_score=round(raw_runway_score, 4),
-            raw_runway_score=raw_runway_score,
-            score_before_tp_feasibility=score_before_tp_feasibility,
-            adjusted_score=adjusted_score,
-            tp_feasibility_penalty=round(raw_penalty, 4),
-            raw_tp_feasibility_penalty=raw_penalty,
+            movement_consumed_percent=_round_optional(
+                movement_consumed_percent
+            ),
+            feasibility_score=round(feasibility_score, 4),
+            component_scores={
+                name: round(value, 4)
+                for name, value in component_scores.items()
+            },
+            score_before_tp_feasibility=score_before,
+            score_contribution=round(contribution, 4),
+            adjusted_score=round(adjusted_score, 4),
             tp_feasibility_hard_rejection_reason=hard_rejection_reason,
-            readiness=readiness_decision.readiness,
-            readiness_reason=readiness_decision.reason,
-            penalty_components=tuple(penalty_components),
-            hard_rejection_components=tuple(hard_rejection_components),
-            reason_components=tuple(components),
+            readiness=readiness.readiness,
+            readiness_reason=readiness.reason,
+            hard_rejection_components=hard_rejection_components,
+            reason_components=reasons,
         )
 
     def _disabled_analysis(
         self,
         *,
         evaluated_candidate: EvaluatedTradeCandidate,
-        risk_profile: RiskProfile,
+        effective_sl_tp,
     ) -> TpFeasibilityAnalysis:
-        candidate = evaluated_candidate.candidate
-        effective_sl_tp = (
-            evaluated_candidate.effective_sl_tp
-            or self.sl_tp_resolver.resolve_for_signal(
-                signal=candidate.signal,
-                risk_profile=risk_profile,
-            )
-        )
-        score = round(candidate.score, 4)
+        score = round(evaluated_candidate.candidate.score, 4)
         return TpFeasibilityAnalysis(
             effective_take_profit_percent=round(
                 effective_sl_tp.take_profit_percent,
@@ -249,10 +257,6 @@ class TpFeasibilityAnalyzer:
             cost_to_tp_ratio=0.0,
             reward_to_risk_ratio=(
                 evaluated_candidate.economics.reward_to_risk_ratio
-                or _safe_ratio(
-                    effective_sl_tp.take_profit_percent,
-                    effective_sl_tp.stop_loss_percent,
-                )
             ),
             net_reward_to_risk_ratio=(
                 evaluated_candidate.economics.net_reward_to_risk_ratio
@@ -261,180 +265,17 @@ class TpFeasibilityAnalyzer:
             sl_tp_source=effective_sl_tp.source,
             distance_to_trade_extreme_percent=None,
             movement_consumed_percent=None,
-            runway_score=100.0,
-            raw_runway_score=100.0,
+            feasibility_score=50.0,
+            component_scores={},
             score_before_tp_feasibility=score,
+            score_contribution=0.0,
             adjusted_score=score,
-            tp_feasibility_penalty=0.0,
-            raw_tp_feasibility_penalty=0.0,
             tp_feasibility_hard_rejection_reason=None,
             readiness=CandidateReadiness.TRADABLE_NOW,
             readiness_reason='tp_feasibility_disabled',
-            penalty_components=(),
             hard_rejection_components=(),
             reason_components=('disabled',),
         )
-
-    def _apply_atr_rules(
-        self,
-        *,
-        tp_to_atr_ratio: float | None,
-        penalty: float,
-        components: list[str],
-        penalty_components: list[str],
-        config: TpFeasibilityConfig,
-    ) -> float:
-        if tp_to_atr_ratio is None:
-            component = 'missing_atr'
-            components.append(component)
-            penalty_components.append(component)
-            return penalty + config.missing_data_penalty_points
-        if tp_to_atr_ratio >= config.tp_atr_severe_ratio:
-            component = 'tp_too_far_vs_atr_severe'
-            components.append(component)
-            penalty_components.append(component)
-            return penalty + 30.0
-        if tp_to_atr_ratio >= config.tp_atr_hard_ratio:
-            component = 'tp_too_far_vs_atr_hard'
-            components.append(component)
-            penalty_components.append(component)
-            return penalty + 22.0
-        if tp_to_atr_ratio >= config.tp_atr_soft_ratio:
-            component = 'tp_too_far_vs_atr_soft'
-            components.append(component)
-            penalty_components.append(component)
-            return penalty + _scaled_penalty(
-                tp_to_atr_ratio,
-                config.tp_atr_soft_ratio,
-                config.tp_atr_hard_ratio,
-                6.0,
-                18.0,
-            )
-        components.append('tp_atr_ok')
-        return penalty
-
-    def _apply_momentum_rules(
-        self,
-        *,
-        directional_snapshot_momentum_percent: float | None,
-        tp_to_snapshot_momentum_ratio: float | None,
-        penalty: float,
-        components: list[str],
-        penalty_components: list[str],
-        config: TpFeasibilityConfig,
-    ) -> float:
-        if directional_snapshot_momentum_percent is None:
-            component = 'missing_snapshot_momentum'
-            components.append(component)
-            penalty_components.append(component)
-            return penalty + config.missing_data_penalty_points
-        if directional_snapshot_momentum_percent <= 0:
-            component = 'opposite_snapshot_momentum'
-            components.append(component)
-            penalty_components.append(component)
-            return penalty + 18.0
-        if (
-            directional_snapshot_momentum_percent
-            < config.min_directional_momentum_percent
-        ):
-            component = 'weak_snapshot_momentum'
-            components.append(component)
-            penalty_components.append(component)
-            return penalty + 12.0
-        if tp_to_snapshot_momentum_ratio is None:
-            component = 'missing_tp_momentum_ratio'
-            components.append(component)
-            penalty_components.append(component)
-            return penalty + config.missing_data_penalty_points
-        if tp_to_snapshot_momentum_ratio >= config.tp_momentum_hard_ratio:
-            component = 'tp_too_far_vs_momentum_hard'
-            components.append(component)
-            penalty_components.append(component)
-            return penalty + 16.0
-        if tp_to_snapshot_momentum_ratio >= config.tp_momentum_soft_ratio:
-            component = 'tp_too_far_vs_momentum_soft'
-            components.append(component)
-            penalty_components.append(component)
-            return penalty + _scaled_penalty(
-                tp_to_snapshot_momentum_ratio,
-                config.tp_momentum_soft_ratio,
-                config.tp_momentum_hard_ratio,
-                4.0,
-                14.0,
-            )
-        components.append('tp_momentum_ok')
-        return penalty
-
-    def _apply_cost_rules(
-        self,
-        *,
-        cost_to_tp_ratio: float,
-        penalty: float,
-        components: list[str],
-        penalty_components: list[str],
-        hard_rejection_components: list[str],
-        config: TpFeasibilityConfig,
-    ) -> tuple[float, str | None]:
-        if cost_to_tp_ratio >= config.cost_to_tp_hard_reject_ratio:
-            component = 'cost_to_tp_absurd_hard_reject'
-            components.append(component)
-            penalty_components.append(component)
-            hard_rejection_components.append(component)
-            return penalty + 35.0, _reason('cost_to_tp_absurd')
-        if cost_to_tp_ratio >= config.cost_to_tp_severe_ratio:
-            component = 'cost_to_tp_too_high_severe'
-            components.append(component)
-            penalty_components.append(component)
-            return penalty + 35.0, None
-        if cost_to_tp_ratio >= config.cost_to_tp_hard_ratio:
-            component = 'cost_to_tp_too_high_hard'
-            components.append(component)
-            penalty_components.append(component)
-            return penalty + 22.0, None
-        if cost_to_tp_ratio >= config.cost_to_tp_soft_ratio:
-            component = 'cost_to_tp_too_high_soft'
-            components.append(component)
-            penalty_components.append(component)
-            return (
-                penalty
-                + _scaled_penalty(
-                    cost_to_tp_ratio,
-                    config.cost_to_tp_soft_ratio,
-                    config.cost_to_tp_hard_ratio,
-                    6.0,
-                    18.0,
-                ),
-                None,
-            )
-        components.append('cost_to_tp_ok')
-        return penalty, None
-
-    def _apply_runway_rules(
-        self,
-        *,
-        movement_consumed_percent: float | None,
-        penalty: float,
-        components: list[str],
-        penalty_components: list[str],
-        config: TpFeasibilityConfig,
-    ) -> float:
-        if movement_consumed_percent is None:
-            component = 'missing_session_move'
-            components.append(component)
-            penalty_components.append(component)
-            return penalty + config.missing_data_penalty_points
-        if movement_consumed_percent >= config.late_move_hard_percent:
-            component = 'movement_already_consumed_hard'
-            components.append(component)
-            penalty_components.append(component)
-            return penalty + 16.0
-        if movement_consumed_percent >= config.late_move_soft_percent:
-            component = 'movement_already_consumed_soft'
-            components.append(component)
-            penalty_components.append(component)
-            return penalty + 8.0
-        components.append('runway_ok')
-        return penalty
 
 
 class CandidateTpFeasibilityEvaluator:
@@ -457,56 +298,31 @@ class CandidateTpFeasibilityEvaluator:
             score=analysis.adjusted_score,
             rank_reason=_append_rank_reason(candidate.rank_reason, analysis),
             tp_feasibility_metadata=analysis_to_metadata(analysis),
-            tp_feasibility_penalty=analysis.tp_feasibility_penalty,
+            tp_feasibility_score=analysis.feasibility_score,
+            tp_feasibility_contribution=analysis.score_contribution,
             tp_feasibility_hard_rejection_reason=(
                 analysis.tp_feasibility_hard_rejection_reason
             ),
         )
-        normal_evaluated_candidate = replace(
+        evaluated = replace(
             evaluated_candidate,
             candidate=updated_candidate,
             tp_feasibility=analysis,
             readiness=analysis.readiness,
             readiness_reason=analysis.readiness_reason,
         )
-
-        from app.execution.eu_micro_scalp_fallback import (
-            EuMicroScalpFallbackAdjuster,
-        )
-
-        fallback_evaluated_candidate = EuMicroScalpFallbackAdjuster(
-            self.analyzer
-        ).adjust(
-            raw_evaluated_candidate=evaluated_candidate,
-            normal_evaluated_candidate=normal_evaluated_candidate,
-            risk_profile=risk_profile,
-            normal_analysis=analysis,
-        )
-        with_probability = self._with_tp_probability(
-            fallback_evaluated_candidate
-        )
-        final_analysis = with_probability.tp_feasibility
-        if final_analysis is None:
-            return with_probability
-        return replace(
-            with_probability,
-            readiness=final_analysis.readiness,
-            readiness_reason=final_analysis.readiness_reason,
-        )
-
-    def _with_tp_probability(
-        self,
-        evaluated_candidate: EvaluatedTradeCandidate,
-    ) -> EvaluatedTradeCandidate:
         from app.execution.scoring.tp_probability import (
             CandidateTpProbabilityEvaluator,
         )
 
-        return CandidateTpProbabilityEvaluator().evaluate(evaluated_candidate)
+        return CandidateTpProbabilityEvaluator().evaluate(evaluated)
 
 
-def analysis_to_metadata(analysis: TpFeasibilityAnalysis) -> dict[str, Any]:
+def analysis_to_metadata(
+    analysis: TpFeasibilityAnalysis,
+) -> dict[str, Any]:
     return {
+        'model_version': analysis.model_version,
         'effective_take_profit_percent': analysis.effective_take_profit_percent,
         'effective_stop_loss_percent': analysis.effective_stop_loss_percent,
         'atr_percent': analysis.atr_percent,
@@ -532,18 +348,16 @@ def analysis_to_metadata(analysis: TpFeasibilityAnalysis) -> dict[str, Any]:
             analysis.distance_to_trade_extreme_percent
         ),
         'movement_consumed_percent': analysis.movement_consumed_percent,
-        'runway_score': analysis.runway_score,
-        'raw_runway_score': analysis.raw_runway_score,
+        'feasibility_score': analysis.feasibility_score,
+        'component_scores': analysis.component_scores,
         'score_before_tp_feasibility': analysis.score_before_tp_feasibility,
+        'score_contribution': analysis.score_contribution,
         'adjusted_score': analysis.adjusted_score,
-        'tp_feasibility_penalty': analysis.tp_feasibility_penalty,
-        'raw_tp_feasibility_penalty': analysis.raw_tp_feasibility_penalty,
         'tp_feasibility_hard_rejection_reason': (
             analysis.tp_feasibility_hard_rejection_reason
         ),
         'readiness': analysis.readiness.value,
         'readiness_reason': analysis.readiness_reason,
-        'penalty_components': list(analysis.penalty_components),
         'hard_rejection_components': list(
             analysis.hard_rejection_components
         ),
@@ -556,8 +370,9 @@ def _append_rank_reason(
     analysis: TpFeasibilityAnalysis,
 ) -> str:
     suffix = (
-        f'tp_feasibility_penalty={analysis.tp_feasibility_penalty:.2f},'
-        f'runway={analysis.runway_score:.2f},'
+        f'tp_feasibility_score={analysis.feasibility_score:.2f},'
+        f'tp_feasibility_contribution={analysis.score_contribution:.2f},'
+        f'tp_feasibility_components={analysis.component_scores},'
         f'readiness={analysis.readiness.value},'
         f'readiness_reason={analysis.readiness_reason},'
         f'score_before_tp_feasibility='
@@ -572,6 +387,91 @@ def _append_rank_reason(
             f'{analysis.tp_feasibility_hard_rejection_reason}'
         )
     return f'{rank_reason};{suffix}' if rank_reason else suffix
+
+
+def _weighted_feasibility_score(
+    component_scores: dict[str, float],
+    config: TpFeasibilityConfig,
+) -> float:
+    return _clamp(
+        component_scores['tp_vs_atr'] * config.tp_vs_atr_weight
+        + component_scores['tp_vs_momentum'] * config.tp_vs_momentum_weight
+        + component_scores['cost_vs_tp'] * config.cost_vs_tp_weight
+        + component_scores['movement_remaining']
+        * config.movement_remaining_weight,
+        0.0,
+        100.0,
+    )
+
+
+def _score_contribution(
+    feasibility_score: float,
+    config: TpFeasibilityConfig,
+) -> float:
+    normalized = (feasibility_score - 50.0) / 50.0
+    return _clamp(
+        normalized * config.maximum_score_contribution,
+        -config.maximum_score_contribution,
+        config.maximum_score_contribution,
+    )
+
+
+def _momentum_score(
+    *,
+    directional_momentum: float | None,
+    tp_to_momentum_ratio: float | None,
+    config: TpFeasibilityConfig,
+) -> float:
+    if directional_momentum is None:
+        return config.missing_component_score
+    if directional_momentum <= 0:
+        return 0.0
+    return _score_high_value_is_bad(
+        tp_to_momentum_ratio,
+        good=config.good_tp_to_momentum_ratio,
+        bad=config.bad_tp_to_momentum_ratio,
+        missing=config.missing_component_score,
+    )
+
+
+def _score_high_value_is_bad(
+    value: float | None,
+    *,
+    good: float,
+    bad: float,
+    missing: float,
+) -> float:
+    if value is None:
+        return _clamp(missing, 0.0, 100.0)
+    if value <= good:
+        return 100.0
+    if value >= bad:
+        return 0.0
+    return 100.0 * (1.0 - ((value - good) / (bad - good)))
+
+
+def _reason_components(
+    *,
+    component_scores: dict[str, float],
+    atr_missing: bool,
+    momentum_missing: bool,
+    session_move_missing: bool,
+) -> tuple[str, ...]:
+    reasons: list[str] = []
+    if atr_missing:
+        reasons.append('missing_atr')
+    if momentum_missing:
+        reasons.append('missing_snapshot_momentum')
+    if session_move_missing:
+        reasons.append('missing_session_move')
+    for name, score in component_scores.items():
+        if score < 35.0:
+            reasons.append(f'{name}_weak')
+        elif score >= 75.0:
+            reasons.append(f'{name}_strong')
+        else:
+            reasons.append(f'{name}_neutral')
+    return tuple(reasons)
 
 
 def _distance_to_trade_extreme(candidate: TradeCandidate) -> float | None:
@@ -629,27 +529,12 @@ def _optional_float(value: Any) -> float | None:
 
 
 def _round_optional(value: float | None) -> float | None:
-    if value is None:
-        return None
-    return round(value, 4)
+    return None if value is None else round(value, 4)
 
 
-def _scaled_penalty(
-    value: float,
-    soft: float,
-    hard: float,
-    min_penalty: float,
-    max_penalty: float,
-) -> float:
-    if hard <= soft:
-        return max_penalty
-    progress = max(0.0, min(1.0, (value - soft) / (hard - soft)))
-    return min_penalty + (max_penalty - min_penalty) * progress
+def _reason(value: str) -> str:
+    return f'{TP_FEASIBILITY_HARD_REJECTION_PREFIX}{value}'
 
 
-def _score_after_penalty(score: float, penalty: float) -> float:
-    return round(max(0.0, score - penalty), 4)
-
-
-def _reason(reason: str) -> str:
-    return f'{TP_FEASIBILITY_HARD_REJECTION_PREFIX}{reason}'
+def _clamp(value: float, minimum: float, maximum: float) -> float:
+    return max(minimum, min(maximum, value))
