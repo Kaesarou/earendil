@@ -36,8 +36,8 @@ class PendingEntry:
     initial_reference_price: float
     breakout_or_breakdown_level: float
     initial_score: float
-    initial_runway_score: float
-    initial_penalty: float
+    initial_feasibility_score: float
+    initial_feasibility_contribution: float
     expires_after_candles: int
     observed_candles: int = 0
     state: PendingEntryState = PendingEntryState.WAITING
@@ -128,46 +128,26 @@ class PendingEntryManager:
         if setup_key in self._expired_setups:
             return ()
 
-        events: list[PendingEntryEvent] = []
-        for existing in list(self._entries.values()):
-            if existing.symbol == symbol and existing.side != side:
-                invalidated = replace(
-                    existing,
-                    state=PendingEntryState.INVALIDATED,
-                )
-                self._entries.pop(existing.key, None)
-                events.append(
-                    PendingEntryEvent(
-                        'pending_entry_invalidated',
-                        invalidated,
-                        'opposite_signal',
-                    )
-                )
-
-        key = f'{symbol}:{side}:{session_key}'
+        events = self._invalidate_opposite_entries(symbol, side)
         analysis = evaluated_candidate.tp_feasibility
-        runway = (
-            analysis.raw_runway_score
+        feasibility_score = (
+            analysis.feasibility_score
+            if analysis is not None
+            else 50.0
+        )
+        contribution = (
+            analysis.score_contribution
             if analysis is not None
             else 0.0
         )
-        penalty = (
-            analysis.raw_tp_feasibility_penalty
-            if analysis is not None
-            else 0.0
-        )
+        key = f'{symbol}:{side}:{session_key}'
         existing = self._entries.get(key)
         if existing is not None:
             updated = replace(
                 existing,
                 initial_score=candidate.score,
-                initial_runway_score=runway,
-                initial_penalty=penalty,
-                state=(
-                    PendingEntryState.WAITING
-                    if existing.state == PendingEntryState.CONFIRMED
-                    else existing.state
-                ),
+                initial_feasibility_score=feasibility_score,
+                initial_feasibility_contribution=contribution,
             )
             self._entries[key] = updated
             events.append(
@@ -193,8 +173,8 @@ class PendingEntryManager:
             initial_reference_price=candidate.snapshot.last,
             breakout_or_breakdown_level=level,
             initial_score=candidate.score,
-            initial_runway_score=runway,
-            initial_penalty=penalty,
+            initial_feasibility_score=feasibility_score,
+            initial_feasibility_contribution=contribution,
             expires_after_candles=max(1, max_candles),
         )
         self._entries[pending.key] = pending
@@ -223,32 +203,22 @@ class PendingEntryManager:
     ) -> PendingEntryObservation:
         normalized_symbol = normalize_symbol(symbol)
         events: list[PendingEntryEvent] = []
-        confirmed: PendingEntry | None = None
-        confirmation_signal: Signal | None = None
 
-        for stored_pending in list(self._entries.values()):
-            if stored_pending.symbol != normalized_symbol:
+        for pending in list(self._entries.values()):
+            if pending.symbol != normalized_symbol:
                 continue
-            pending = self._reset_confirmed_for_recalculation(
-                stored_pending
-            )
-            if not session_tradable or session_key != pending.session_key:
-                events.append(
-                    self._invalidate(pending, 'session_not_tradable')
-                )
+            if pending.state == PendingEntryState.CONFIRMED:
                 continue
-            if cooldown_active:
-                events.append(
-                    self._invalidate(pending, 'cooldown_registered')
-                )
-                continue
-            if not self._market_data_valid(
-                snapshot=snapshot,
+            invalidation = self._pre_observation_invalidation(
+                pending=pending,
                 candle=candle,
-            ):
-                events.append(
-                    self._invalidate(pending, 'invalid_market_data')
-                )
+                snapshot=snapshot,
+                session_key=session_key,
+                session_tradable=session_tradable,
+                cooldown_active=cooldown_active,
+            )
+            if invalidation is not None:
+                events.append(invalidation)
                 continue
 
             observed_candles = pending.observed_candles + 1
@@ -294,16 +264,13 @@ class PendingEntryManager:
                 config=config,
             )
             if decision.state == PendingEntryState.INVALIDATED.value:
-                events.append(
-                    self._invalidate(pending, decision.reason)
-                )
+                events.append(self._invalidate(pending, decision.reason))
                 continue
 
-            next_state = PendingEntryState(decision.state)
             updated = replace(
                 pending,
                 observed_candles=observed_candles,
-                state=next_state,
+                state=PendingEntryState(decision.state),
                 consecutive_closes=decision.consecutive_closes,
                 retest_extreme_price=decision.retest_extreme_price,
                 structural_invalidation_price=(
@@ -311,26 +278,26 @@ class PendingEntryManager:
                 ),
                 confirmation_type=decision.confirmation_type,
             )
-            if next_state == PendingEntryState.CONFIRMED:
-                self._entries[pending.key] = updated
-                events.append(
-                    PendingEntryEvent(
-                        'pending_entry_confirmed',
-                        updated,
-                        decision.reason,
-                    )
+            if updated.state == PendingEntryState.CONFIRMED:
+                self._entries[updated.key] = updated
+                event = PendingEntryEvent(
+                    'pending_entry_confirmed',
+                    updated,
+                    decision.reason,
                 )
-                confirmed = updated
-                confirmation_signal = self._confirmation_signal(
-                    signal=signal,
-                    pending=updated,
+                return PendingEntryObservation(
+                    events=tuple([*events, event]),
+                    confirmed_pending=updated,
+                    confirmation_signal=self._confirmation_signal(
+                        signal=signal,
+                        pending=updated,
+                    ),
                 )
-                continue
             if self._is_expired(updated):
                 events.append(self._expire(updated))
                 continue
-            self._entries[pending.key] = updated
-            if next_state == PendingEntryState.RETEST_DETECTED:
+            self._entries[updated.key] = updated
+            if updated.state == PendingEntryState.RETEST_DETECTED:
                 events.append(
                     PendingEntryEvent(
                         'pending_entry_retest_detected',
@@ -339,11 +306,7 @@ class PendingEntryManager:
                     )
                 )
 
-        return PendingEntryObservation(
-            tuple(events),
-            confirmed,
-            confirmation_signal,
-        )
+        return PendingEntryObservation(events=tuple(events))
 
     def mark_waiting_after_recalculation(
         self,
@@ -385,19 +348,34 @@ class PendingEntryManager:
             if pending.symbol == normalized_symbol
         )
 
-    def _reset_confirmed_for_recalculation(
+    def _invalidate_opposite_entries(
         self,
+        symbol: str,
+        side: str,
+    ) -> list[PendingEntryEvent]:
+        events: list[PendingEntryEvent] = []
+        for existing in list(self._entries.values()):
+            if existing.symbol == symbol and existing.side != side:
+                events.append(self._invalidate(existing, 'opposite_signal'))
+        return events
+
+    def _pre_observation_invalidation(
+        self,
+        *,
         pending: PendingEntry,
-    ) -> PendingEntry:
-        if pending.state != PendingEntryState.CONFIRMED:
-            return pending
-        reset = replace(
-            pending,
-            state=PendingEntryState.WAITING,
-            confirmation_type=None,
-        )
-        self._entries[reset.key] = reset
-        return reset
+        candle: Candle,
+        snapshot: MarketSnapshot,
+        session_key: str | None,
+        session_tradable: bool,
+        cooldown_active: bool,
+    ) -> PendingEntryEvent | None:
+        if not session_tradable or session_key != pending.session_key:
+            return self._invalidate(pending, 'session_not_tradable')
+        if cooldown_active:
+            return self._invalidate(pending, 'cooldown_registered')
+        if not self._market_data_valid(snapshot=snapshot, candle=candle):
+            return self._invalidate(pending, 'invalid_market_data')
+        return None
 
     def _spread_blocks_confirmation(
         self,
@@ -473,6 +451,8 @@ class PendingEntryManager:
         metadata = dict(signal.metadata or {})
         metadata.update(
             {
+                'entry_origin': 'pending_confirmation',
+                'structural_confirmation_satisfied': True,
                 'confirmation_type': pending.confirmation_type,
                 'structural_invalidation_price': (
                     pending.structural_invalidation_price
