@@ -12,6 +12,7 @@ from app.runtime.pending_entry import PendingEntryManager, PendingEntryState
 from app.strategies.entry_confirmation import EntryConfirmationConfig
 from app.strategies.signals import Signal
 
+
 NOW = datetime(2026, 7, 10, 15, 0, tzinfo=timezone.utc)
 
 
@@ -73,8 +74,8 @@ def evaluated(side='BUY', score=120.0):
         0.1,
     )
     analysis = SimpleNamespace(
-        raw_runway_score=20.0,
-        raw_tp_feasibility_penalty=39.98,
+        feasibility_score=20.0,
+        score_contribution=-9.0,
     )
     return EvaluatedTradeCandidate(
         candidate,
@@ -103,6 +104,8 @@ def test_register_and_deduplicate_without_extending_expiry():
     assert second[0].event_type == 'pending_entry_updated'
     assert updated.detected_at == original.detected_at
     assert updated.expires_after_candles == 5
+    assert updated.initial_feasibility_score == 20.0
+    assert updated.initial_feasibility_contribution == -9.0
 
 
 def test_opposite_signal_invalidates_existing_pending():
@@ -186,7 +189,7 @@ def test_expired_setup_can_be_registered_in_new_session():
     assert events[0].event_type == 'pending_entry_registered'
 
 
-def test_confirmed_pending_returns_to_waiting_when_not_executed():
+def test_confirmed_pending_remains_confirmed_until_selection_outcome():
     manager = PendingEntryManager()
     manager.register(evaluated_candidate=evaluated(), max_candles=5)
     pending = manager.snapshot()[0]
@@ -196,7 +199,7 @@ def test_confirmed_pending_returns_to_waiting_when_not_executed():
         confirmation_type='persistence',
     )
 
-    manager.observe(
+    result = manager.observe(
         symbol='AMD',
         candle=candle(close=100.0, minute=1),
         snapshot=evaluated().candidate.snapshot,
@@ -207,8 +210,8 @@ def test_confirmed_pending_returns_to_waiting_when_not_executed():
         config=EntryConfirmationConfig(max_candles=5),
     )
 
-    assert manager.get(pending.key) is not None
-    assert manager.get(pending.key).state != PendingEntryState.CONFIRMED
+    assert result.events == ()
+    assert manager.get(pending.key).state == PendingEntryState.CONFIRMED
 
 
 def test_cooldown_invalidates_pending():

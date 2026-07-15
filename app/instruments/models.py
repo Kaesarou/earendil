@@ -24,21 +24,32 @@ class InstrumentProfile:
 @dataclass(frozen=True)
 class TpFeasibilityConfig:
     enabled: bool = True
-    missing_data_penalty_points: float = 8.0
     feasibility_buffer_percent: float = 0.10
-    tp_atr_soft_ratio: float = 2.0
-    tp_atr_hard_ratio: float = 4.0
-    tp_atr_severe_ratio: float = 6.0
-    tp_momentum_soft_ratio: float = 4.0
-    tp_momentum_hard_ratio: float = 12.0
-    min_directional_momentum_percent: float = 0.03
-    cost_to_tp_soft_ratio: float = 0.25
-    cost_to_tp_hard_ratio: float = 0.45
-    cost_to_tp_severe_ratio: float = 0.65
+    missing_component_score: float = 45.0
+    good_tp_to_atr_ratio: float = 1.50
+    bad_tp_to_atr_ratio: float = 6.00
+    good_tp_to_momentum_ratio: float = 3.00
+    bad_tp_to_momentum_ratio: float = 12.00
+    good_cost_to_tp_ratio: float = 0.10
+    bad_cost_to_tp_ratio: float = 1.00
+    good_movement_consumed_percent: float = 0.50
+    bad_movement_consumed_percent: float = 2.00
+    tp_vs_atr_weight: float = 0.30
+    tp_vs_momentum_weight: float = 0.25
+    cost_vs_tp_weight: float = 0.30
+    movement_remaining_weight: float = 0.15
+    maximum_score_contribution: float = 15.0
     cost_to_tp_hard_reject_ratio: float = 1.0
-    late_move_soft_percent: float = 0.80
-    late_move_hard_percent: float = 2.00
-    max_penalty_points: float = 45.0
+
+    def __post_init__(self) -> None:
+        weights = (
+            self.tp_vs_atr_weight
+            + self.tp_vs_momentum_weight
+            + self.cost_vs_tp_weight
+            + self.movement_remaining_weight
+        )
+        if abs(weights - 1.0) > 1e-9:
+            raise ValueError('TP feasibility component weights must sum to 1.0.')
 
 
 @dataclass(frozen=True)
@@ -58,10 +69,16 @@ class MarketContextConfig:
 @dataclass(frozen=True)
 class EntryDecisionConfig:
     moderate_extension_percent: float = 0.12
-    wait_for_retest_penalty: float = 25.0
-    minimum_retest_runway_score: float = 25.0
+    minimum_structural_retest_score: float = 25.0
     maximum_retest_candles: int = 5
-    require_context: bool = False
+
+
+@dataclass(frozen=True)
+class DirectionalRiskOverride:
+    stop_loss_percent: float
+    take_profit_percent: float
+    source: str
+    stale_position: StalePositionConfig | None = None
 
 
 @dataclass(frozen=True)
@@ -90,10 +107,31 @@ class RiskProfile:
     trailing_stop_distance_percent: float = 0.0
     trailing_stop_net_buffer_percent: float = 0.0
     stale_position: StalePositionConfig = field(default_factory=StalePositionConfig)
-    trade_cooldown: TradeCooldownConfig = field(default_factory=TradeCooldownConfig)
+    directional_overrides: dict[str, DirectionalRiskOverride] = field(
+        default_factory=dict
+    )
+    trade_cooldown: TradeCooldownConfig = field(
+        default_factory=TradeCooldownConfig
+    )
     trade_cost: TradeCostConfig = field(default_factory=TradeCostConfig)
-    tp_feasibility: TpFeasibilityConfig = field(default_factory=TpFeasibilityConfig)
-    entry_confirmation: EntryConfirmationConfig = field(default_factory=EntryConfirmationConfig)
+    tp_feasibility: TpFeasibilityConfig = field(
+        default_factory=TpFeasibilityConfig
+    )
+    entry_confirmation: EntryConfirmationConfig = field(
+        default_factory=EntryConfirmationConfig
+    )
+
+    def directional_override_for(
+        self,
+        side: str,
+    ) -> DirectionalRiskOverride | None:
+        return self.directional_overrides.get(side.strip().upper())
+
+    def stale_position_for(self, side: str) -> StalePositionConfig:
+        override = self.directional_override_for(side)
+        if override is not None and override.stale_position is not None:
+            return override.stale_position
+        return self.stale_position
 
 
 @dataclass(frozen=True)
@@ -120,7 +158,15 @@ class TrendStrategyConfig:
 class InstrumentConfig:
     trend: TrendStrategyConfig
     risk: RiskProfile
-    market_data_quality: MarketDataQualityConfig = field(default_factory=MarketDataQualityConfig)
-    market_context: MarketContextConfig = field(default_factory=MarketContextConfig)
-    entry_decision: EntryDecisionConfig = field(default_factory=EntryDecisionConfig)
-    multi_timeframe: MultiTimeframeConfig = field(default_factory=MultiTimeframeConfig)
+    market_data_quality: MarketDataQualityConfig = field(
+        default_factory=MarketDataQualityConfig
+    )
+    market_context: MarketContextConfig = field(
+        default_factory=MarketContextConfig
+    )
+    entry_decision: EntryDecisionConfig = field(
+        default_factory=EntryDecisionConfig
+    )
+    multi_timeframe: MultiTimeframeConfig = field(
+        default_factory=MultiTimeframeConfig
+    )

@@ -5,6 +5,15 @@ from pydantic import ValidationError
 
 from app.config.settings import Settings
 from app.execution.entry_decision import ENTRY_DECISION_MODEL_VERSION
+from app.execution.scoring.market_context_scorer import (
+    MARKET_CONTEXT_SCORER_VERSION,
+)
+from app.execution.scoring.multi_timeframe_scorer import (
+    MULTI_TIMEFRAME_SCORER_VERSION,
+)
+from app.execution.scoring.tp_feasibility import (
+    TP_FEASIBILITY_MODEL_VERSION,
+)
 from app.execution.scoring.tp_probability import TP_PROBABILITY_MODEL_VERSION
 from app.instruments.instrument_registry import InstrumentRegistry
 from app.journal.run_manifest import (
@@ -16,7 +25,7 @@ from app.journal.run_manifest import (
 from app.strategies.balanced_strategy_config import BalancedStrategyConfig
 
 
-def test_run_manifest_captures_pr5a_contract_without_broker_secrets():
+def test_run_manifest_captures_pr5b_contract_without_broker_secrets():
     settings = Settings(
         WATCHLIST='AAPL',
         EQUITY_US_SYMBOLS='AAPL',
@@ -42,7 +51,7 @@ def test_run_manifest_captures_pr5a_contract_without_broker_secrets():
     )
 
     snapshot = manifest['runtime']['settings']
-    assert manifest['schema_version'] == 6
+    assert manifest['schema_version'] == 7
     assert 'ETORO_API_KEY' not in snapshot
     assert 'ETORO_USER_KEY' not in snapshot
     assert manifest['strategy']['profile'] == 'balanced'
@@ -50,21 +59,51 @@ def test_run_manifest_captures_pr5a_contract_without_broker_secrets():
     assert manifest['analysis_sources']['pending_lineage_enabled'] is True
     assert manifest['analysis_sources']['entry_routing_retained'] is True
     fields = manifest['analysis_sources']['analysis_ready_entry_fields']
-    assert 'origin_candidate_id' in fields
-    assert 'pending_entry_id' in fields
-    assert 'entry_route_action' in fields
-    assert 'break_even_probability' in fields
-    assert 'net_expected_value_percent' in fields
-    assert 'probability_edge' in fields
+    for field in (
+        'origin_candidate_id',
+        'pending_entry_id',
+        'entry_route_action',
+        'directional_score',
+        'market_context_score',
+        'market_context_components',
+        'multi_timeframe_score',
+        'multi_timeframe_components',
+        'tp_feasibility_score',
+        'tp_feasibility_contribution',
+        'raw_tp_before_sl_probability',
+        'tp_before_sl_probability',
+        'break_even_probability',
+        'net_expected_value_percent',
+        'probability_edge',
+    ):
+        assert field in fields
     assert 'entry_action' not in fields
     assert manifest['files']['manifest'].endswith(
         'runs/run-test/run_manifest.json'
     )
     assert manifest['code']['source_sha256']
     assert manifest['models']['entry_decision'] == ENTRY_DECISION_MODEL_VERSION
-    assert manifest['models']['entry_decision'] == 'entry_router_v4'
+    assert manifest['models']['entry_decision'] == 'entry_router_v5'
+    assert manifest['models']['market_context_score'] == (
+        MARKET_CONTEXT_SCORER_VERSION
+    )
+    assert manifest['models']['market_context_score'] == (
+        'market_context_score_v1'
+    )
+    assert manifest['models']['multi_timeframe_score'] == (
+        MULTI_TIMEFRAME_SCORER_VERSION
+    )
+    assert manifest['models']['multi_timeframe_score'] == (
+        'multi_timeframe_score_v1'
+    )
+    assert manifest['models']['tp_feasibility'] == (
+        TP_FEASIBILITY_MODEL_VERSION
+    )
+    assert manifest['models']['tp_feasibility'] == (
+        'tp_feasibility_score_v2'
+    )
     assert manifest['models']['tp_probability'] == TP_PROBABILITY_MODEL_VERSION
-    assert manifest['models']['tp_probability'] == 'heuristic_v2'
+    assert manifest['models']['tp_probability'] == 'heuristic_v3'
     assert manifest['models']['multi_timeframe'] == (
         'multi_timeframe_features_v2'
     )

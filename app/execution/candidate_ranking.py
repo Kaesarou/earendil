@@ -1,6 +1,8 @@
 import hashlib
 from typing import TYPE_CHECKING, Any
 
+from app.execution.scoring.market_context_scorer import score_market_context
+from app.execution.scoring.multi_timeframe_scorer import score_multi_timeframe
 from app.execution.scoring.sell_signal_scorer import SellSignalScorer
 from app.execution.scoring.signal_scorer import (
     directional_score_breakdown,
@@ -40,7 +42,21 @@ def build_trade_candidate(
         candle=candle,
         signal=signal,
     )
-    score = score_breakdown.final_score
+    directional_score = score_breakdown.final_score
+    context_score = score_market_context(
+        context=market_context,
+        side=signal.action,
+    )
+    multi_timeframe_score = score_multi_timeframe(
+        context=multi_timeframe_context,
+        side=signal.action,
+    )
+    score = max(
+        0.0,
+        directional_score
+        + context_score.score
+        + multi_timeframe_score.score,
+    )
     exhaustion = score_breakdown.exhaustion
     entry_quality_metadata = _entry_quality_metadata(score_breakdown)
     sell_score_metadata = score_breakdown.score_metadata.get('sell_score', {})
@@ -63,18 +79,36 @@ def build_trade_candidate(
             snapshot=snapshot,
             signal=signal,
             base_score=score_breakdown.base_score,
+            directional_score=directional_score,
             score=score,
             entry_quality_metadata=entry_quality_metadata,
             sell_score_metadata=sell_score_metadata,
+            market_context_score=context_score.score,
+            market_context_components=context_score.components,
+            multi_timeframe_score=multi_timeframe_score.score,
+            multi_timeframe_components=multi_timeframe_score.components,
         ),
         session_key=session_key,
         base_score=round(score_breakdown.base_score, 4),
+        directional_score=round(directional_score, 4),
         exhaustion_penalty=exhaustion.exhaustion_penalty,
         late_entry_risk=exhaustion.late_entry_risk,
         late_entry_severity=exhaustion.late_entry_severity,
         entry_quality_metadata=entry_quality_metadata,
         sell_score_metadata=sell_score_metadata,
         sell_specific_penalty=score_breakdown.sell_specific_penalty,
+        market_context_score=context_score.score,
+        market_context_components=context_score.components,
+        market_context_score_metadata={
+            **context_score.diagnostics,
+            'model_version': context_score.model_version,
+        },
+        multi_timeframe_score=multi_timeframe_score.score,
+        multi_timeframe_components=multi_timeframe_score.components,
+        multi_timeframe_score_metadata={
+            **multi_timeframe_score.diagnostics,
+            'model_version': multi_timeframe_score.model_version,
+        },
         candidate_id=candidate_id,
         origin_candidate_id=origin_candidate_id or candidate_id,
         pending_entry_id=pending_entry_id,
@@ -176,15 +210,25 @@ def _rank_reason(
     snapshot: MarketSnapshot,
     signal: Signal,
     base_score: float,
+    directional_score: float,
     score: float,
     entry_quality_metadata: dict[str, Any],
     sell_score_metadata: dict[str, Any],
+    market_context_score: float,
+    market_context_components: dict[str, float],
+    multi_timeframe_score: float,
+    multi_timeframe_components: dict[str, float],
 ) -> str:
     metadata = signal.metadata or {}
     sell_reason = _sell_rank_reason(sell_score_metadata)
     return (
         f'score={round(score, 4)} | '
         f'base_score={round(base_score, 4)} | '
+        f'directional_score={round(directional_score, 4)} | '
+        f'market_context_score={round(market_context_score, 4)} | '
+        f'market_context_components={market_context_components} | '
+        f'multi_timeframe_score={round(multi_timeframe_score, 4)} | '
+        f'multi_timeframe_components={multi_timeframe_components} | '
         f'setup_quality={signal.setup_quality} | '
         f'setup_quality_bonus={entry_quality_metadata["setup_quality_bonus"]} | '
         f'exhaustion_penalty={entry_quality_metadata["exhaustion_penalty"]} | '

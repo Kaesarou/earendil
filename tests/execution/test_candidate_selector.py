@@ -1,3 +1,4 @@
+from dataclasses import replace
 from datetime import datetime, timezone
 
 from app.execution.candidate_economics import (
@@ -7,12 +8,14 @@ from app.execution.candidate_economics import (
 from app.execution.candidate_ranking import build_trade_candidate
 from app.execution.candidate_selector import (
     CandidateSelectionConfig,
+    rank_evaluated_trade_candidates,
     select_evaluated_trade_candidates,
     select_trade_candidates,
 )
 from app.execution.trade_candidate import TradeCandidate
 from app.market.models import Candle, MarketSnapshot
 from app.strategies.signals import Signal
+
 
 TEST_SESSION_KEY = 'test-session'
 
@@ -86,10 +89,10 @@ def candidate(
 
 
 def evaluated_candidate_with_profit(
-    candidate: TradeCandidate,
+    item: TradeCandidate,
 ) -> EvaluatedTradeCandidate:
     return EvaluatedTradeCandidate(
-        candidate=candidate,
+        candidate=item,
         economics=CandidateEconomics(
             position_value=100.0,
             expected_gross_profit=1.0,
@@ -228,7 +231,7 @@ def test_evaluated_selector_prioritizes_tp_hard_reject_over_min_score():
     )
 
 
-def test_penalized_candidate_is_rejected_only_by_visible_min_score():
+def test_negative_feasibility_contribution_is_rejected_only_by_visible_score():
     penalized_candidate = TradeCandidate(
         symbol='LOW',
         snapshot=snapshot('LOW'),
@@ -237,7 +240,8 @@ def test_penalized_candidate_is_rejected_only_by_visible_min_score():
         score=95.0,
         rank_reason='test',
         session_key=TEST_SESSION_KEY,
-        tp_feasibility_penalty=30.0,
+        tp_feasibility_score=20.0,
+        tp_feasibility_contribution=-9.0,
     )
     result = select_evaluated_trade_candidates(
         [evaluated_candidate_with_profit(penalized_candidate)],
@@ -247,3 +251,30 @@ def test_penalized_candidate_is_rejected_only_by_visible_min_score():
     assert result.rejected_candidates[0].reason == (
         'candidate_selection_score_too_low'
     )
+
+
+def test_calibrated_ev_breaks_ties_inside_same_score_bucket():
+    base = candidate('BASE')
+    lower_ev = evaluated_candidate_with_profit(
+        replace(
+            base,
+            symbol='LOW_EV',
+            score=102.0,
+            net_expected_value_percent=-0.20,
+        )
+    )
+    higher_ev = evaluated_candidate_with_profit(
+        replace(
+            base,
+            symbol='HIGH_EV',
+            score=101.0,
+            net_expected_value_percent=0.10,
+        )
+    )
+
+    ranked = rank_evaluated_trade_candidates([lower_ev, higher_ev])
+
+    assert [item.candidate.symbol for item in ranked] == [
+        'HIGH_EV',
+        'LOW_EV',
+    ]

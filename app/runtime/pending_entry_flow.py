@@ -2,7 +2,7 @@ from app.execution.candidate_ranking import build_trade_candidate
 from app.execution.trade_candidate import TradeCandidate
 from app.instruments.models import EntryDecisionConfig
 from app.journal.jsonl_journal import JsonlJournal
-from app.market.market_context import CandidateMarketContext, ContextAlignment
+from app.market.market_context import CandidateMarketContext
 from app.market.models import Candle, MarketSnapshot
 from app.market.multi_timeframe import MultiTimeframeContext
 from app.market.session_rules import TradingSessionDecision
@@ -30,17 +30,14 @@ def advance_pending_entry(
     run_id: str = '',
 ) -> TradeCandidate | None:
     active_pending = next(
-        (item for item in pending_manager.snapshot() if item.symbol == symbol),
+        (
+            item
+            for item in pending_manager.snapshot()
+            if item.symbol == symbol
+        ),
         None,
     )
     if active_pending is None:
-        return None
-
-    if market_context is not None and market_context.alignment == ContextAlignment.OPPOSED:
-        write_pending_events(
-            trade_journal,
-            pending_manager.invalidate_symbol(symbol, 'market_context_opposed'),
-        )
         return None
 
     risk_profile = risk_manager.risk_profile_for(symbol)
@@ -58,7 +55,11 @@ def advance_pending_entry(
         candle=candle,
         snapshot=snapshot,
         signal=signal,
-        session_key=session_decision.session_key if session_decision else None,
+        session_key=(
+            session_decision.session_key
+            if session_decision
+            else None
+        ),
         session_tradable=bool(
             session_decision
             and session_decision.new_entries_allowed
@@ -101,7 +102,9 @@ def advance_pending_entry(
             'market_context': market_context,
             'multi_timeframe_context': multi_timeframe_context,
             'session_decision': session_decision,
-            'instrument_profile': risk_manager.instrument_profile_for(symbol),
+            'instrument_profile': risk_manager.instrument_profile_for(
+                symbol
+            ),
             'risk_profile': risk_profile,
         },
     )

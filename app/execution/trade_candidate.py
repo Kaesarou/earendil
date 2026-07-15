@@ -23,15 +23,24 @@ class TradeCandidate:
     rank_reason: str
     session_key: str = ''
     base_score: float = 0.0
+    directional_score: float = 0.0
     exhaustion_penalty: float = 0.0
     late_entry_risk: float = 0.0
     late_entry_severity: str = 'LOW'
     entry_quality_metadata: dict[str, Any] = field(default_factory=dict)
     sell_score_metadata: dict[str, Any] = field(default_factory=dict)
     sell_specific_penalty: float = 0.0
+    market_context_score: float = 0.0
+    market_context_components: dict[str, float] = field(default_factory=dict)
+    market_context_score_metadata: dict[str, Any] = field(default_factory=dict)
+    multi_timeframe_score: float = 0.0
+    multi_timeframe_components: dict[str, float] = field(default_factory=dict)
+    multi_timeframe_score_metadata: dict[str, Any] = field(default_factory=dict)
     tp_feasibility_metadata: dict[str, Any] = field(default_factory=dict)
-    tp_feasibility_penalty: float = 0.0
+    tp_feasibility_score: float | None = None
+    tp_feasibility_contribution: float = 0.0
     tp_feasibility_hard_rejection_reason: str | None = None
+    raw_tp_before_sl_probability: float | None = None
     tp_before_sl_probability: float | None = None
     tp_before_sl_probability_band: str | None = None
     tp_probability_model_version: str | None = None

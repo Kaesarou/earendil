@@ -69,7 +69,10 @@ def select_trade_candidates(
             for candidate in overflow_candidates
         )
         selected_candidates = kept_candidates
-    return CandidateSelectionResult(selected_candidates, rejected_candidates)
+    return CandidateSelectionResult(
+        selected_candidates,
+        rejected_candidates,
+    )
 
 
 def select_evaluated_trade_candidates(
@@ -192,20 +195,12 @@ def selection_threshold_for(
     config: CandidateSelectionConfig,
 ) -> tuple[float, str]:
     effective_sl_tp = evaluated_candidate.effective_sl_tp
-    if effective_sl_tp is not None:
-        selection_min_score = effective_sl_tp.metadata.get(
-            'selection_min_score'
-        )
-        if selection_min_score is not None:
-            return (
-                float(selection_min_score),
-                'effective_sl_tp_selection_min_score',
-            )
-        if (
-            effective_sl_tp.mode == 'dynamic'
-            and config.dynamic_min_score is not None
-        ):
-            return config.dynamic_min_score, 'dynamic_min_score'
+    if (
+        effective_sl_tp is not None
+        and effective_sl_tp.mode == 'dynamic'
+        and config.dynamic_min_score is not None
+    ):
+        return config.dynamic_min_score, 'dynamic_min_score'
     return config.min_score, 'min_score'
 
 
@@ -221,11 +216,14 @@ def rank_evaluated_trade_candidates(
 
 def _evaluated_candidate_ranking_key(
     evaluated_candidate: EvaluatedTradeCandidate,
-) -> tuple[float, float, float]:
-    score = evaluated_candidate.candidate.score
+) -> tuple[float, float, float, float]:
+    candidate = evaluated_candidate.candidate
+    score = candidate.score
     score_bucket = math.floor(score / 5) * 5
+    net_expected_value = candidate.net_expected_value_percent
     return (
         score_bucket,
+        net_expected_value if net_expected_value is not None else -999.0,
         evaluated_candidate.economics.expected_net_profit,
         score,
     )

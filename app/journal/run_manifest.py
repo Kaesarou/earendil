@@ -9,7 +9,18 @@ from typing import Any
 
 from app.config.settings import Settings
 from app.execution.entry_decision import ENTRY_DECISION_MODEL_VERSION
-from app.execution.scoring.tp_probability import TP_PROBABILITY_MODEL_VERSION
+from app.execution.scoring.market_context_scorer import (
+    MARKET_CONTEXT_SCORER_VERSION,
+)
+from app.execution.scoring.multi_timeframe_scorer import (
+    MULTI_TIMEFRAME_SCORER_VERSION,
+)
+from app.execution.scoring.tp_feasibility import (
+    TP_FEASIBILITY_MODEL_VERSION,
+)
+from app.execution.scoring.tp_probability import (
+    TP_PROBABILITY_MODEL_VERSION,
+)
 from app.instruments.instrument_registry import InstrumentRegistry
 from app.journal.serialization import serialize_value
 from app.market.market_context import MARKET_CONTEXT_VERSION
@@ -19,6 +30,7 @@ from app.market.timeframes import (
     MULTI_TIMEFRAME_MODEL_VERSION,
     SUPPORTED_TIMEFRAMES,
 )
+
 
 _SENSITIVE_SETTINGS = {
     'ETORO_API_KEY',
@@ -41,7 +53,6 @@ def resolve_git_commit() -> str | None:
         value = os.getenv(variable_name)
         if value and value.strip().lower() not in {'unknown', 'local'}:
             return value.strip()
-
     try:
         result = subprocess.run(
             ['git', 'rev-parse', 'HEAD'],
@@ -52,7 +63,6 @@ def resolve_git_commit() -> str | None:
         )
     except (FileNotFoundError, subprocess.SubprocessError):
         return None
-
     commit = result.stdout.strip()
     return commit or None
 
@@ -70,7 +80,6 @@ def resolve_code_fingerprint(
     )
     if not source_files:
         return None
-
     digest = hashlib.sha256()
     for source_file in source_files:
         relative_path = source_file.relative_to(root).as_posix()
@@ -104,7 +113,7 @@ def build_run_manifest(
     actual_manifest_path = manifest_path or settings.run_manifest_path
     actual_summary_path = summary_path or settings.daily_summary_path
     return {
-        'schema_version': 6,
+        'schema_version': 7,
         'run_id': run_id,
         'status': 'running',
         'started_at': started_at,
@@ -116,8 +125,11 @@ def build_run_manifest(
         },
         'models': {
             'market_context': MARKET_CONTEXT_VERSION,
+            'market_context_score': MARKET_CONTEXT_SCORER_VERSION,
             'multi_timeframe': MULTI_TIMEFRAME_MODEL_VERSION,
+            'multi_timeframe_score': MULTI_TIMEFRAME_SCORER_VERSION,
             'entry_decision': ENTRY_DECISION_MODEL_VERSION,
+            'tp_feasibility': TP_FEASIBILITY_MODEL_VERSION,
             'tp_probability': TP_PROBABILITY_MODEL_VERSION,
         },
         'strategy': {
@@ -177,10 +189,19 @@ def build_run_manifest(
                 'estimated_total_cost_percent',
                 'score',
                 'base_score',
+                'directional_score',
+                'market_context_score',
+                'market_context_components',
+                'multi_timeframe_score',
+                'multi_timeframe_components',
+                'tp_feasibility_score',
+                'tp_feasibility_contribution',
                 'entry_route_action',
                 'entry_route_reason',
                 'selection_outcome',
                 'selection_reason',
+                'raw_tp_before_sl_probability',
+                'tp_before_sl_probability',
                 'break_even_probability',
                 'net_expected_value_percent',
                 'probability_edge',
@@ -224,28 +245,27 @@ def finalize_run_manifest(
     manifest_path = Path(path)
     if not manifest_path.exists():
         return
-
     manifest = json.loads(manifest_path.read_text(encoding='utf-8'))
     manifest['status'] = status
     manifest['ended_at'] = ended_at or datetime.now(timezone.utc)
     if summary is not None:
         manifest['result'] = {
-            'market_snapshots': summary.get(
-                'market_data',
-                {},
-            ).get('snapshots', 0),
-            'market_data_rejected': summary.get(
-                'market_data',
-                {},
-            ).get('rejected', 0),
+            'market_snapshots': summary.get('market_data', {}).get(
+                'snapshots',
+                0,
+            ),
+            'market_data_rejected': summary.get('market_data', {}).get(
+                'rejected',
+                0,
+            ),
             'market_data_quarantined': summary.get(
                 'market_data',
                 {},
             ).get('quarantined', 0),
-            'candles_closed': summary.get(
-                'market_data',
-                {},
-            ).get('candles_closed', 0),
+            'candles_closed': summary.get('market_data', {}).get(
+                'candles_closed',
+                0,
+            ),
             'timeframe_bars_closed': summary.get(
                 'multi_timeframe',
                 {},
@@ -254,10 +274,6 @@ def finalize_run_manifest(
                 'multi_timeframe',
                 {},
             ).get('incomplete_total', 0),
-            'candle_gaps': summary.get(
-                'multi_timeframe',
-                {},
-            ).get('gap_total', 0),
             'ready_for_selection': summary.get(
                 'entry_routing',
                 {},
@@ -266,22 +282,19 @@ def finalize_run_manifest(
                 'entry_routing',
                 {},
             ).get('wait_for_retest', 0),
-            'skip': summary.get(
-                'entry_routing',
-                {},
-            ).get('skip', 0),
-            'orders_submitted': summary.get(
-                'orders',
-                {},
-            ).get('submitted', 0),
-            'positions_opened': summary.get(
-                'positions',
-                {},
-            ).get('opened', 0),
-            'positions_closed': summary.get(
-                'positions',
-                {},
-            ).get('closed', 0),
+            'skip': summary.get('entry_routing', {}).get('skip', 0),
+            'orders_submitted': summary.get('orders', {}).get(
+                'submitted',
+                0,
+            ),
+            'positions_opened': summary.get('positions', {}).get(
+                'opened',
+                0,
+            ),
+            'positions_closed': summary.get('positions', {}).get(
+                'closed',
+                0,
+            ),
             'errors': summary.get('errors', {}).get('total', 0),
         }
     _write_json_atomically(manifest_path, manifest)

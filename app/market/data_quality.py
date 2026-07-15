@@ -7,6 +7,9 @@ from typing import Mapping
 from app.market.models import MarketSnapshot
 
 
+_LIVE_CLOCK_WINDOW_SECONDS = 300
+
+
 class MarketDataStatus(StrEnum):
     ACCEPTED = 'accepted'
     QUARANTINED = 'quarantined'
@@ -42,10 +45,16 @@ class ValidatedMarketBatch:
     as_of: datetime
     requested_symbols: tuple[str, ...]
     accepted: dict[str, MarketSnapshot] = field(default_factory=dict)
-    quarantined: dict[str, MarketDataValidationResult] = field(default_factory=dict)
-    rejected: dict[str, MarketDataValidationResult] = field(default_factory=dict)
+    quarantined: dict[str, MarketDataValidationResult] = field(
+        default_factory=dict
+    )
+    rejected: dict[str, MarketDataValidationResult] = field(
+        default_factory=dict
+    )
     missing_symbols: tuple[str, ...] = ()
-    results: dict[str, MarketDataValidationResult] = field(default_factory=dict)
+    results: dict[str, MarketDataValidationResult] = field(
+        default_factory=dict
+    )
 
 
 class MarketDataValidator:
@@ -65,7 +74,7 @@ class MarketDataValidator:
         *,
         now: datetime | None = None,
     ) -> MarketDataValidationResult:
-        actual_now = _as_utc(now or datetime.now(timezone.utc))
+        actual_now = _validation_time(now)
         normalized_symbol = snapshot.symbol.strip().upper()
         timestamp = _as_utc(snapshot.timestamp)
         previous = self._last_accepted.get(normalized_symbol)
@@ -78,7 +87,11 @@ class MarketDataValidator:
             previous=previous,
             config=config,
         )
-        change = _price_change_percent(previous.last, snapshot.last) if previous else None
+        change = (
+            _price_change_percent(previous.last, snapshot.last)
+            if previous
+            else None
+        )
         if reasons:
             return MarketDataValidationResult(
                 symbol=normalized_symbol,
@@ -87,15 +100,24 @@ class MarketDataValidator:
                 reasons=tuple(reasons),
                 spread_percent=_round_optional(spread),
                 price_change_percent=_round_optional(change),
-                previous_snapshot_timestamp=previous.timestamp if previous else None,
+                previous_snapshot_timestamp=(
+                    previous.timestamp if previous else None
+                ),
             )
 
-        if previous is not None and self._baseline_is_stale(previous, timestamp, config):
+        if (
+            previous is not None
+            and self._baseline_is_stale(previous, timestamp, config)
+        ):
             previous = None
             change = None
             self._quarantined.pop(normalized_symbol, None)
 
-        if previous is not None and change is not None and abs(change) > config.max_jump_percent:
+        if (
+            previous is not None
+            and change is not None
+            and abs(change) > config.max_jump_percent
+        ):
             pending = self._quarantined.get(normalized_symbol)
             if pending is not None and self._confirms_quarantined_level(
                 snapshot=snapshot,
@@ -132,7 +154,9 @@ class MarketDataValidator:
             snapshot=snapshot,
             spread_percent=_round_optional(spread),
             price_change_percent=_round_optional(change),
-            previous_snapshot_timestamp=previous.timestamp if previous else None,
+            previous_snapshot_timestamp=(
+                previous.timestamp if previous else None
+            ),
         )
 
     def validate_batch(
@@ -144,7 +168,7 @@ class MarketDataValidator:
         configs: Mapping[str, MarketDataQualityConfig],
         now: datetime | None = None,
     ) -> ValidatedMarketBatch:
-        actual_now = _as_utc(now or datetime.now(timezone.utc))
+        actual_now = _validation_time(now)
         accepted: dict[str, MarketSnapshot] = {}
         quarantined: dict[str, MarketDataValidationResult] = {}
         rejected: dict[str, MarketDataValidationResult] = {}
@@ -165,7 +189,11 @@ class MarketDataValidator:
                 rejected[symbol] = result
                 results[symbol] = result
                 continue
-            result = self.validate(snapshot, configs[symbol], now=actual_now)
+            result = self.validate(
+                snapshot,
+                configs[symbol],
+                now=actual_now,
+            )
             results[symbol] = result
             if result.status == MarketDataStatus.ACCEPTED:
                 accepted[symbol] = snapshot
@@ -177,7 +205,10 @@ class MarketDataValidator:
         return ValidatedMarketBatch(
             loop_id=loop_id,
             as_of=actual_now,
-            requested_symbols=tuple(symbol.strip().upper() for symbol in requested_symbols),
+            requested_symbols=tuple(
+                symbol.strip().upper()
+                for symbol in requested_symbols
+            ),
             accepted=accepted,
             quarantined=quarantined,
             rejected=rejected,
@@ -201,7 +232,10 @@ class MarketDataValidator:
             ('ask', snapshot.ask),
             ('last', snapshot.last),
         ):
-            if not isinstance(value, (int, float)) or not math.isfinite(float(value)):
+            if (
+                not isinstance(value, (int, float))
+                or not math.isfinite(float(value))
+            ):
                 reasons.append(f'non_finite_{name}')
             elif float(value) <= 0:
                 reasons.append(f'non_positive_{name}')
@@ -209,7 +243,11 @@ class MarketDataValidator:
             return reasons
         if snapshot.ask < snapshot.bid:
             reasons.append('inverted_quote')
-        if spread is None or spread < 0 or spread > config.max_data_spread_percent:
+        if (
+            spread is None
+            or spread < 0
+            or spread > config.max_data_spread_percent
+        ):
             reasons.append('data_spread_abnormal')
         age_seconds = (now - timestamp).total_seconds()
         if age_seconds > config.max_snapshot_age_seconds:
@@ -218,9 +256,14 @@ class MarketDataValidator:
             reasons.append('snapshot_from_future')
         if previous is not None:
             previous_timestamp = _as_utc(previous.timestamp)
-            if (previous_timestamp - timestamp).total_seconds() > config.max_out_of_order_seconds:
+            if (
+                previous_timestamp - timestamp
+            ).total_seconds() > config.max_out_of_order_seconds:
                 reasons.append('snapshot_out_of_order')
-        if _last_quote_deviation_percent(snapshot) > config.max_last_quote_deviation_percent:
+        if (
+            _last_quote_deviation_percent(snapshot)
+            > config.max_last_quote_deviation_percent
+        ):
             reasons.append('last_too_far_from_quote')
         return reasons
 
@@ -242,9 +285,29 @@ class MarketDataValidator:
         config: MarketDataQualityConfig,
     ) -> bool:
         confirmation_distance = abs(
-            _price_change_percent(quarantined.last, snapshot.last) or 0.0
+            _price_change_percent(
+                quarantined.last,
+                snapshot.last,
+            )
+            or 0.0
         )
-        return confirmation_distance <= config.jump_confirmation_tolerance_percent
+        return (
+            confirmation_distance
+            <= config.jump_confirmation_tolerance_percent
+        )
+
+
+def _validation_time(request_started_at: datetime | None) -> datetime:
+    wall_clock = datetime.now(timezone.utc)
+    if request_started_at is None:
+        return wall_clock
+    explicit = _as_utc(request_started_at)
+    if (
+        abs((wall_clock - explicit).total_seconds())
+        <= _LIVE_CLOCK_WINDOW_SECONDS
+    ):
+        return wall_clock
+    return explicit
 
 
 def _spread_percent(snapshot: MarketSnapshot) -> float | None:
@@ -260,11 +323,16 @@ def _last_quote_deviation_percent(snapshot: MarketSnapshot) -> float:
     midpoint = (snapshot.bid + snapshot.ask) / 2
     if midpoint <= 0:
         return float('inf')
-    nearest = snapshot.bid if snapshot.last < snapshot.bid else snapshot.ask
+    nearest = (
+        snapshot.bid if snapshot.last < snapshot.bid else snapshot.ask
+    )
     return abs(snapshot.last - nearest) / midpoint * 100
 
 
-def _price_change_percent(previous: float, current: float) -> float | None:
+def _price_change_percent(
+    previous: float,
+    current: float,
+) -> float | None:
     if previous <= 0:
         return None
     return ((current - previous) / previous) * 100

@@ -20,56 +20,53 @@ from app.market.market_context import (
 from app.market.models import Candle, MarketSnapshot
 from app.strategies.signals import Signal
 
+
 NOW = datetime(2026, 7, 14, 9, 0, tzinfo=timezone.utc)
 
 
-def market_context(
-    alignment: ContextAlignment,
-    relative_strength: float = 0.2,
-) -> CandidateMarketContext:
-    regime = (
-        MarketRegime.RISK_ON
-        if alignment != ContextAlignment.OPPOSED
-        else MarketRegime.RISK_OFF
-    )
+def market_context(alignment: ContextAlignment) -> CandidateMarketContext:
     return CandidateMarketContext(
         version='market_context_v2',
         as_of=NOW,
         asset_class=AssetClass.EQUITY_US,
-        regime=regime,
+        regime=(
+            MarketRegime.RISK_OFF
+            if alignment == ContextAlignment.OPPOSED
+            else MarketRegime.RISK_ON
+        ),
         alignment=alignment,
         benchmark=BenchmarkContext(
-            'SPY',
+            'SPX500',
             True,
-            MarketDirection.BULLISH,
-            0.3,
-            0.1,
+            MarketDirection.BEARISH,
+            -0.5,
+            -0.1,
             0.02,
             0.0,
         ),
         breadth=BreadthContext(
             True,
-            MarketDirection.BULLISH,
+            MarketDirection.BEARISH,
             4,
             4,
             1.0,
-            3,
             1,
+            3,
             0,
-            0.75,
-            0.2,
+            0.25,
+            -0.2,
         ),
         sector=SectorContext(
             'TECHNOLOGY',
             True,
-            MarketDirection.BULLISH,
+            MarketDirection.BEARISH,
             3,
             3,
-            0.67,
-            0.2,
+            0.33,
+            -0.2,
         ),
         symbol_session_return_percent=0.5,
-        symbol_relative_strength_percent=relative_strength,
+        symbol_relative_strength_percent=1.0,
         reasons=('test',),
     )
 
@@ -78,29 +75,11 @@ def evaluated(
     *,
     last: float,
     alignment=ContextAlignment.ALIGNED,
-    relative_strength=0.2,
-    penalty=0.0,
-    runway=100.0,
     remaining_move_quality='GOOD',
+    confirmation_satisfied=False,
+    expected_net_profit_percent=0.5,
+    hard_rejection_reason=None,
 ):
-    snapshot = MarketSnapshot(
-        'TEST',
-        last - 0.05,
-        last + 0.05,
-        last,
-        NOW,
-    )
-    candle = Candle(
-        'TEST',
-        60,
-        99.8,
-        last,
-        99.7,
-        last,
-        None,
-        NOW,
-        NOW,
-    )
     signal = Signal(
         action='BUY',
         setup_quality=0.8,
@@ -108,138 +87,140 @@ def evaluated(
         metadata={
             'range_high': 100.0,
             'snapshot_momentum_percent': 0.2,
+            'entry_origin': (
+                'pending_confirmation'
+                if confirmation_satisfied
+                else 'signal'
+            ),
+            'structural_confirmation_satisfied': confirmation_satisfied,
         },
     )
     candidate = TradeCandidate(
         symbol='TEST',
-        snapshot=snapshot,
-        candle=candle,
+        snapshot=MarketSnapshot(
+            'TEST', last - 0.05, last + 0.05, last, NOW
+        ),
+        candle=Candle(
+            'TEST', 60, 99.8, last, 99.7, last, None, NOW, NOW
+        ),
         signal=signal,
         score=120.0,
         rank_reason='test',
         entry_quality_metadata={
             'remaining_move_quality': remaining_move_quality
         },
-        market_context=market_context(
-            alignment,
-            relative_strength,
+        market_context=market_context(alignment),
+        market_context_score=(
+            -8.0 if alignment == ContextAlignment.OPPOSED else 8.0
         ),
-    )
-    feasibility = SimpleNamespace(
-        raw_runway_score=runway,
-        raw_tp_feasibility_penalty=penalty,
-        tp_feasibility_hard_rejection_reason=None,
     )
     return EvaluatedTradeCandidate(
         candidate=candidate,
         economics=CandidateEconomics(
             position_value=100.0,
             expected_gross_profit=1.0,
-            expected_net_profit=0.5,
-            expected_net_profit_percent=0.5,
+            expected_net_profit=expected_net_profit_percent,
+            expected_net_profit_percent=expected_net_profit_percent,
             estimated_total_cost=0.5,
             estimated_total_cost_percent=0.5,
             min_expected_net_profit_percent=0.1,
             required_min_expected_net_profit_amount=0.1,
         ),
-        tp_feasibility=feasibility,
+        tp_feasibility=SimpleNamespace(
+            tp_feasibility_hard_rejection_reason=(
+                hard_rejection_reason
+            )
+        ),
     )
 
 
-def test_routes_to_selection_when_context_and_price_are_healthy():
-    decision = EntryDecisionEngine().evaluate(
-        evaluated_candidate=evaluated(last=100.05),
+def decide(item):
+    return EntryDecisionEngine().evaluate(
+        evaluated_candidate=item,
         config=EntryDecisionConfig(),
     )
+
+
+def test_routes_to_selection_when_price_is_not_extended():
+    decision = decide(evaluated(last=100.05))
     assert decision.action == EntryAction.READY_FOR_SELECTION
     assert decision.reason == 'entry_conditions_satisfied'
 
 
-def test_waits_for_retest_when_price_is_extended():
-    decision = EntryDecisionEngine().evaluate(
-        evaluated_candidate=evaluated(last=100.50),
-        config=EntryDecisionConfig(),
-    )
+def test_waits_for_retest_when_structure_is_extended_and_usable():
+    decision = decide(evaluated(last=100.50))
     assert decision.action == EntryAction.WAIT_FOR_RETEST
     assert decision.retest_eligible is True
     assert decision.reason == 'better_entry_required_at_structure'
 
 
-def test_opposed_context_is_compensated_by_positive_relative_strength():
-    decision = EntryDecisionEngine().evaluate(
-        evaluated_candidate=evaluated(
-            last=100.05,
-            alignment=ContextAlignment.OPPOSED,
-            relative_strength=0.4,
-        ),
-        config=EntryDecisionConfig(),
+def test_opposed_context_never_changes_router_action():
+    aligned = decide(
+        evaluated(last=100.05, alignment=ContextAlignment.ALIGNED)
     )
-    assert decision.action == EntryAction.READY_FOR_SELECTION
-    assert decision.diagnostics['context_opposition_compensated'] is True
+    opposed = decide(
+        evaluated(last=100.05, alignment=ContextAlignment.OPPOSED)
+    )
+
+    assert opposed.action == aligned.action == EntryAction.READY_FOR_SELECTION
+    assert opposed.reason == aligned.reason == 'entry_conditions_satisfied'
+    assert opposed.diagnostics['market_context_score'] == -8.0
 
 
-def test_opposed_context_requests_retest_when_relative_strength_is_not_positive():
-    decision = EntryDecisionEngine().evaluate(
-        evaluated_candidate=evaluated(
-            last=100.20,
-            alignment=ContextAlignment.OPPOSED,
-            relative_strength=-0.1,
-        ),
-        config=EntryDecisionConfig(),
+def test_retest_reason_is_structural_not_contextual():
+    decision = decide(
+        evaluated(last=100.20, alignment=ContextAlignment.OPPOSED)
     )
     assert decision.action == EntryAction.WAIT_FOR_RETEST
-    assert decision.reason == 'market_context_opposed_retest_required'
-    assert decision.diagnostics['context_opposition_compensated'] is False
+    assert decision.reason == 'better_entry_required_at_structure'
+    assert 'opposed' not in decision.reason
 
 
-def test_opposed_context_alone_never_skips_candidate():
-    decision = EntryDecisionEngine().evaluate(
-        evaluated_candidate=evaluated(
-            last=100.05,
+def test_poor_structure_does_not_create_retest_or_context_veto():
+    decision = decide(
+        evaluated(
+            last=100.20,
             alignment=ContextAlignment.OPPOSED,
-            relative_strength=-0.1,
-        ),
-        config=EntryDecisionConfig(),
-    )
-    assert decision.action == EntryAction.READY_FOR_SELECTION
-
-
-def test_severe_penalty_without_useful_retest_reaches_selection():
-    decision = EntryDecisionEngine().evaluate(
-        evaluated_candidate=evaluated(
-            last=100.05,
-            penalty=40.0,
-            runway=10.0,
-        ),
-        config=EntryDecisionConfig(),
-    )
-    assert decision.action == EntryAction.READY_FOR_SELECTION
-
-
-def test_severe_penalty_with_usable_structure_waits_for_retest():
-    decision = EntryDecisionEngine().evaluate(
-        evaluated_candidate=evaluated(
-            last=100.20,
-            penalty=40.0,
-            runway=10.0,
-        ),
-        config=EntryDecisionConfig(),
-    )
-    assert decision.action == EntryAction.WAIT_FOR_RETEST
-    assert decision.retest_eligible is True
-    assert decision.diagnostics['structural_retest_score'] == 100.0
-    assert decision.diagnostics['feasibility_runway_score'] == 10.0
-
-
-def test_poor_structure_does_not_create_pending_or_hard_reject():
-    decision = EntryDecisionEngine().evaluate(
-        evaluated_candidate=evaluated(
-            last=100.20,
-            penalty=40.0,
-            runway=100.0,
             remaining_move_quality='POOR',
-        ),
-        config=EntryDecisionConfig(),
+        )
     )
     assert decision.action == EntryAction.READY_FOR_SELECTION
     assert decision.diagnostics['structural_retest_score'] == 0.0
+
+
+def test_confirmed_pending_bypasses_same_retest_request():
+    decision = decide(
+        evaluated(
+            last=100.50,
+            confirmation_satisfied=True,
+            alignment=ContextAlignment.OPPOSED,
+        )
+    )
+    assert decision.action == EntryAction.READY_FOR_SELECTION
+    assert decision.reason == 'pending_structural_confirmation_satisfied'
+    assert decision.retest_eligible is False
+
+
+def test_economic_constraint_still_skips():
+    decision = decide(
+        evaluated(last=100.05, expected_net_profit_percent=0.05)
+    )
+    assert decision.action == EntryAction.SKIP
+    assert decision.reason == (
+        'candidate_selection_expected_profit_too_low_after_fees'
+    )
+
+
+def test_tp_hard_rejection_still_skips():
+    decision = decide(
+        evaluated(
+            last=100.05,
+            hard_rejection_reason=(
+                'candidate_selection_tp_feasibility_cost_to_tp_absurd'
+            ),
+        )
+    )
+    assert decision.action == EntryAction.SKIP
+    assert decision.reason == (
+        'candidate_selection_tp_feasibility_cost_to_tp_absurd'
+    )

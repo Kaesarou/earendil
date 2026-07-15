@@ -1,22 +1,10 @@
-# Multi-timeframe market structure
+# Multi-timeframe market structure and scoring
 
-This document describes the deterministic multi-timeframe foundation introduced by PR3.
-
-## Included user stories
-
-- **US-04 — M1, M5, M15, M30 and H1 candles:** complete implementation.
-- **US-05 — range position, observable levels and opening range:** feature implementation.
-- **US-06 — acceleration, pullbacks, compression and wicks:** feature implementation.
-- **US-02 — counterfactual dataset:** every evaluated candidate can retain its immutable multi-timeframe snapshot.
-- **US-16 — statistical release foundations:** versioning, deterministic replay and explicit no-lookahead tests.
-
-PR3 does not assign new score points, penalties or hard rejections from these features. It builds the measurement layer needed to calibrate them later.
+This document describes Goblin's deterministic multi-timeframe layer and its PR5-B contribution to live candidate scoring.
 
 ## Fixed timeframe invariant
 
-Candle duration is no longer an environment setting. `CANDLE_TIMEFRAME_SECONDS` has been removed from `Settings`, `.env.example` and the run manifest settings snapshot.
-
-The supported timeframes are versioned constants:
+M1 is the canonical base timeframe. Higher timeframes are fixed constants:
 
 ```text
 M1  = 60 seconds
@@ -26,39 +14,11 @@ M30 = 1800 seconds
 H1  = 3600 seconds
 ```
 
-M1 is the canonical base timeframe. `POLL_INTERVAL_SECONDS` remains configurable because it controls broker sampling frequency, not candle semantics.
+`CANDLE_TIMEFRAME_SECONDS` does not exist. `POLL_INTERVAL_SECONDS` controls broker sampling frequency, not candle duration.
 
-## Data pipeline
+## Aggregation
 
-```mermaid
-flowchart TD
-    A[Broker snapshots] --> B[MarketDataValidator]
-    B -->|rejected or quarantined| C[Quality journal]
-    B -->|accepted| D[Canonical M1 builder]
-    D --> E[Closed M1]
-    E --> F[TrendStrategy M1]
-    E --> G[MultiTimeframeCandleEngine]
-    G --> H[M5]
-    G --> I[M15]
-    G --> J[M30]
-    G --> K[H1]
-    H --> L[TimeframeSeriesStore]
-    I --> L
-    J --> L
-    K --> L
-    E --> L
-    L --> M[MultiTimeframeContext]
-    F --> N[TradeCandidate]
-    M --> N
-    N --> O[Economics and TP feasibility]
-    O --> P[EntryDecisionEngine]
-```
-
-The PR2 quality invariant remains unchanged: only accepted snapshots may reach candles, strategy state, position lifecycle, market context or candidate construction.
-
-## Canonical M1 and aggregation
-
-Higher-timeframe bars are built only from closed M1 bars:
+Higher-timeframe bars are built only from closed contiguous M1 bars:
 
 ```text
 5 complete M1  -> M5
@@ -69,178 +29,156 @@ Higher-timeframe bars are built only from closed M1 bars:
 
 Each `TimeframeBar` records:
 
-- the OHLC candle;
+- OHLC candle;
 - timeframe and session key;
-- completeness status;
 - actual and expected source-bar counts;
-- missing source-bar count.
+- missing source bars;
+- completeness status.
 
 Statuses are:
 
-- `complete`: every expected contiguous M1 is present;
-- `incomplete`: the bucket closed with missing or non-contiguous M1 bars;
-- `partial`: the session or runtime ended before the bucket closed.
+- `complete` — all expected M1 bars exist;
+- `incomplete` — one or more M1 bars are missing or non-contiguous;
+- `partial` — session/runtime ended before the bucket closed.
 
-Incomplete and partial bars are journaled, but never enter feature calculations.
-
-## Gaps and sampling
-
-The canonical builder closes a candle at its own exact bucket boundary. If the last snapshot of a M1 arrived at 10:00 and the next snapshot arrived at 10:05, the first candle still closes at 10:01.
-
-Goblin does not synthesize 10:01, 10:02, 10:03 or 10:04 candles. It writes a `candle_gap_detected` event, and affected higher-timeframe buckets become incomplete.
-
-M1 candles retain their snapshot count. Sampling quality is descriptive:
-
-- `dense`: at least four samples per M1 on average;
-- `acceptable`: at least two;
-- `sparse`: fewer than two.
-
-The run manifest also records the expected sampling quality from `POLL_INTERVAL_SECONDS`. A sparse value produces a startup warning but does not change candle duration.
+Incomplete and partial bars are journalled but never used for complete feature calculations. Goblin never fabricates a missing candle.
 
 ## Session anchoring
 
-Finite equity sessions are anchored on their actual configured opening time.
-
-For a US session beginning at 15:30 Europe/Paris, the buckets are:
+Finite equity sessions are anchored to their configured opening time. A US session opening at 15:30 produces:
 
 ```text
 M30: 15:30-16:00, 16:00-16:30, ...
 H1:  15:30-16:30, 16:30-17:30, ...
 ```
 
-Crypto sessions configured as 24/7 use UTC boundaries.
+A bar never crosses two session keys. Open higher-timeframe buckets are flushed as partial on session transition or shutdown.
 
-A bar never crosses two session keys. On a session transition, open higher-timeframe buckets are flushed as partial bars. Complete historical bars remain available for diagnostic context, while opening-range calculations use only the current session key.
+## Timeframe maturity
 
-The runtime store retains up to 1,440 M1 bars so opening-range information remains available throughout a full 24-hour session.
+Each timeframe has one of three maturity states:
 
-## Timeframe features
+- `UNAVAILABLE` — too little closed history;
+- `PROVISIONAL` — short-history diagnostics are available;
+- `READY` — the timeframe has enough complete bars for its configured feature set.
 
-For every timeframe with enough complete bars, Goblin computes an immutable `TimeframeFeatures` value containing:
+The model does not fabricate full ATR, range or compression features from insufficient history.
 
-### Trend and volatility
+## Features
+
+A mature `TimeframeFeatures` value may contain:
+
+### Trend and movement
 
 - fast and slow EMA;
-- close versus fast EMA;
-- fast versus slow EMA;
+- close versus EMA;
+- one-bar and sample returns;
+- velocity and acceleration;
+- descriptive direction: `up`, `down`, `mixed`, `unknown`.
+
+### Volatility and range
+
 - ATR percent;
-- one-bar and three-bar returns;
-- descriptive direction: `up`, `down`, `mixed` or `unknown`.
-
-### Range and observable levels
-
-- rolling high and low;
-- rolling range percent;
+- rolling high, low and range;
 - position inside the range;
-- distance to range high and low;
+- distance to range boundaries;
 - previous-bar high and low.
-
-These are observable deterministic levels. PR3 deliberately does not label them as validated support or resistance.
 
 ### Candle structure
 
-- body percent of total range;
-- upper-wick percent;
-- lower-wick percent;
-- close position inside the bar.
+- body percentage;
+- upper and lower wick percentages;
+- close position inside the candle.
 
-### Compression and movement
+### Compression and pullback
 
-- current true-range versus the median historical true-range;
-- recent directional velocity;
-- previous velocity;
-- acceleration;
+- current true range versus historical median;
 - pullback from recent high;
 - rebound from recent low.
 
-Feature windows live in each code-versioned `InstrumentConfig.multi_timeframe` configuration. Timeframe durations themselves cannot be overridden by a profile.
+Feature windows are code-versioned per asset class. Timeframe durations are not profile parameters.
 
 ## Opening ranges
 
-Finite sessions expose 15-minute and 30-minute opening ranges by default.
+Finite sessions expose 15-minute and 30-minute opening ranges by default. Each range records:
 
-Each window records:
+- `warming_up`, `ready`, `incomplete` or `not_applicable`;
+- high, low and range percentage;
+- current position and boundary distances;
+- breakout/breakdown percentages;
+- actual and expected M1 counts.
 
-- status: `warming_up`, `ready`, `incomplete` or `not_applicable`;
-- high and low;
-- range percent;
-- current position inside the range;
-- distance to each boundary;
-- breakout above and breakdown below percentages;
-- actual and expected M1 source counts.
-
-A missing M1 during the opening window makes that opening range incomplete. Crypto 24/7 sessions are `not_applicable` in this version.
+A missing M1 makes the opening range incomplete.
 
 ## Candidate context
 
-A BUY or SELL candidate can carry an immutable `MultiTimeframeContext` with:
+Every candidate may carry an immutable `MultiTimeframeContext` containing:
 
-- model version `multi_timeframe_features_v1`;
-- exact `as_of` time;
-- feature map by timeframe;
+- model version `multi_timeframe_features_v2`;
+- exact `as_of` timestamp;
+- feature and maturity maps by timeframe;
 - opening-range snapshot;
-- aligned, opposed and unavailable timeframes;
-- descriptive overall alignment.
+- aligned/opposed timeframe lists;
+- `ready_alignment`;
+- `alignment_including_provisional`.
 
-Alignment is diagnostic only in PR3. It does not modify:
+## PR5-B live score contribution
 
-- strategy signals;
-- candidate score;
-- `EntryDecisionEngine` output;
-- candidate ranking;
-- account risk checks;
-- order submission.
+MTF is no longer purely diagnostic. Only `READY` directions contribute to the live candidate score:
 
-This prevents uncalibrated intuition from silently changing the live strategy.
+| Timeframe | Aligned | Opposed |
+|---|---:|---:|
+| M5 `READY` | +4 | -4 |
+| M15 `READY` | +6 | -6 |
+| M30 `READY` | +2 | -2 |
+| H1 | 0 | 0 |
+| `PROVISIONAL` | 0 | 0 |
+
+The total contribution is bounded to `[-10, +10]`.
+
+### Why H1 remains neutral
+
+H1 is rarely mature during an intraday session without historical warm-start data. Giving it live authority would make candidate scoring depend heavily on time of day and process uptime.
+
+### Why provisional data remains neutral
+
+A provisional direction is retained for analysis but has insufficient history to modify live risk-taking. It is neither a bonus nor a penalty.
+
+### No MTF veto
+
+MTF can increase or reduce the score. It cannot:
+
+- directly return `SKIP`;
+- invalidate a pending entry;
+- bypass economics or risk;
+- authorize an order below the selection threshold.
 
 ## Pending entries
 
-When a pending retest confirms, Goblin rebuilds the candidate with:
+When a retest confirms, the candidate is rebuilt using:
 
-- the current accepted snapshot;
-- the current M1 candle;
-- current PR2 market context;
+- current accepted snapshot;
+- current closed M1 candle;
+- current market context;
 - current multi-timeframe context;
-- current economics and feasibility inputs.
+- current economics and feasibility;
+- original candidate and pending lineage.
 
-The original pending event remains in the journal, making it possible to compare the original and confirmed structures later.
-
-## Counterfactual evidence
-
-The standalone `entry_decision` record now includes:
-
-- candidate and deterministic candidate id;
-- PR2 market context;
-- multi-timeframe context and model version;
-- economics and effective SL/TP;
-- TP feasibility and heuristic probability;
-- entry action;
-- selection outcome and reason;
-- strategy profile.
-
-This enables later research such as:
-
-- M5/M15 alignment versus net outcome;
-- M5 rejection wicks versus failed BUY entries;
-- opening-range breakouts versus MFE and MAE;
-- M30 range position versus remaining runway;
-- compression before successful expansion.
-
-PR3 does not yet create future-outcome labels such as MFE, MAE, TP-before-SL or net expectancy.
+A satisfied confirmation is marked explicitly and cannot request the same retest again.
 
 ## No-lookahead guarantee
 
-A feature can use only bars satisfying:
+A feature may use only bars satisfying:
 
 ```text
 bar.closed_at <= candidate.candle.closed_at
 ```
 
-Open bars are never exposed as complete features. Appending future candles cannot alter a context rebuilt with the same historical `as_of` timestamp. Dedicated tests enforce this invariant.
+Open or future bars cannot alter a context rebuilt for a historical `as_of` timestamp. Dedicated tests enforce the invariant.
 
-## Journals and summaries
+## Journals and analysis
 
-The candle stream may contain:
+The candle stream may include:
 
 - `candle_closed`;
 - `candle_gap_detected`;
@@ -248,22 +186,22 @@ The candle stream may contain:
 - `timeframe_bar_incomplete`;
 - `timeframe_bar_partial`.
 
-The trade analysis stream may contain `multi_timeframe_context_built`, and every selected or rejected evaluated candidate keeps its context in `entry_decision`.
+Every evaluated candidate's standalone `entry_decision` includes:
 
-The daily summary reports:
+- complete MTF context;
+- MTF feature model version;
+- MTF score model version;
+- total MTF score;
+- per-timeframe score components;
+- route and selection outcome.
 
-- complete, incomplete and partial bars by timeframe;
-- gaps by symbol;
-- feature readiness and unavailable timeframes;
-- multi-timeframe alignment;
-- opening-range statuses.
-
-The run manifest schema is version 3 and records fixed timeframe invariants, feature configurations, polling interval, expected sampling quality and retention guarantees.
+The daily schema-v7 summary reports maturity, alignment and score-contribution distributions.
 
 ## Current limitations
 
-- The broker is not yet queried for historical candles at startup.
-- A restarted process must warm its timeframe series again.
-- Volume remains unavailable when the broker snapshot stream does not provide it.
-- Multi-timeframe observations are not yet statistically calibrated into score or entry routing.
-- No profitability claim follows from the presence of these indicators.
+- No broker historical-candle warm start is performed.
+- A restarted process must rebuild MTF history.
+- All higher timeframes derive from the same sampled M1 source; they are not independent market feeds.
+- Volume remains unavailable when broker snapshots do not provide it.
+- MTF weights are initial demo calibration values and must be adjusted from subsequent labelled runs.
+- No profitability claim follows from MTF scoring.
