@@ -8,17 +8,20 @@ from app.execution.candidate_economics import (
 )
 from app.execution.candidate_readiness import CandidateReadiness
 from app.execution.candidate_selector import (
+    CandidateSelectionConfig,
     RejectedEvaluatedCandidateSelection,
+    select_evaluated_trade_candidates,
 )
 from app.execution.entry_decision import EntryAction, EntryDecision
 from app.execution.trade_candidate import TradeCandidate
 from app.market.models import Candle, MarketSnapshot
-from app.runtime.candidate_flow import route_candidate_readiness
+from app.runtime.candidate_flow import attach_entry_decisions
 from app.runtime.pending_candidate_lifecycle import (
     reconcile_pending_selection_rejections,
 )
 from app.runtime.pending_entry import PendingEntryManager, PendingEntryState
 from app.strategies.signals import Signal
+
 
 NOW = datetime(2026, 7, 10, 15, 0, tzinfo=timezone.utc)
 
@@ -34,13 +37,14 @@ class FakeJournal:
 def evaluated_candidate(
     *,
     readiness=CandidateReadiness.TRADABLE_NOW,
-    readiness_reason='entry_decision_required',
+    readiness_reason='tp_feasibility_ready',
     expected_net_profit_percent=0.5,
     min_expected_net_profit_percent=0.1,
     pending_entry_id=None,
     origin_candidate_id='candidate-origin',
     hard_rejection_reason=None,
     entry_decision=None,
+    confirmed=False,
 ):
     signal = Signal(
         'BUY',
@@ -51,6 +55,10 @@ def evaluated_candidate(
             'range_low': 100.0,
             'snapshot_momentum_percent': 0.2,
             'atr_percent': 0.2,
+            'structural_confirmation_satisfied': confirmed,
+            'entry_origin': (
+                'pending_confirmation' if confirmed else 'signal'
+            ),
         },
     )
     candle = Candle(
@@ -91,8 +99,8 @@ def evaluated_candidate(
         required_min_expected_net_profit_amount=0.1,
     )
     feasibility = SimpleNamespace(
-        raw_runway_score=20.0,
-        raw_tp_feasibility_penalty=39.98,
+        feasibility_score=55.0,
+        score_contribution=1.5,
         tp_feasibility_hard_rejection_reason=hard_rejection_reason,
     )
     return EvaluatedTradeCandidate(
@@ -122,7 +130,7 @@ def confirmed_pending(manager):
     return manager.get(pending.key)
 
 
-def test_wait_route_registers_pending_outside_readiness_layer():
+def test_wait_route_registers_pending_after_selection():
     manager = PendingEntryManager()
     journal = FakeJournal()
     item = evaluated_candidate(
@@ -146,53 +154,58 @@ def test_wait_route_registers_pending_outside_readiness_layer():
 
     pending = manager.snapshot()[0]
     assert pending.origin_candidate_id == 'candidate-origin'
-    assert pending.pending_entry_id
+    assert pending.initial_feasibility_score == 55.0
+    assert pending.initial_feasibility_contribution == 1.5
     assert journal.events[0][0] == 'pending_entry_registered'
-    assert journal.events[0][1]['pending_entry_id'] == (
-        pending.pending_entry_id
-    )
 
 
-def test_confirmed_tradable_candidate_reaches_selector_input():
+def test_confirmed_candidate_receives_ready_decision_without_second_retest():
     manager = PendingEntryManager()
-    journal = FakeJournal()
     pending = confirmed_pending(manager)
     recalculated = evaluated_candidate(
         pending_entry_id=pending.pending_entry_id,
         origin_candidate_id=pending.origin_candidate_id,
+        confirmed=True,
     )
 
-    tradable, rejected = route_candidate_readiness(
-        evaluated_candidates=[recalculated],
-        pending_entry_manager=manager,
-        trade_journal=journal,
-    )
+    routed = attach_entry_decisions([recalculated])
 
-    assert tradable == [recalculated]
-    assert rejected == []
+    assert routed[0].entry_decision.action == EntryAction.READY_FOR_SELECTION
+    assert routed[0].entry_decision.reason == (
+        'pending_structural_confirmation_satisfied'
+    )
     assert manager.get(pending.key).state == PendingEntryState.CONFIRMED
 
 
-def test_confirmed_candidate_hard_reject_is_removed():
+def test_confirmed_candidate_hard_reject_is_invalidated_after_selection():
     manager = PendingEntryManager()
     journal = FakeJournal()
     pending = confirmed_pending(manager)
-    recalculated = evaluated_candidate(
-        readiness=CandidateReadiness.REJECT,
-        readiness_reason='invalid_trade_structure',
-        pending_entry_id=pending.pending_entry_id,
-        origin_candidate_id=pending.origin_candidate_id,
-        hard_rejection_reason='invalid_trade_structure',
+    recalculated = attach_entry_decisions(
+        [
+            evaluated_candidate(
+                readiness=CandidateReadiness.REJECT,
+                readiness_reason='invalid_trade_structure',
+                pending_entry_id=pending.pending_entry_id,
+                origin_candidate_id=pending.origin_candidate_id,
+                hard_rejection_reason='invalid_trade_structure',
+                confirmed=True,
+            )
+        ]
+    )[0]
+    selection = select_evaluated_trade_candidates(
+        [recalculated],
+        CandidateSelectionConfig(top_n=1, min_score=0),
     )
-
-    tradable, rejected = route_candidate_readiness(
-        evaluated_candidates=[recalculated],
+    reconcile_pending_selection_rejections(
+        rejected_candidates=selection.rejected_candidates,
         pending_entry_manager=manager,
         trade_journal=journal,
     )
 
-    assert tradable == []
-    assert rejected[0].reason == 'invalid_trade_structure'
+    assert selection.rejected_candidates[0].reason == (
+        'invalid_trade_structure'
+    )
     assert manager.get(pending.key) is None
     assert journal.events[-1][0] == 'pending_entry_invalidated'
 
@@ -201,21 +214,28 @@ def test_economically_invalid_confirmed_candidate_is_removed():
     manager = PendingEntryManager()
     journal = FakeJournal()
     pending = confirmed_pending(manager)
-    recalculated = evaluated_candidate(
-        pending_entry_id=pending.pending_entry_id,
-        origin_candidate_id=pending.origin_candidate_id,
-        expected_net_profit_percent=0.05,
-        min_expected_net_profit_percent=0.10,
+    recalculated = attach_entry_decisions(
+        [
+            evaluated_candidate(
+                pending_entry_id=pending.pending_entry_id,
+                origin_candidate_id=pending.origin_candidate_id,
+                expected_net_profit_percent=0.05,
+                min_expected_net_profit_percent=0.10,
+                confirmed=True,
+            )
+        ]
+    )[0]
+    selection = select_evaluated_trade_candidates(
+        [recalculated],
+        CandidateSelectionConfig(top_n=1, min_score=0),
     )
-
-    tradable, rejected = route_candidate_readiness(
-        evaluated_candidates=[recalculated],
+    reconcile_pending_selection_rejections(
+        rejected_candidates=selection.rejected_candidates,
         pending_entry_manager=manager,
         trade_journal=journal,
     )
 
-    assert tradable == []
-    assert rejected[0].reason == (
+    assert selection.rejected_candidates[0].reason == (
         'candidate_selection_expected_profit_too_low_after_fees'
     )
     assert manager.get(pending.key) is None
@@ -228,6 +248,7 @@ def test_pending_losing_top_n_returns_to_waiting_without_resetting_age():
     recalculated = evaluated_candidate(
         pending_entry_id=pending.pending_entry_id,
         origin_candidate_id=pending.origin_candidate_id,
+        confirmed=True,
     )
 
     reconcile_pending_selection_rejections(
