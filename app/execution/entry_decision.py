@@ -4,10 +4,10 @@ from typing import Any
 
 from app.execution.candidate_economics import EvaluatedTradeCandidate
 from app.instruments.models import EntryDecisionConfig
-from app.market.market_context import ContextAlignment, MarketRegime
+from app.market.market_context import ContextAlignment
 
 
-ENTRY_DECISION_MODEL_VERSION = 'entry_router_v4'
+ENTRY_DECISION_MODEL_VERSION = 'entry_router_v5'
 
 
 class EntryAction(StrEnum):
@@ -71,13 +71,18 @@ class EntryDecisionEngine:
                 False,
                 diagnostics,
             )
-        if (
-            config.require_context
-            and (context is None or context.regime == MarketRegime.UNKNOWN)
-        ):
+
+        metadata = candidate.signal.metadata or {}
+        confirmation_satisfied = bool(
+            metadata.get('structural_confirmation_satisfied')
+        )
+        diagnostics['structural_confirmation_satisfied'] = (
+            confirmation_satisfied
+        )
+        if confirmation_satisfied:
             return self._decision(
-                EntryAction.SKIP,
-                'market_context_unavailable',
+                EntryAction.READY_FOR_SELECTION,
+                'pending_structural_confirmation_satisfied',
                 alignment,
                 False,
                 diagnostics,
@@ -85,19 +90,12 @@ class EntryDecisionEngine:
 
         extension_percent, retest_level = _extension_from_reference(candidate)
         structural_retest_score = _structural_retest_score(candidate)
-        feasibility_runway_score = _runway_score(feasibility)
-        feasibility_penalty = _feasibility_penalty(feasibility)
         retest_eligible = (
             retest_level is not None
             and extension_percent is not None
             and extension_percent >= config.moderate_extension_percent
-            and structural_retest_score >= config.minimum_retest_runway_score
-        )
-        directional_relative_strength = _directional_relative_strength(candidate)
-        context_compensated = (
-            alignment == ContextAlignment.OPPOSED
-            and directional_relative_strength is not None
-            and directional_relative_strength > 0
+            and structural_retest_score
+            >= config.minimum_structural_retest_score
         )
         diagnostics.update(
             {
@@ -106,56 +104,15 @@ class EntryDecisionEngine:
                 'structural_retest_score': _round_optional(
                     structural_retest_score
                 ),
-                'feasibility_runway_score': _round_optional(
-                    feasibility_runway_score
-                ),
-                'feasibility_penalty': _round_optional(
-                    feasibility_penalty
-                ),
-                'directional_relative_strength_percent': (
-                    _round_optional(directional_relative_strength)
-                ),
-                'context_opposition_compensated': context_compensated,
             }
         )
 
-        if (
-            alignment == ContextAlignment.OPPOSED
-            and not context_compensated
-            and retest_eligible
-        ):
-            return self._decision(
-                EntryAction.WAIT_FOR_RETEST,
-                'market_context_opposed_retest_required',
-                alignment,
-                True,
-                diagnostics,
-            )
-
-        needs_retest = (
-            retest_eligible
-            and (
-                extension_percent is not None
-                and extension_percent >= config.moderate_extension_percent
-                or feasibility_penalty >= config.wait_for_retest_penalty
-                or alignment == ContextAlignment.NEUTRAL
-            )
-        )
-        if needs_retest:
+        if retest_eligible:
             return self._decision(
                 EntryAction.WAIT_FOR_RETEST,
                 'better_entry_required_at_structure',
                 alignment,
                 True,
-                diagnostics,
-            )
-
-        if alignment == ContextAlignment.UNKNOWN and config.require_context:
-            return self._decision(
-                EntryAction.SKIP,
-                'market_context_unknown',
-                alignment,
-                False,
                 diagnostics,
             )
 
@@ -180,8 +137,14 @@ class EntryDecisionEngine:
             'market_regime': (
                 context.regime.value if context is not None else None
             ),
-            'context_reasons': (
-                list(context.reasons) if context is not None else []
+            'context_alignment': (
+                context.alignment.value if context is not None else None
+            ),
+            'market_context_score': candidate.market_context_score,
+            'multi_timeframe_score': candidate.multi_timeframe_score,
+            'tp_feasibility_score': candidate.tp_feasibility_score,
+            'tp_feasibility_contribution': (
+                candidate.tp_feasibility_contribution
             ),
             'expected_net_profit_percent': (
                 evaluated_candidate.economics.expected_net_profit_percent
@@ -208,7 +171,9 @@ class EntryDecisionEngine:
         )
 
 
-def _extension_from_reference(candidate) -> tuple[float | None, float | None]:
+def _extension_from_reference(
+    candidate,
+) -> tuple[float | None, float | None]:
     metadata = candidate.signal.metadata or {}
     side = candidate.signal.action.strip().upper()
     key = 'range_high' if side == 'BUY' else 'range_low'
@@ -240,37 +205,6 @@ def _structural_retest_score(candidate) -> float:
         'ACCEPTABLE': 50.0,
         'POOR': 0.0,
     }.get(quality, 0.0)
-
-
-def _directional_relative_strength(candidate) -> float | None:
-    context = candidate.market_context
-    if context is None or context.symbol_relative_strength_percent is None:
-        return None
-    value = float(context.symbol_relative_strength_percent)
-    side = candidate.signal.action.strip().upper()
-    if side == 'BUY':
-        return value
-    if side == 'SELL':
-        return -value
-    return None
-
-
-def _runway_score(feasibility: Any) -> float:
-    if feasibility is None:
-        return 100.0
-    value = getattr(feasibility, 'raw_runway_score', None)
-    if value is None:
-        value = getattr(feasibility, 'runway_score', 100.0)
-    return float(value)
-
-
-def _feasibility_penalty(feasibility: Any) -> float:
-    if feasibility is None:
-        return 0.0
-    value = getattr(feasibility, 'raw_tp_feasibility_penalty', None)
-    if value is None:
-        value = getattr(feasibility, 'tp_feasibility_penalty', 0.0)
-    return float(value)
 
 
 def _round_optional(value: float | None) -> float | None:
