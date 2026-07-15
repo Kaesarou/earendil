@@ -30,7 +30,7 @@ def feature(
         bar_count=20,
         covered_seconds=1200,
         direction=direction,
-        sampling_quality=SamplingQuality.GOOD,
+        sampling_quality=SamplingQuality.ACCEPTABLE,
         close=100.0,
         ema_fast=100.0,
         ema_slow=99.0,
