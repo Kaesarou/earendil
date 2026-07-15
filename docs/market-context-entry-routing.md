@@ -1,126 +1,128 @@
-# Validated market context and entry routing
+# Market context scoring and entry routing
 
-This document describes the Goblin vNext foundation introduced by PR2 and the benchmark activation completed by its corrective follow-up.
+This document describes the canonical PR5-B relationship between validated market context, candidate score and structural entry routing.
 
-## Decision pipeline
+## Separation of responsibilities
 
-```mermaid
-flowchart TD
-    A[Broker batch] --> B[Raw market journal]
-    B --> C[MarketDataValidator]
-    C -->|rejected| D[Quality event]
-    C -->|quarantined jump| E[Confirmation buffer]
-    C -->|accepted| F[Validated batch]
-    F --> G[Update symbol and benchmark state]
-    G --> H[Build candles]
-    G --> I[Build market context]
-    H --> J[TrendStrategy]
-    I --> K[TradeCandidate]
-    J --> K
-    K --> L[Economics and TP feasibility]
-    L --> M[EntryDecisionEngine]
-    M -->|ENTER_NOW| N[CandidateSelector]
-    M -->|WAIT_FOR_RETEST| O[PendingEntryManager]
-    M -->|SKIP| P[Counterfactual journal]
-    O --> Q[Retest then continuation]
-    Q --> K
-```
+Goblin separates three questions:
+
+1. **How strong is the setup?** — candidate score.
+2. **Is the current entry timing structurally acceptable?** — `EntryDecisionEngine`.
+3. **Can the account execute it safely?** — `RiskManager`.
+
+Market context answers the first question only. It can increase or reduce conviction, but it cannot reject a candidate, invalidate a pending setup or force a retest by itself.
 
 ## Data-quality gate
 
 Only accepted snapshots may:
 
-- update strategy snapshot history;
-- construct or close candles;
-- update market context;
-- trigger local position lifecycle handling;
-- produce a candidate or order.
+- update strategy and benchmark state;
+- construct candles;
+- update context;
+- produce candidates;
+- drive local position lifecycle handling.
 
-The validator rejects non-finite or non-positive prices, inverted quotes, abnormal data spreads, stale or future timestamps, out-of-order data and last prices too far from the current quote.
+Live validation compares snapshot timestamps with actual receipt/validation time. Historical replay keeps its explicitly supplied clock.
 
-A suspicious price jump is quarantined instead of being trusted immediately. A following snapshot near the new level confirms the jump. Quarantined values are never inserted retroactively into a candle.
+## Trading and context universes
 
-`MarketSnapshot` records whether its price came from a broker-provided last value or a bid/ask midpoint fallback.
+`WATCHLIST` is the trading universe. Only its symbols may create candidates.
 
-## Trading universe and context universe
+Default context-only references are:
 
-`WATCHLIST` remains the trading universe. Only these symbols may create candidates.
+| Asset class | Benchmark |
+|---|---|
+| Crypto | `Crypto10` |
+| US equities | `SPX500` |
+| European equities | `FRA40` |
 
-The benchmark settings form a separate context-only universe:
+Benchmarks are fetched and validated but never receive a strategy instance, consume a ranking slot or reach execution.
 
-- `MARKET_BENCHMARK_CRYPTO=Crypto10`;
-- `MARKET_BENCHMARK_EQUITY_US=SPX500`;
-- `MARKET_BENCHMARK_EQUITY_EU=FRA40`.
+## Candidate market context
 
-The configured aliases are normalized internally for broker lookup. Context-only symbols are fetched and validated, but they never receive a strategy instance and can never create a candidate, consume a ranking slot or reach execution.
-
-A benchmark may still be disabled explicitly by setting its environment value to an empty string.
-
-## Market context V2
-
-Every candidate can carry an immutable `CandidateMarketContext` containing:
+Every candidate may carry an immutable `CandidateMarketContext` containing:
 
 - asset class;
-- benchmark direction and session return;
+- benchmark session return;
 - benchmark rolling momentum;
 - same-market breadth and coverage;
-- sector breadth when enough mapped symbols are available;
+- sector breadth where available;
 - symbol session return;
-- symbol relative strength against the benchmark;
-- market regime: `risk_on`, `risk_off`, `mixed`, or `unknown`;
-- candidate alignment: `aligned`, `neutral`, `opposed`, or `unknown`.
+- symbol relative strength versus benchmark;
+- descriptive regime and alignment.
 
-The context is deliberately categorical and diagnostic. It is not another opaque score.
+The labels `risk_on`, `risk_off`, `mixed`, `aligned`, `neutral` and `opposed` remain diagnostic. No business branch is allowed to use `opposed` as a veto.
 
-All accepted snapshots in a polling loop update the context service before the first candidate decision, preventing watchlist ordering from changing breadth results.
+## Continuous context score
 
-### Benchmark session return
-
-`session_return_percent` compares the latest validated benchmark price with its first validated price in the active session. This value continues to drive the benchmark direction and therefore contributes to `risk_on`, `risk_off`, `mixed` or `unknown` classification.
-
-### Benchmark rolling momentum
-
-`momentum_percent` is distinct from the session return. It compares the latest validated benchmark price with the latest validated snapshot available at or before:
+For BUY, all inputs are interpreted in the positive-price direction. For SELL, their direction is inverted.
 
 ```text
-latest benchmark timestamp - momentum_window_seconds
+directional value = side direction × raw value
 ```
 
-The default window is 180 seconds. The reference snapshot must:
+The context contribution combines:
 
-- belong to the same active session;
-- be at or before the requested horizon;
-- be no farther behind that horizon than `maximum_context_age_seconds`.
+```text
+benchmark session contribution
++ benchmark momentum contribution
++ breadth contribution
++ sector contribution
++ directional relative-strength contribution
+```
 
-If no valid reference exists, momentum is `None`. Goblin never substitutes the session opening or fabricates an interpolated price.
+Directional relative strength is deliberately dominant. A symbol moving strongly in the trade direction can therefore compensate an adverse index and breadth.
 
-Historical snapshots are bounded to 24 hours and finite-session history is removed when that session is reset. This prevents a new equity session from inheriting momentum from the previous trading day.
+### Initial PR5-B weights
 
-## Explicit entry actions
+| Component | US | Europe | Crypto |
+|---|---:|---:|---:|
+| Benchmark session | ±3 | ±2 | ±4 |
+| Benchmark momentum | ±2 | ±1 | ±2 |
+| Breadth | ±3 | ±3 | ±2 |
+| Sector | ±2 | ±2 | 0 |
+| Relative strength | ±12 | ±14 | ±12 |
+| Total bound | ±20 | ±20 | ±20 |
 
-`EntryDecisionEngine` is the authority for entry timing:
+Continuous components use bounded smooth scaling rather than binary thresholds.
 
-### `ENTER_NOW`
+Example:
 
-The setup may reach normal score ranking and account risk checks immediately. It is not a promise that an order will be submitted.
+```text
+SPX500                 -1.0%
+BUY symbol             +2.5%
+relative strength      +3.5%
+
+benchmark/breadth       negative contribution
+relative strength       larger positive contribution
+final context score     can remain positive
+```
+
+The same symbol with only marginal outperformance would receive a much smaller compensation.
+
+## Entry actions
+
+`EntryDecisionEngine` produces:
+
+### `READY_FOR_SELECTION`
+
+Timing is acceptable. The candidate must still pass its asset-specific minimum score, ranking, economics and risk checks.
 
 ### `WAIT_FOR_RETEST`
 
-The setup remains structurally and economically interesting, but the current price is moderately extended. A valid reference level and sufficient remaining runway are required.
+Price is sufficiently extended from the observable breakout/breakdown level and the structure remains suitable for a real retest.
 
-A severe feasibility penalty without a useful retest becomes `SKIP`, not a pending entry.
+This action depends only on structure and timing. Context does not create it.
 
 ### `SKIP`
 
-The current setup occurrence is abandoned. Typical reasons include:
+A real hard constraint applies, primarily:
 
-- invalid economics after costs;
-- strict late-entry, SELL, or TP-feasibility rejection;
-- opposed market context;
-- severe price extension;
-- required context being unavailable.
+- expected net profit below the configured post-cost minimum;
+- costs greater than or equal to gross TP distance;
+- invalid structural stop or other explicit economic constraint.
 
-`CandidateReadiness` remains temporarily as a compatibility diagnostic produced by the existing TP-feasibility component. It no longer decides whether Goblin waits.
+Probabilistic context is never a `SKIP` reason.
 
 ## Pending retest lifecycle
 
@@ -128,48 +130,53 @@ A pending entry is created only from `WAIT_FOR_RETEST`.
 
 Confirmation requires:
 
-1. an actual return to the breakout or breakdown area;
+1. a real return to the breakout/breakdown area;
 2. no structural invalidation;
-3. a continuation candle;
-4. aligned short-term momentum;
-5. a non-opposed current market context.
+3. continuation in the trade direction;
+4. acceptable short-term momentum;
+5. an executable spread at confirmation time.
 
-Persistent closes farther away from the level no longer confirm the pending entry. After confirmation, Goblin rebuilds the candidate with the current price, context and calibrated entry rules. The rebuilt candidate must pass economics, feasibility and `EntryDecisionEngine` again.
+A temporary spread breach emits `pending_entry_confirmation_blocked` and preserves the setup while its age continues to advance.
 
-Pending lifetime comes from the market-specific `EntryDecisionConfig.maximum_retest_candles` value.
+A confirmed candidate carries:
 
-## Counterfactual instrumentation
+```text
+entry_origin = pending_confirmation
+structural_confirmation_satisfied = true
+```
 
-Every evaluated candidate receives a deterministic `candidate_id` derived from:
+The router then returns `READY_FOR_SELECTION` and cannot request the same retest again.
 
-- run id;
-- symbol and side;
-- session key;
-- candle close timestamp;
-- breakout or breakdown level.
+The legacy `market_context_opposed` pending invalidation does not exist.
 
-The trade journal writes one standalone `entry_decision` event for selected and rejected evaluated candidates. It contains:
+## Counterfactual record
 
-- candidate and id;
-- market context;
-- economics;
-- effective SL/TP;
-- TP feasibility and heuristic probability metadata;
-- entry action and reason;
-- selector outcome;
-- strategy and model versions.
+Every evaluated candidate receives exactly one standalone `entry_decision` record, whether selected or rejected. It contains:
 
-This is the schema foundation for future MFE, MAE, TP-before-SL, timeout and net-expectancy labels. The current system does not claim that those labels or a calibrated probability model already exist.
+- candidate, origin and pending identifiers;
+- timestamp, symbol, side and entry reference price;
+- base and directional score;
+- context score and components;
+- MTF score and components;
+- TP-feasibility score and contribution;
+- economics and effective SL/TP;
+- raw and calibrated TP probability;
+- break-even probability, EV and probability edge;
+- route action/reason;
+- selection outcome/reason;
+- all model versions.
 
-## Run traceability
+This is the canonical source for post-run TP-before-SL, MFE, MAE and net-outcome analysis.
 
-Run manifests record:
+## Versioned contracts
+
+PR5-B records:
 
 - `market_context_v2`;
-- `multi_timeframe_features_v1`;
-- `entry_router_v1`;
-- the active Balanced profile and resolved instrument configurations;
-- the three configured reference indices;
-- the source fingerprint and Git commit when available.
-
-The market-context version was incremented because `momentum_percent` changed from a duplicate session-return value to a real rolling-window measurement. Historical runs using `market_context_v1` therefore remain distinguishable from V2 runs.
+- `market_context_score_v1`;
+- `multi_timeframe_features_v2`;
+- `multi_timeframe_score_v1`;
+- `tp_feasibility_score_v2`;
+- `heuristic_v3`;
+- `entry_router_v5`;
+- summary and manifest schema v7.
