@@ -2,7 +2,7 @@
 
 > A deterministic intraday trading bot that lives in a cave, watches markets all day, and refuses to confuse activity with opportunity.
 
-**Goblin!** is an experimental and auditable trading engine written in Python. It validates broker data, builds deterministic market structure, detects directional setups, estimates trading costs, scores context and timing, then applies risk controls before an order can reach the broker.
+**Goblin!** is an experimental and auditable trading engine written in Python. It validates broker data, builds deterministic market structure, detects directional setups, estimates trading costs, scores the probability of reaching a fixed target, then applies explicit risk controls before an order can reach the broker.
 
 > [!WARNING]
 > Goblin is research software, not financial advice. Use `paper` or `etoro_demo` while the strategy is being calibrated. Real-money trading can lose capital.
@@ -12,9 +12,10 @@
 - **Deterministic execution** — the same accepted data and versioned configuration must produce the same decision.
 - **Demo first** — an edge is never assumed from a handful of trades.
 - **Validated data only** — rejected or quarantined snapshots cannot create candles or entries.
-- **Costs are part of the trade** — fees and spread are evaluated before selection.
-- **No probabilistic vetoes** — context, MTF and TP feasibility modify the score but cannot reject a trade alone.
-- **Hard constraints remain explicit** — invalid data, impossible economics, invalid structure and risk limits may reject.
+- **TP-aware evidence** — the score and probability describe whether the effective TP can be reached before the effective SL.
+- **Costs are part of the trade** — fees and spread are evaluated before selection and in net expectancy.
+- **No probabilistic vetoes** — context, MTF and timing modify evidence but cannot reject a trade alone.
+- **Hard constraints remain explicit** — invalid data, impossible economics, incompatible session horizon, invalid structure and risk limits may reject.
 - **Every decision leaves evidence** — raw data, bars, candidates, contributions, routes, summaries and manifests are retained.
 - **Doing nothing is valid** — zero trades can still be the correct outcome.
 
@@ -24,23 +25,22 @@ Goblin currently includes:
 
 - one active, code-versioned `BalancedStrategyConfig`;
 - local paper, eToro demo and eToro live broker adapters;
-- crypto, US-equity and European-equity universes;
+- crypto, US-equity and European-equity support;
 - timezone-aware trading sessions and force-close windows;
 - stateful market-data validation with jump quarantine;
-- a canonical fixed M1 candle stream;
-- deterministic M5, M15, M30 and H1 aggregation from closed M1 bars;
+- canonical fixed M1 candles and deterministic M5/M15/M30/H1 bars;
 - explicit timeframe maturity: `UNAVAILABLE`, `PROVISIONAL`, `READY`;
 - context-only benchmark instruments: `Crypto10`, `SPX500`, `FRA40`;
-- benchmark, breadth, sector and directional relative-strength scoring;
+- benchmark, breadth, sector and freshness-gated relative-strength scoring;
 - deterministic BUY and SELL trend/breakout signals;
-- continuous TP-feasibility scoring;
-- asset-calibrated TP-before-SL probability and net expectancy;
+- TP-aware feasibility and entry-freshness scoring;
+- profile-and-side-calibrated TP-before-SL probability and net expectancy;
 - structural retest pending entries with deterministic lineage;
+- fixed named SL/TP profiles and structural pending stops;
+- net breakeven and trailing-stop management;
 - cooldown, account and session risk limits;
-- fixed, dynamic and structural SL/TP profiles;
-- a dedicated longer-horizon European BUY profile;
 - SQLite position and cooldown persistence;
-- JSONL journals, final summaries and versioned run manifests;
+- JSONL journals, schema-v8 summaries and versioned run manifests;
 - a broad pytest suite validated by GitHub Actions.
 
 ## Decision pipeline
@@ -48,254 +48,192 @@ Goblin currently includes:
 ```mermaid
 flowchart TD
     A[Broker snapshots] --> B[MarketDataValidator]
-    B -->|rejected| C[Quality evidence]
-    B -->|quarantined| D[Jump confirmation]
-    B -->|accepted| E[Canonical M1]
-    B --> F[Market context]
-    E --> G[TrendStrategy]
-    E --> H[MTF aggregation]
-    H --> I[READY M5 / M15 / M30]
-    G --> J[TradeCandidate]
-    F --> J
-    I --> J
-    J --> K[Base + context + MTF score]
-    K --> L[Economics + effective SL/TP]
-    L --> M[Continuous TP feasibility]
-    M --> N[Calibrated probability + EV]
-    N --> O[EntryDecisionEngine]
-    O -->|READY_FOR_SELECTION| P[Asset-specific CandidateSelector]
-    O -->|WAIT_FOR_RETEST| Q[PendingEntryManager]
-    O -->|SKIP hard constraint| R[Counterfactual journal]
-    Q --> S[Retest then continuation]
-    S --> J
-    P --> T[RiskManager]
-    T --> U[TradeExecutor]
-    U --> V[Position lifecycle]
-    V --> R
+    B -->|accepted| C[Canonical M1]
+    B --> D[Market context]
+    C --> E[TrendStrategy]
+    C --> F[MTF aggregation]
+    F --> G[READY M5 / M15 / M30]
+    E --> H[TradeCandidate]
+    D --> H
+    G --> H
+    H --> I[Named fixed TP/SL profile]
+    I --> J[TP-aware freshness and feasibility]
+    J --> K[Final context compensation]
+    K --> L[Profile-and-side probability + EV]
+    L --> M[EntryDecisionEngine]
+    M -->|READY_FOR_SELECTION| N[Asset-specific selector]
+    M -->|WAIT_FOR_RETEST| O[PendingEntryManager]
+    M -->|SKIP hard constraint| P[Counterfactual journal]
+    O --> H
+    N --> Q[RiskManager]
+    Q --> R[TradeExecutor]
+    R --> S[Managed position lifecycle]
+    S --> P
 ```
 
 ## Canonical candidate score
 
-The live score has one explicit composition:
-
 ```text
 final score
 = directional setup score
-+ market context contribution
++ freshness-gated market-context contribution
 + READY multi-timeframe contribution
 + TP-feasibility contribution
 ```
 
-The contributions are journalled independently. There are no hidden score caps.
+Every contribution is journalled independently. There are no hidden score caps.
 
-### Market context contribution
+### TP-aware entry freshness
 
-The context score combines:
+Goblin measures how much directional session movement has already occurred relative to the target still requested:
+
+```text
+movement_consumed_to_tp_ratio
+= directional session move / effective TP
+```
+
+The ratio becomes a continuous `entry_freshness_score` from 0 to 100. It is a probabilistic input, never a standalone veto.
+
+### Market context
+
+The context model first calculates the market background from:
 
 - benchmark session return;
 - benchmark rolling momentum;
 - same-market breadth;
-- sector participation;
-- directional relative strength of the symbol versus its benchmark.
+- sector participation.
 
-Directional relative strength is the dominant component. A BUY can therefore compensate a falling benchmark when the symbol materially outperforms it. A SELL uses the same calculation with the direction inverted.
+Directional relative strength then compensates that background. Its adjustment is multiplied by entry freshness:
 
-The context score is bounded to `[-20, +20]` and **never produces a veto**. The descriptive labels `aligned`, `neutral`, `opposed` and `unknown` remain available only for analysis.
+```text
+strong relative strength + fresh entry
+→ meaningful compensation
+
+strong relative strength + consumed move
+→ limited compensation
+```
+
+A contrary benchmark is never a veto. Context is bounded to `[-15, +15]`.
 
 ### Multi-timeframe contribution
 
-Only mature features affect the live score:
+Only `READY` observations contribute:
 
 | Timeframe | Aligned | Opposed |
 |---|---:|---:|
-| M5 `READY` | +4 | -4 |
-| M15 `READY` | +6 | -6 |
-| M30 `READY` | +2 | -2 |
+| M5 | +4 | -4 |
+| M15 | +6 | -6 |
+| M30 | +2 | -2 |
 | H1 | 0 | 0 |
-| Any `PROVISIONAL` timeframe | 0 | 0 |
+| `PROVISIONAL` | 0 | 0 |
 
-The total MTF contribution is bounded to `[-10, +10]`. H1 and provisional observations remain journalled but do not influence execution.
+The total remains bounded to `[-10, +10]`. These initial weights are calibration parameters, not proven constants.
 
-### Continuous TP feasibility
+### TP feasibility
 
-The old soft/hard/severe penalty accumulation no longer exists. TP feasibility is a `0–100` score made from:
+`tp_feasibility_score_v3` combines:
 
 | Component | Weight |
 |---|---:|
 | TP versus ATR | 30% |
 | TP versus recent momentum | 25% |
 | Estimated costs versus TP | 30% |
-| Remaining session movement | 15% |
+| TP-aware entry freshness | 15% |
 
-It becomes a contribution between `-15` and `+15`.
-
-The only TP-feasibility hard rejection is:
+It contributes between `-15` and `+15`. The only feasibility hard reject is:
 
 ```text
 estimated total costs >= gross TP distance
 ```
 
-## Entry routing and pending entries
-
-`EntryDecisionEngine` has three outcomes:
-
-- `READY_FOR_SELECTION` — timing is acceptable; score, ranking and risk checks still apply;
-- `WAIT_FOR_RETEST` — price is structurally extended and a useful retest exists;
-- `SKIP` — a real economic or structural hard constraint applies.
-
-Market context is not used by the router.
-
-A pending entry requires a return to the structural level followed by continuation. A confirmed pending candidate carries:
-
-```text
-entry_origin = pending_confirmation
-structural_confirmation_satisfied = true
-```
-
-The same retest can therefore never be requested twice. Temporary spread excess blocks confirmation without invalidating the structural setup.
-
 ## Probability and ranking
 
-`heuristic_v3` exposes both:
+`heuristic_v4` uses direct components once each:
 
-- the raw explainable TP-before-SL probability;
-- an asset-calibrated probability for US equities, European equities and crypto.
+- cost/TP;
+- TP/ATR;
+- TP/momentum;
+- entry freshness;
+- trend and close quality;
+- regime;
+- final context;
+- READY MTF.
 
-It then calculates:
+Calibration is keyed by the named profile and side, for example:
 
 ```text
-break-even probability after costs
-net expected value percent
-probability edge
+us_intraday_fixed_v1:BUY
+us_intraday_fixed_v1:SELL
+eu_trend_buy_v1:BUY
+eu_intraday_fixed_v1:SELL
 ```
 
-EV is **not a veto**. Within the same five-point score bucket, ranking uses:
+The model exposes raw probability, calibrated probability, break-even probability, probability edge and net expected value. EV ranks candidates inside the same five-point score bucket but is not a veto.
 
-1. calibrated net expected value;
-2. expected net profit at TP;
-3. exact candidate score.
+## Fixed V1 profiles
 
-## Asset-specific selection
+| Profile | Side | TP | SL | Stale horizon |
+|---|---|---:|---:|---:|
+| `us_intraday_fixed_v1` | BUY/SELL | 1.20% | 0.70% | 60 min |
+| `eu_trend_buy_v1` | BUY | 2.00% | 1.20% | 180 min |
+| `eu_intraday_fixed_v1` | SELL/base | 1.00% | 0.70% | 75 min |
+| `crypto_intraday_fixed_v1` | BUY/SELL | 3.00% | 1.50% | 60 min |
 
-Selection limits are independent by asset class:
+The former US ATR-based TP/SL mode and missing-ATR fallback do not exist. A future attainable-target V2 is deliberately deferred until the fixed profiles and probability model are calibrated.
 
-| Asset class | Minimum score | Dynamic minimum | Top N per loop |
-|---|---:|---:|---:|
-| Crypto | 115 | — | 2 |
-| US equity | 115 | 100 for dynamic SL/TP | 2 |
-| EU equity | 110 | — | 1 |
+A confirmed pending setup may use a structural SL while retaining the named baseline target and probability calibration profile.
 
-The EU top-one rule does not reduce the US or crypto top N.
+## Selection
 
-## European strategy
+| Asset class | Minimum score | Top N per loop |
+|---|---:|---:|
+| Crypto | 115 | 2 |
+| US equity | 115 | 2 |
+| EU equity | 110 | 1 |
 
-The former EU micro-scalp fallback has been deleted.
+Selection limits are independent by asset class. There is no dynamic US threshold.
 
-### `EU_TREND_BUY_V1`
+## Session horizon
 
-European BUY candidates use a longer-horizon profile:
+Finite-session entries must have enough time remaining for:
 
-| Parameter | Value |
-|---|---:|
-| Take profit | 2.00% |
-| Stop loss | 1.20% |
-| Stale horizon | 180 minutes |
-| Minimum score | 110 |
-| Top N | 1 |
-
-European SELL candidates keep the standard intraday profile:
-
-| Parameter | Value |
-|---|---:|
-| Take profit | 1.00% |
-| Stop loss | 0.70% |
-| Stale horizon | 75 minutes |
-
-## Fixed timeframes
-
-Candle duration is a strategy invariant:
-
-| Timeframe | Duration |
-|---|---:|
-| M1 | 60 seconds |
-| M5 | 300 seconds |
-| M15 | 900 seconds |
-| M30 | 1,800 seconds |
-| H1 | 3,600 seconds |
-
-`CANDLE_TIMEFRAME_SECONDS` does not exist. `POLL_INTERVAL_SECONDS` controls broker sampling but never changes candle duration.
-
-Higher timeframes are constructed only from complete contiguous M1 bars. Goblin does not fabricate missing candles.
-
-## Market-data validation
-
-Before a snapshot can update strategy state, Goblin checks:
-
-- finite and positive bid, ask and last;
-- inverted quotes;
-- abnormal data spreads;
-- stale, future or out-of-order timestamps;
-- last-price consistency with bid/ask;
-- suspicious unconfirmed jumps;
-- missing requested snapshots.
-
-Live validation uses the actual receipt/validation time rather than the timestamp captured before the broker request. Historical replay keeps its explicitly supplied clock.
-
-## Base risk profiles
-
-These are baseline values. Directional, dynamic and structural profiles may override them for an individual candidate.
-
-| Asset class | Max position | Baseline SL | Baseline TP | Max spread | Stale age | Percentage costs |
-|---|---:|---:|---:|---:|---:|---:|
-| Crypto | 0.75% equity | 1.50% | 3.00% | 0.35% | 60 min | 1.00% open + 1.00% close + spread |
-| US equity | 0.75% equity | 0.90% | 1.60% | 0.10% | 60 min | 0.15% open + 0.15% close + spread |
-| EU SELL/base | 0.75% equity | 0.70% | 1.00% | 0.15% | 75 min | 0.15% open + 0.15% close + spread |
-| EU BUY v1 | 0.75% equity | 1.20% | 2.00% | 0.15% | 180 min | 0.15% open + 0.15% close + spread |
-
-Cost values are model inputs and must match the actual account and instruments.
-
-## Configuration
-
-Copy the example file:
-
-```bash
-cp .env.example .env
+```text
+profile stale horizon + force-close buffer
 ```
 
-Main runtime variables:
+This hard constraint applies to both new signals and pending confirmations. It prevents, for example, opening a 180-minute European profile shortly before the mandatory close.
 
-| Variable | Default | Description |
-|---|---|---|
-| `BROKER` | `paper` | `paper`, `etoro_demo` or `etoro_live` |
-| `LOG_LEVEL` | `INFO` | Python log level |
-| `POLL_INTERVAL_SECONDS` | `60` | Delay between polling loops |
-| `RUNTIME_HEARTBEAT_MINUTES` | `5` | Heartbeat interval |
-| `WATCHLIST` | empty | Symbols eligible for candidates |
-| `CRYPTO_SYMBOLS` | empty | Crypto classification |
-| `EQUITY_US_SYMBOLS` | empty | US-equity classification |
-| `EQUITY_EU_SYMBOLS` | empty | European-equity classification |
-| `MARKET_BENCHMARK_CRYPTO` | `Crypto10` | Context-only crypto benchmark |
-| `MARKET_BENCHMARK_EQUITY_US` | `SPX500` | Context-only US benchmark |
-| `MARKET_BENCHMARK_EQUITY_EU` | `FRA40` | Context-only EU benchmark |
-| `MAX_OPEN_POSITIONS` | `1` | Account position limit |
-| `MAX_OPEN_POSITIONS_PER_SYMBOL` | `1` | Per-symbol limit |
-| `MAX_TRADES_PER_SESSION` | `3` | Session trade limit |
+## Managed stops
 
-Every watchlist symbol must belong to exactly one asset class. Benchmarks are context-only and can never create orders.
+Breakeven protection is net of estimated costs:
+
+```text
+locked gross move = estimated total costs + configured net buffer
+```
+
+Trailing protection remains cost-aware and activates only when its candidate stop locks the configured minimum net gain. Every stop change emits `managed_stop_updated` and is persisted before the next snapshot.
+
+## Market-data and timeframe invariants
+
+- M1 is the only snapshot-built timeframe.
+- Higher bars derive only from complete closed M1 bars.
+- Missing prices are never fabricated.
+- Candidate features obey no-lookahead boundaries.
+- Live timestamp validation uses actual receipt/validation time.
+- Historical replay keeps its supplied deterministic clock.
 
 ## Running
 
 Python 3.12 or newer is required.
 
-### Docker
-
 ```bash
-docker compose up --build -d
-docker compose logs -f goblin
-docker compose down
+cp .env.example .env
+bash scripts/start_goblin.sh
 ```
 
-### Local environment
+The launcher runs Docker Compose in the foreground so an intentional stop can finalize the summary and manifest.
+
+Local execution:
 
 ```bash
 python -m venv .venv
@@ -304,45 +242,29 @@ pip install -r requirements.txt
 python -m app.main
 ```
 
-On Windows PowerShell:
-
-```powershell
-.\.venv\Scripts\Activate.ps1
-python -m app.main
-```
-
-## Tests
-
-```bash
-pytest -q
-```
-
-GitHub Actions is the authoritative full-suite validation for pull requests.
-
 ## Analysis contract
 
-PR5-B uses summary and run-manifest schema **v7**. The manifest records:
+PR5-C uses summary and run-manifest schema **v8**. Standalone `entry_decision` records include:
 
-- source commit and source fingerprint;
-- strategy and resolved asset configurations;
-- context, MTF, feasibility, probability and router model versions;
-- candidate and pending lineage;
-- all canonical score contributions;
-- raw and calibrated probability;
-- break-even probability, EV and probability edge;
-- selection, risk, order and position outcomes.
+- deterministic candidate/pending lineage;
+- named profile and effective SL/TP;
+- directional, context, MTF and feasibility scores;
+- `movement_consumed_to_tp_ratio` and `entry_freshness_score`;
+- raw and calibrated probability plus calibration profile;
+- break-even, EV and probability edge;
+- route and selection outcome.
 
-See [`docs/pr5b-context-mtf-eu-strategy.md`](docs/pr5b-context-mtf-eu-strategy.md) for the detailed PR5-B contract.
+The summary also exposes profile horizon rejections, managed-stop updates and corrected risk-stage counts.
 
 ## Pre-live status
 
-Goblin remains **demo-only**. Before real capital, the project still requires operational work including:
+Goblin remains **demo-only**. Before real capital, the project still requires:
 
 - real broker exit fills;
 - broker-side catastrophe protection for BUY positions;
 - broker-to-local position reconciliation;
-- persisted dynamic stop state;
 - daily-loss, drawdown and kill-switch controls;
-- watchdogs and failure alerts.
+- watchdogs and failure alerts;
+- controlled price precision and rounding.
 
-The current objective is to improve the strategy through repeatable demo runs, not to claim profitability or production readiness.
+The current objective is repeatable calibration, not a claim of profitability.
