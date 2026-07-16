@@ -6,12 +6,13 @@ from app.execution.candidate_readiness import (
     CandidateReadiness,
     evaluate_candidate_readiness,
 )
+from app.execution.scoring.market_context_scorer import score_market_context
 from app.execution.sl_tp_profile import EffectiveSlTpResolver
 from app.execution.trade_candidate import TradeCandidate
 from app.instruments.models import RiskProfile, TpFeasibilityConfig
 
 
-TP_FEASIBILITY_MODEL_VERSION = 'tp_feasibility_score_v2'
+TP_FEASIBILITY_MODEL_VERSION = 'tp_feasibility_score_v3'
 TP_FEASIBILITY_HARD_REJECTION_PREFIX = 'candidate_selection_tp_feasibility_'
 
 
@@ -34,6 +35,8 @@ class TpFeasibilityAnalysis:
     sl_tp_source: str
     distance_to_trade_extreme_percent: float | None
     movement_consumed_percent: float | None
+    movement_consumed_to_tp_ratio: float | None
+    entry_freshness_score: float
     feasibility_score: float
     component_scores: dict[str, float]
     score_before_tp_feasibility: float
@@ -131,6 +134,16 @@ class TpFeasibilityAnalyzer:
             if directional_session_move_percent is not None
             else None
         )
+        movement_consumed_to_tp_ratio = _ratio(
+            movement_consumed_percent,
+            effective_take_profit_percent,
+        )
+        entry_freshness_score = _score_high_value_is_bad(
+            movement_consumed_to_tp_ratio,
+            good=config.good_movement_consumed_to_tp_ratio,
+            bad=config.bad_movement_consumed_to_tp_ratio,
+            missing=config.missing_component_score,
+        )
 
         component_scores = {
             'tp_vs_atr': _score_high_value_is_bad(
@@ -150,12 +163,7 @@ class TpFeasibilityAnalyzer:
                 bad=config.bad_cost_to_tp_ratio,
                 missing=config.missing_component_score,
             ),
-            'movement_remaining': _score_high_value_is_bad(
-                movement_consumed_percent,
-                good=config.good_movement_consumed_percent,
-                bad=config.bad_movement_consumed_percent,
-                missing=config.missing_component_score,
-            ),
+            'entry_freshness': entry_freshness_score,
         }
         feasibility_score = _weighted_feasibility_score(
             component_scores,
@@ -166,12 +174,13 @@ class TpFeasibilityAnalyzer:
         hard_rejection_components: tuple[str, ...] = ()
         if cost_to_tp_ratio >= config.cost_to_tp_hard_reject_ratio:
             hard_rejection_reason = _reason('cost_to_tp_absurd')
-            hard_rejection_components = ('cost_to_tp_absurd_hard_reject',)
+            hard_rejection_components = (
+                'cost_to_tp_absurd_hard_reject',
+            )
         readiness = evaluate_candidate_readiness(
             hard_rejection_reason=hard_rejection_reason,
         )
-        score_before = round(candidate.score, 4)
-        adjusted_score = max(0.0, score_before + contribution)
+        preliminary_score = round(candidate.score, 4)
         reasons = _reason_components(
             component_scores=component_scores,
             atr_missing=tp_to_atr_ratio is None,
@@ -215,14 +224,21 @@ class TpFeasibilityAnalyzer:
             movement_consumed_percent=_round_optional(
                 movement_consumed_percent
             ),
+            movement_consumed_to_tp_ratio=_round_optional(
+                movement_consumed_to_tp_ratio
+            ),
+            entry_freshness_score=round(entry_freshness_score, 4),
             feasibility_score=round(feasibility_score, 4),
             component_scores={
                 name: round(value, 4)
                 for name, value in component_scores.items()
             },
-            score_before_tp_feasibility=score_before,
+            score_before_tp_feasibility=preliminary_score,
             score_contribution=round(contribution, 4),
-            adjusted_score=round(adjusted_score, 4),
+            adjusted_score=round(
+                max(0.0, preliminary_score + contribution),
+                4,
+            ),
             tp_feasibility_hard_rejection_reason=hard_rejection_reason,
             readiness=readiness.readiness,
             readiness_reason=readiness.reason,
@@ -265,6 +281,8 @@ class TpFeasibilityAnalyzer:
             sl_tp_source=effective_sl_tp.source,
             distance_to_trade_extreme_percent=None,
             movement_consumed_percent=None,
+            movement_consumed_to_tp_ratio=None,
+            entry_freshness_score=50.0,
             feasibility_score=50.0,
             component_scores={},
             score_before_tp_feasibility=score,
@@ -293,10 +311,43 @@ class CandidateTpFeasibilityEvaluator:
             risk_profile=risk_profile,
         )
         candidate = evaluated_candidate.candidate
+        context_score = score_market_context(
+            context=candidate.market_context,
+            side=candidate.signal.action,
+            entry_freshness_score=analysis.entry_freshness_score,
+        )
+        score_before_tp_feasibility = max(
+            0.0,
+            candidate.directional_score
+            + context_score.score
+            + candidate.multi_timeframe_score,
+        )
+        adjusted_score = max(
+            0.0,
+            score_before_tp_feasibility + analysis.score_contribution,
+        )
+        analysis = replace(
+            analysis,
+            score_before_tp_feasibility=round(
+                score_before_tp_feasibility,
+                4,
+            ),
+            adjusted_score=round(adjusted_score, 4),
+        )
         updated_candidate = replace(
             candidate,
             score=analysis.adjusted_score,
-            rank_reason=_append_rank_reason(candidate.rank_reason, analysis),
+            rank_reason=_append_rank_reason(
+                candidate.rank_reason,
+                analysis,
+                context_score.score,
+            ),
+            market_context_score=context_score.score,
+            market_context_components=context_score.components,
+            market_context_score_metadata={
+                **context_score.diagnostics,
+                'model_version': context_score.model_version,
+            },
             tp_feasibility_metadata=analysis_to_metadata(analysis),
             tp_feasibility_score=analysis.feasibility_score,
             tp_feasibility_contribution=analysis.score_contribution,
@@ -348,6 +399,10 @@ def analysis_to_metadata(
             analysis.distance_to_trade_extreme_percent
         ),
         'movement_consumed_percent': analysis.movement_consumed_percent,
+        'movement_consumed_to_tp_ratio': (
+            analysis.movement_consumed_to_tp_ratio
+        ),
+        'entry_freshness_score': analysis.entry_freshness_score,
         'feasibility_score': analysis.feasibility_score,
         'component_scores': analysis.component_scores,
         'score_before_tp_feasibility': analysis.score_before_tp_feasibility,
@@ -368,16 +423,21 @@ def analysis_to_metadata(
 def _append_rank_reason(
     rank_reason: str,
     analysis: TpFeasibilityAnalysis,
+    final_market_context_score: float,
 ) -> str:
     suffix = (
+        f'final_score={analysis.adjusted_score:.2f},'
+        f'final_market_context_score={final_market_context_score:.2f},'
         f'tp_feasibility_score={analysis.feasibility_score:.2f},'
         f'tp_feasibility_contribution={analysis.score_contribution:.2f},'
+        f'entry_freshness_score={analysis.entry_freshness_score:.2f},'
+        f'movement_consumed_to_tp_ratio='
+        f'{analysis.movement_consumed_to_tp_ratio},'
         f'tp_feasibility_components={analysis.component_scores},'
         f'readiness={analysis.readiness.value},'
         f'readiness_reason={analysis.readiness_reason},'
         f'score_before_tp_feasibility='
         f'{analysis.score_before_tp_feasibility:.2f},'
-        f'adjusted_score={analysis.adjusted_score:.2f},'
         f'sl_tp_mode={analysis.sl_tp_mode},'
         f'sl_tp_source={analysis.sl_tp_source}'
     )
@@ -395,10 +455,11 @@ def _weighted_feasibility_score(
 ) -> float:
     return _clamp(
         component_scores['tp_vs_atr'] * config.tp_vs_atr_weight
-        + component_scores['tp_vs_momentum'] * config.tp_vs_momentum_weight
+        + component_scores['tp_vs_momentum']
+        * config.tp_vs_momentum_weight
         + component_scores['cost_vs_tp'] * config.cost_vs_tp_weight
-        + component_scores['movement_remaining']
-        * config.movement_remaining_weight,
+        + component_scores['entry_freshness']
+        * config.entry_freshness_weight,
         0.0,
         100.0,
     )
@@ -500,8 +561,8 @@ def _directional_value(side: str, value: float | None) -> float | None:
     return None
 
 
-def _ratio(numerator: float, denominator: float | None) -> float | None:
-    if denominator is None or denominator <= 0:
+def _ratio(numerator: float | None, denominator: float | None) -> float | None:
+    if numerator is None or denominator is None or denominator <= 0:
         return None
     return numerator / denominator
 
