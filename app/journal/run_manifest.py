@@ -32,10 +32,7 @@ from app.market.timeframes import (
 )
 
 
-_SENSITIVE_SETTINGS = {
-    'ETORO_API_KEY',
-    'ETORO_USER_KEY',
-}
+_SENSITIVE_SETTINGS = {'ETORO_API_KEY', 'ETORO_USER_KEY'}
 
 
 def build_run_id(started_at: datetime | None = None) -> str:
@@ -113,7 +110,7 @@ def build_run_manifest(
     actual_manifest_path = manifest_path or settings.run_manifest_path
     actual_summary_path = summary_path or settings.daily_summary_path
     return {
-        'schema_version': 7,
+        'schema_version': 8,
         'run_id': run_id,
         'status': 'running',
         'started_at': started_at,
@@ -176,6 +173,8 @@ def build_run_manifest(
             'candidate_id_enabled': True,
             'pending_lineage_enabled': True,
             'entry_routing_retained': True,
+            'managed_stop_updates_retained': True,
+            'entry_horizon_rejections_retained': True,
             'analysis_ready_entry_fields': [
                 'candidate_id',
                 'origin_candidate_id',
@@ -184,6 +183,8 @@ def build_run_manifest(
                 'symbol',
                 'side',
                 'entry_reference_price',
+                'profile_key',
+                'sl_tp_source',
                 'effective_stop_loss_percent',
                 'effective_take_profit_percent',
                 'estimated_total_cost_percent',
@@ -196,12 +197,15 @@ def build_run_manifest(
                 'multi_timeframe_components',
                 'tp_feasibility_score',
                 'tp_feasibility_contribution',
+                'movement_consumed_to_tp_ratio',
+                'entry_freshness_score',
                 'entry_route_action',
                 'entry_route_reason',
                 'selection_outcome',
                 'selection_reason',
                 'raw_tp_before_sl_probability',
                 'tp_before_sl_probability',
+                'calibration_profile_key',
                 'break_even_probability',
                 'net_expected_value_percent',
                 'probability_edge',
@@ -251,49 +255,38 @@ def finalize_run_manifest(
     if summary is not None:
         manifest['result'] = {
             'market_snapshots': summary.get('market_data', {}).get(
-                'snapshots',
-                0,
+                'snapshots', 0
             ),
             'market_data_rejected': summary.get('market_data', {}).get(
-                'rejected',
-                0,
+                'rejected', 0
             ),
             'market_data_quarantined': summary.get(
-                'market_data',
-                {},
+                'market_data', {}
             ).get('quarantined', 0),
             'candles_closed': summary.get('market_data', {}).get(
-                'candles_closed',
-                0,
+                'candles_closed', 0
             ),
             'timeframe_bars_closed': summary.get(
-                'multi_timeframe',
-                {},
+                'multi_timeframe', {}
             ).get('closed_total', 0),
             'timeframe_bars_incomplete': summary.get(
-                'multi_timeframe',
-                {},
+                'multi_timeframe', {}
             ).get('incomplete_total', 0),
             'ready_for_selection': summary.get(
-                'entry_routing',
-                {},
+                'entry_routing', {}
             ).get('ready_for_selection', 0),
             'wait_for_retest': summary.get(
-                'entry_routing',
-                {},
+                'entry_routing', {}
             ).get('wait_for_retest', 0),
             'skip': summary.get('entry_routing', {}).get('skip', 0),
             'orders_submitted': summary.get('orders', {}).get(
-                'submitted',
-                0,
+                'submitted', 0
             ),
             'positions_opened': summary.get('positions', {}).get(
-                'opened',
-                0,
+                'opened', 0
             ),
             'positions_closed': summary.get('positions', {}).get(
-                'closed',
-                0,
+                'closed', 0
             ),
             'errors': summary.get('errors', {}).get('total', 0),
         }
