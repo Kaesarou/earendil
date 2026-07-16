@@ -16,7 +16,12 @@ class AnalysisReadySummaryAggregator(DailySummaryAggregator):
         self.multi_timeframe_score_buckets = Counter()
         self.tp_feasibility_score_buckets = Counter()
         self.tp_feasibility_contribution_buckets = Counter()
+        self.entry_freshness_score_buckets = Counter()
         self.net_expected_value_buckets = Counter()
+        self.calibration_profiles = Counter()
+        self.entry_horizon_rejections_by_profile = Counter()
+        self.entry_horizon_rejections_by_reason = Counter()
+        self.managed_stop_updates_by_type = Counter()
 
     def record(self, event_type: str, payload: dict[str, Any]) -> None:
         super().record(event_type, payload)
@@ -26,10 +31,30 @@ class AnalysisReadySummaryAggregator(DailySummaryAggregator):
             self.validated_accepted_total += len(accepted)
         elif event_type == 'candidate_tp_feasibility':
             self._record_candidate_scores(payload)
+        elif event_type == 'entry_horizon_rejected':
+            self.entry_horizon_rejections_by_reason[
+                str(payload.get('reason') or 'unknown')
+            ] += 1
+            self.entry_horizon_rejections_by_profile[
+                str(payload.get('profile_key') or 'unknown')
+            ] += 1
+        elif event_type == 'managed_stop_updated':
+            self.managed_stop_updates_by_type[
+                str(payload.get('protection_type') or 'unknown')
+            ] += 1
+
+    def _record_decision(self, payload):
+        approved_before = self.risk_approved
+        rejected_before = self.risk_rejected
+        super()._record_decision(payload)
+        if payload.get('candidate') is None:
+            self.risk_approved = approved_before
+            self.risk_rejected = rejected_before
 
     def _record_candidate_scores(self, payload: dict[str, Any]) -> None:
         for item in _as_list(payload.get('evaluated_candidates')):
             analysis = _attribute(item, 'tp_feasibility')
+            probability = _attribute(item, 'tp_probability')
             candidate = _attribute(item, 'candidate')
             effective_sl_tp = _attribute(item, 'effective_sl_tp')
             for component in _as_list(
@@ -42,6 +67,12 @@ class AnalysisReadySummaryAggregator(DailySummaryAggregator):
             )
             if source:
                 self.effective_sl_tp_sources[str(source)] += 1
+            calibration_profile = _attribute(
+                probability,
+                'calibration_profile_key',
+            )
+            if calibration_profile:
+                self.calibration_profiles[str(calibration_profile)] += 1
             self._record_bucket(
                 self.market_context_score_buckets,
                 _attribute(candidate, 'market_context_score'),
@@ -61,6 +92,11 @@ class AnalysisReadySummaryAggregator(DailySummaryAggregator):
                 self.tp_feasibility_contribution_buckets,
                 _attribute(analysis, 'score_contribution'),
                 width=5.0,
+            )
+            self._record_bucket(
+                self.entry_freshness_score_buckets,
+                _attribute(analysis, 'entry_freshness_score'),
+                width=10.0,
             )
             self._record_bucket(
                 self.net_expected_value_buckets,
@@ -85,7 +121,7 @@ class AnalysisReadySummaryAggregator(DailySummaryAggregator):
 
     def to_dict(self) -> dict[str, Any]:
         summary = super().to_dict()
-        summary['schema_version'] = 7
+        summary['schema_version'] = 8
         market_data = summary['market_data']
         trading_snapshots = market_data.get('accepted', 0)
         market_data['trading_snapshots_processed'] = trading_snapshots
@@ -106,6 +142,9 @@ class AnalysisReadySummaryAggregator(DailySummaryAggregator):
             'tp_feasibility_contribution': dict(
                 self.tp_feasibility_contribution_buckets
             ),
+            'entry_freshness_score': dict(
+                self.entry_freshness_score_buckets
+            ),
             'net_expected_value_percent': dict(
                 self.net_expected_value_buckets
             ),
@@ -117,6 +156,20 @@ class AnalysisReadySummaryAggregator(DailySummaryAggregator):
         }
         summary['effective_sl_tp'] = {
             'by_source': dict(self.effective_sl_tp_sources),
+        }
+        summary['tp_probability'] = {
+            'by_calibration_profile': dict(self.calibration_profiles),
+        }
+        summary['entry_horizon'] = {
+            'rejections_by_reason': dict(
+                self.entry_horizon_rejections_by_reason
+            ),
+            'rejections_by_profile': dict(
+                self.entry_horizon_rejections_by_profile
+            ),
+        }
+        summary['managed_stops'] = {
+            'updates_by_type': dict(self.managed_stop_updates_by_type),
         }
         return summary
 
