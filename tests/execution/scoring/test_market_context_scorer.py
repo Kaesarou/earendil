@@ -73,16 +73,21 @@ def test_strong_fresh_relative_strength_can_overcome_bearish_background():
     )
 
 
-def test_relative_strength_compensation_is_progressive_when_entry_is_fresh():
-    scores = [
+def test_relative_strength_compensation_is_progressive_before_its_cap():
+    results = [
         score_market_context(
             context=context(relative_strength=value),
             side='BUY',
             entry_freshness_score=100.0,
-        ).score
-        for value in (0.5, 1.5, 3.0)
+        )
+        for value in (0.1, 0.3, 0.6)
     ]
-    assert scores[0] < scores[1] < scores[2]
+    adjustments = [
+        result.components['relative_strength_adjustment']
+        for result in results
+    ]
+    assert adjustments[0] < adjustments[1] < adjustments[2]
+    assert results[0].score < results[1].score < results[2].score
 
 
 def test_consumed_move_limits_positive_relative_strength_compensation():
