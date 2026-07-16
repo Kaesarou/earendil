@@ -111,82 +111,81 @@ class AnalysisJournal:
             record = {
                 'candidate_id': _attribute(candidate, 'candidate_id'),
                 'origin_candidate_id': _attribute(
-                    candidate,
-                    'origin_candidate_id',
+                    candidate, 'origin_candidate_id'
                 ),
                 'pending_entry_id': _attribute(
-                    candidate,
-                    'pending_entry_id',
+                    candidate, 'pending_entry_id'
                 ),
                 'candidate_timestamp': _attribute(snapshot, 'timestamp'),
                 'symbol': _attribute(candidate, 'symbol'),
                 'side': _attribute(signal, 'action'),
                 'entry_reference_price': _attribute(snapshot, 'last'),
+                'profile_key': _profile_key(
+                    effective_sl_tp,
+                    tp_probability,
+                ),
+                'sl_tp_source': _attribute(effective_sl_tp, 'source'),
                 'score': _attribute(candidate, 'score'),
                 'base_score': _attribute(candidate, 'base_score'),
                 'directional_score': _attribute(
-                    candidate,
-                    'directional_score',
+                    candidate, 'directional_score'
                 ),
                 'market_context_score': _attribute(
-                    candidate,
-                    'market_context_score',
+                    candidate, 'market_context_score'
                 ),
                 'market_context_components': _attribute(
-                    candidate,
-                    'market_context_components',
+                    candidate, 'market_context_components'
                 ),
                 'multi_timeframe_score': _attribute(
-                    candidate,
-                    'multi_timeframe_score',
+                    candidate, 'multi_timeframe_score'
                 ),
                 'multi_timeframe_components': _attribute(
-                    candidate,
-                    'multi_timeframe_components',
+                    candidate, 'multi_timeframe_components'
                 ),
                 'tp_feasibility_score': _attribute(
-                    candidate,
-                    'tp_feasibility_score',
+                    candidate, 'tp_feasibility_score'
                 ),
                 'tp_feasibility_contribution': _attribute(
-                    candidate,
-                    'tp_feasibility_contribution',
+                    candidate, 'tp_feasibility_contribution'
+                ),
+                'movement_consumed_to_tp_ratio': _attribute(
+                    tp_feasibility,
+                    'movement_consumed_to_tp_ratio',
+                ),
+                'entry_freshness_score': _attribute(
+                    tp_feasibility,
+                    'entry_freshness_score',
                 ),
                 'effective_stop_loss_percent': _attribute(
-                    effective_sl_tp,
-                    'stop_loss_percent',
+                    effective_sl_tp, 'stop_loss_percent'
                 ),
                 'effective_take_profit_percent': _attribute(
-                    effective_sl_tp,
-                    'take_profit_percent',
+                    effective_sl_tp, 'take_profit_percent'
                 ),
                 'estimated_total_cost_percent': _attribute(
-                    economics,
-                    'estimated_total_cost_percent',
+                    economics, 'estimated_total_cost_percent'
                 ),
                 'expected_net_profit_percent': _attribute(
-                    economics,
-                    'expected_net_profit_percent',
+                    economics, 'expected_net_profit_percent'
                 ),
                 'raw_tp_before_sl_probability': _attribute(
-                    candidate,
-                    'raw_tp_before_sl_probability',
+                    candidate, 'raw_tp_before_sl_probability'
                 ),
                 'tp_before_sl_probability': _attribute(
-                    candidate,
-                    'tp_before_sl_probability',
+                    candidate, 'tp_before_sl_probability'
+                ),
+                'calibration_profile_key': _attribute(
+                    tp_probability,
+                    'calibration_profile_key',
                 ),
                 'break_even_probability': _attribute(
-                    candidate,
-                    'break_even_probability',
+                    candidate, 'break_even_probability'
                 ),
                 'net_expected_value_percent': _attribute(
-                    candidate,
-                    'net_expected_value_percent',
+                    candidate, 'net_expected_value_percent'
                 ),
                 'probability_edge': _attribute(
-                    candidate,
-                    'probability_edge',
+                    candidate, 'probability_edge'
                 ),
                 'entry_route_action': _enum_value(
                     _attribute(decision, 'action')
@@ -203,46 +202,38 @@ class AnalysisJournal:
                 'effective_sl_tp': effective_sl_tp,
                 'entry_decision': decision,
                 'market_context_version': _attribute(
-                    market_context,
-                    'version',
+                    market_context, 'version'
                 ),
                 'market_context_score_model_version': _attribute(
                     _attribute(
-                        candidate,
-                        'market_context_score_metadata',
+                        candidate, 'market_context_score_metadata'
                     ),
                     'model_version',
                 ),
                 'multi_timeframe_model_version': _attribute(
-                    multi_timeframe_context,
-                    'model_version',
+                    multi_timeframe_context, 'model_version'
                 ),
                 'multi_timeframe_score_model_version': _attribute(
                     _attribute(
-                        candidate,
-                        'multi_timeframe_score_metadata',
+                        candidate, 'multi_timeframe_score_metadata'
                     ),
                     'model_version',
                 ),
                 'tp_feasibility_model_version': _attribute(
-                    tp_feasibility,
-                    'model_version',
+                    tp_feasibility, 'model_version'
                 ),
                 'tp_probability_model_version': _attribute(
-                    candidate,
-                    'tp_probability_model_version',
+                    candidate, 'tp_probability_model_version'
                 ),
                 'entry_route_model_version': _attribute(
-                    decision,
-                    'model_version',
+                    decision, 'model_version'
                 ),
                 'strategy_profile': self.summary.profile,
             }
             written = self.trade_journal.write('entry_decision', record)
             if written is False:
                 self._record_trade_journal_write_failure(
-                    'entry_decision',
-                    record,
+                    'entry_decision', record
                 )
 
     def record_raw_event(
@@ -340,8 +331,7 @@ class AnalysisJournal:
                 'new_state': new_state,
                 'reason': _attribute(session_decision, 'reason'),
                 'session_key': _attribute(
-                    session_decision,
-                    'session_key',
+                    session_decision, 'session_key'
                 ),
                 'session_decision': session_decision,
             },
@@ -358,6 +348,16 @@ class AnalysisJournal:
             return
         self.summary.write(self.partial_summary_path)
         self._last_partial_summary_at = now
+
+
+def _profile_key(effective_sl_tp: Any, tp_probability: Any) -> Any:
+    calibration_key = _attribute(
+        tp_probability,
+        'calibration_profile_key',
+    )
+    if calibration_key and ':' in str(calibration_key):
+        return str(calibration_key).rsplit(':', maxsplit=1)[0]
+    return _attribute(effective_sl_tp, 'source')
 
 
 def _evaluated_selection_items(payload: dict[str, Any]):
