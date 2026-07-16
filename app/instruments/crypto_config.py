@@ -9,6 +9,10 @@ from app.instruments.models import (
 )
 from app.risk.stale_position_guard import StalePositionConfig
 from app.risk.trade_cost_model import TradeCostConfig
+from app.strategies.entry_confirmation import EntryConfirmationConfig
+
+
+CRYPTO_INTRADAY_FIXED_PROFILE = 'crypto_intraday_fixed_v1'
 
 
 @dataclass(frozen=True)
@@ -33,6 +37,7 @@ class CryptoConfig(InstrumentConfig):
     )
     risk: RiskProfile = RiskProfile(
         asset_class=AssetClass.CRYPTO,
+        profile_key=CRYPTO_INTRADAY_FIXED_PROFILE,
         max_position_size_percent=0.75,
         stop_loss_percent=1.50,
         take_profit_percent=3.00,
@@ -41,13 +46,6 @@ class CryptoConfig(InstrumentConfig):
         force_close_minute=59,
         max_spread_percent=0.35,
         min_move_spread_ratio=4.0,
-        dynamic_sl_tp_enabled=False,
-        stop_loss_atr_multiplier=1.5,
-        take_profit_atr_multiplier=2.5,
-        min_stop_loss_percent=0.8,
-        max_stop_loss_percent=2.5,
-        min_take_profit_percent=1.5,
-        max_take_profit_percent=5.0,
         breakeven_stop_enabled=True,
         breakeven_trigger_percent=0.20,
         breakeven_buffer_percent=0.05,
@@ -77,5 +75,10 @@ class CryptoConfig(InstrumentConfig):
             bad_tp_to_momentum_ratio=10.0,
             good_cost_to_tp_ratio=0.35,
             bad_cost_to_tp_ratio=1.0,
+        ),
+        entry_confirmation=EntryConfirmationConfig(
+            structural_stop_atr_multiplier=1.50,
+            minimum_structural_stop_percent=0.80,
+            maximum_structural_stop_percent=2.50,
         ),
     )
