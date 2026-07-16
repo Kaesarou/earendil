@@ -8,7 +8,7 @@ from app.instruments.models import AssetClass
 from app.market.market_context import CandidateMarketContext
 
 
-MARKET_CONTEXT_SCORER_VERSION = 'market_context_score_v1'
+MARKET_CONTEXT_SCORER_VERSION = 'market_context_score_v2'
 
 
 @dataclass(frozen=True)
@@ -21,7 +21,10 @@ class MarketContextScoreConfig:
     benchmark_session_scale_percent: float
     benchmark_momentum_scale_percent: float
     relative_strength_scale_percent: float
-    maximum_absolute_score: float = 20.0
+    maximum_absolute_score: float = 15.0
+    favorable_background_relative_bonus: float = 4.0
+    opposed_background_excess_bonus: float = 2.0
+    maximum_negative_relative_adjustment: float = 8.0
 
 
 @dataclass(frozen=True)
@@ -70,13 +73,18 @@ def score_market_context(
     *,
     context: CandidateMarketContext | None,
     side: str,
+    entry_freshness_score: float | None = None,
 ) -> MarketContextScore:
     direction = _side_direction(side)
     if context is None or direction == 0.0:
         return MarketContextScore(
             score=0.0,
             components=_empty_components(),
-            diagnostics={'available': False, 'side': side},
+            diagnostics={
+                'available': False,
+                'side': side,
+                'finalized_with_entry_freshness': False,
+            },
         )
 
     config = _CONFIG_BY_ASSET_CLASS[context.asset_class]
@@ -102,24 +110,36 @@ def score_market_context(
         direction=direction,
         weight=config.sector_weight,
     )
+    market_background = benchmark_session + benchmark_momentum + breadth + sector
     directional_relative_strength = _directional(
         context.symbol_relative_strength_percent,
         direction,
     )
-    relative_strength = _scaled_component(
+    relative_strength_raw = _scaled_component(
         value=directional_relative_strength,
         scale=config.relative_strength_scale_percent,
         weight=config.relative_strength_weight,
+    )
+    relative_strength_adjustment = _relative_strength_adjustment(
+        raw_adjustment=relative_strength_raw,
+        market_background=market_background,
+        entry_freshness_score=entry_freshness_score,
+        config=config,
     )
     components = {
         'benchmark_session': round(benchmark_session, 4),
         'benchmark_momentum': round(benchmark_momentum, 4),
         'breadth': round(breadth, 4),
         'sector': round(sector, 4),
-        'relative_strength': round(relative_strength, 4),
+        'market_background': round(market_background, 4),
+        'relative_strength_raw': round(relative_strength_raw, 4),
+        'relative_strength_adjustment': round(
+            relative_strength_adjustment,
+            4,
+        ),
     }
     score = _clamp(
-        sum(components.values()),
+        market_background + relative_strength_adjustment,
         -config.maximum_absolute_score,
         config.maximum_absolute_score,
     )
@@ -145,8 +165,43 @@ def score_market_context(
             'directional_relative_strength_percent': (
                 directional_relative_strength
             ),
+            'entry_freshness_score': entry_freshness_score,
+            'entry_freshness_factor': _freshness_factor(
+                entry_freshness_score
+            ),
+            'finalized_with_entry_freshness': (
+                entry_freshness_score is not None
+            ),
         },
     )
+
+
+def _relative_strength_adjustment(
+    *,
+    raw_adjustment: float,
+    market_background: float,
+    entry_freshness_score: float | None,
+    config: MarketContextScoreConfig,
+) -> float:
+    freshness = _freshness_factor(entry_freshness_score)
+    gated_adjustment = raw_adjustment * freshness
+    if gated_adjustment >= 0:
+        maximum_positive = (
+            abs(market_background) + config.opposed_background_excess_bonus
+            if market_background < 0
+            else config.favorable_background_relative_bonus
+        )
+        return min(gated_adjustment, maximum_positive)
+    return max(
+        gated_adjustment,
+        -config.maximum_negative_relative_adjustment,
+    )
+
+
+def _freshness_factor(entry_freshness_score: float | None) -> float:
+    if entry_freshness_score is None:
+        return 0.0
+    return _clamp(float(entry_freshness_score) / 100.0, 0.0, 1.0)
 
 
 def _empty_components() -> dict[str, float]:
@@ -155,7 +210,9 @@ def _empty_components() -> dict[str, float]:
         'benchmark_momentum': 0.0,
         'breadth': 0.0,
         'sector': 0.0,
-        'relative_strength': 0.0,
+        'market_background': 0.0,
+        'relative_strength_raw': 0.0,
+        'relative_strength_adjustment': 0.0,
     }
 
 
@@ -194,7 +251,11 @@ def _participation_component(
 ) -> float:
     if not available or advancing_ratio is None or weight == 0:
         return 0.0
-    market_pressure = _clamp((2.0 * float(advancing_ratio)) - 1.0, -1.0, 1.0)
+    market_pressure = _clamp(
+        (2.0 * float(advancing_ratio)) - 1.0,
+        -1.0,
+        1.0,
+    )
     return weight * market_pressure * direction
 
 
