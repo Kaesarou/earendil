@@ -14,4 +14,4 @@ fi
 export GIT_COMMIT
 
 printf 'Starting Goblin! with GIT_COMMIT=%s\n' "$GIT_COMMIT"
-exec docker compose up -d --build
+exec docker compose up --build
