@@ -30,7 +30,6 @@ BALANCED_EQUITY_US_CONFIG = replace(
     EQUITY_US_CONFIG,
     risk=replace(
         EQUITY_US_CONFIG.risk,
-        dynamic_sl_tp_enabled=True,
         trade_cooldown=BALANCED_TRADE_COOLDOWN,
     ),
 )
@@ -52,7 +51,6 @@ def _selection_configs() -> dict[AssetClass, CandidateSelectionConfig]:
         AssetClass.EQUITY_US: CandidateSelectionConfig(
             top_n=2,
             min_score=115.0,
-            dynamic_min_score=100.0,
         ),
         AssetClass.EQUITY_EU: CandidateSelectionConfig(
             top_n=1,
