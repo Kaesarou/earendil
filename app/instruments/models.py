@@ -32,12 +32,12 @@ class TpFeasibilityConfig:
     bad_tp_to_momentum_ratio: float = 12.00
     good_cost_to_tp_ratio: float = 0.10
     bad_cost_to_tp_ratio: float = 1.00
-    good_movement_consumed_percent: float = 0.50
-    bad_movement_consumed_percent: float = 2.00
+    good_movement_consumed_to_tp_ratio: float = 0.50
+    bad_movement_consumed_to_tp_ratio: float = 2.00
     tp_vs_atr_weight: float = 0.30
     tp_vs_momentum_weight: float = 0.25
     cost_vs_tp_weight: float = 0.30
-    movement_remaining_weight: float = 0.15
+    entry_freshness_weight: float = 0.15
     maximum_score_contribution: float = 15.0
     cost_to_tp_hard_reject_ratio: float = 1.0
 
@@ -46,7 +46,7 @@ class TpFeasibilityConfig:
             self.tp_vs_atr_weight
             + self.tp_vs_momentum_weight
             + self.cost_vs_tp_weight
-            + self.movement_remaining_weight
+            + self.entry_freshness_weight
         )
         if abs(weights - 1.0) > 1e-9:
             raise ValueError('TP feasibility component weights must sum to 1.0.')
@@ -84,6 +84,7 @@ class DirectionalRiskOverride:
 @dataclass(frozen=True)
 class RiskProfile:
     asset_class: AssetClass
+    profile_key: str
     max_position_size_percent: float
     stop_loss_percent: float
     take_profit_percent: float
@@ -92,13 +93,6 @@ class RiskProfile:
     force_close_minute: int
     max_spread_percent: float
     min_move_spread_ratio: float
-    dynamic_sl_tp_enabled: bool
-    stop_loss_atr_multiplier: float
-    take_profit_atr_multiplier: float
-    min_stop_loss_percent: float
-    max_stop_loss_percent: float
-    min_take_profit_percent: float
-    max_take_profit_percent: float
     breakeven_stop_enabled: bool = False
     breakeven_trigger_percent: float = 0.0
     breakeven_buffer_percent: float = 0.0
