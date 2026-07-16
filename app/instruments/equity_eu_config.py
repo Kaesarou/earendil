@@ -12,10 +12,13 @@ from app.risk.stale_position_guard import StalePositionConfig
 from app.risk.trade_cost_model import TradeCostConfig
 
 
+EU_INTRADAY_FIXED_PROFILE = 'eu_intraday_fixed_v1'
+EU_TREND_BUY_PROFILE_KEY = 'eu_trend_buy_v1'
+
 EU_TREND_BUY_PROFILE = DirectionalRiskOverride(
     stop_loss_percent=1.20,
     take_profit_percent=2.00,
-    source='eu_trend_buy_v1',
+    source=EU_TREND_BUY_PROFILE_KEY,
     stale_position=StalePositionConfig(
         enabled=True,
         max_age_minutes=180,
@@ -47,6 +50,7 @@ class EquityEuConfig(InstrumentConfig):
     )
     risk: RiskProfile = RiskProfile(
         asset_class=AssetClass.EQUITY_EU,
+        profile_key=EU_INTRADAY_FIXED_PROFILE,
         max_position_size_percent=0.75,
         stop_loss_percent=0.70,
         take_profit_percent=1.00,
@@ -55,13 +59,6 @@ class EquityEuConfig(InstrumentConfig):
         force_close_minute=25,
         max_spread_percent=0.15,
         min_move_spread_ratio=3.0,
-        dynamic_sl_tp_enabled=False,
-        stop_loss_atr_multiplier=1.2,
-        take_profit_atr_multiplier=2.0,
-        min_stop_loss_percent=0.4,
-        max_stop_loss_percent=1.5,
-        min_take_profit_percent=0.8,
-        max_take_profit_percent=3.0,
         breakeven_stop_enabled=True,
         breakeven_trigger_percent=0.55,
         breakeven_buffer_percent=0.05,
