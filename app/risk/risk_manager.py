@@ -166,10 +166,12 @@ class RiskManager:
                 effective_sl_tp.metadata.get('structural_stop_reason')
                 or 'invalid_structural_stop'
             )
+        maximum_stop = (
+            risk_profile.entry_confirmation.maximum_structural_stop_percent
+        )
         if (
-            risk_profile.max_stop_loss_percent > 0
-            and effective_sl_tp.stop_loss_percent
-            > risk_profile.max_stop_loss_percent
+            maximum_stop > 0
+            and effective_sl_tp.stop_loss_percent > maximum_stop
         ):
             return 'structural_stop_too_wide'
         reward_to_risk = (
@@ -402,14 +404,13 @@ class RiskManager:
                 f'Unsupported signal action for trade plan: {signal.action}'
             )
 
-        buffer_percent = (
-            risk_profile.breakeven_buffer_percent
-            + trade_cost_estimate.total_estimated_cost_percent
+        net_breakeven_distance = (
+            trade_cost_estimate.total_estimated_cost_percent
+            + risk_profile.breakeven_buffer_percent
         )
         trigger_percent = max(
-            risk_profile.breakeven_trigger_percent
-            + trade_cost_estimate.total_estimated_cost_percent,
-            buffer_percent,
+            risk_profile.breakeven_trigger_percent,
+            net_breakeven_distance,
         )
         stale_config = risk_profile.stale_position_for(signal.action)
         fields = self._trade_cost_plan_fields(trade_cost_estimate)
@@ -431,7 +432,10 @@ class RiskManager:
                 4,
             ),
             breakeven_trigger_percent=round(trigger_percent, 4),
-            breakeven_buffer_percent=round(buffer_percent, 4),
+            breakeven_buffer_percent=round(
+                risk_profile.breakeven_buffer_percent,
+                4,
+            ),
             trailing_stop_enabled=risk_profile.trailing_stop_enabled,
             trailing_stop_trigger_percent=(
                 risk_profile.trailing_stop_trigger_percent
@@ -497,7 +501,11 @@ class RiskManager:
             ),
             'min_move_spread_ratio': risk_profile.min_move_spread_ratio,
             'atr_percent': self._round_optional(effective_sl_tp.atr_percent),
-            'dynamic_sl_tp_enabled': effective_sl_tp.dynamic_sl_tp_enabled,
+            'profile_key': str(
+                effective_sl_tp.metadata.get('baseline_sl_tp_source')
+                or effective_sl_tp.metadata.get('profile_key')
+                or risk_profile.profile_key
+            ),
             'sl_tp_mode': effective_sl_tp.mode,
             'sl_tp_source': effective_sl_tp.source,
             'effective_stop_loss_percent': round(
@@ -544,7 +552,10 @@ class RiskManager:
             estimated_open_fee=round(trade_cost_estimate.open_fee, 4),
             estimated_close_fee=round(trade_cost_estimate.close_fee, 4),
             estimated_fixed_fees=round(trade_cost_estimate.fixed_fees, 4),
-            estimated_spread_cost=round(trade_cost_estimate.spread_cost, 4),
+            estimated_spread_cost=round(
+                trade_cost_estimate.spread_cost,
+                4,
+            ),
             estimated_total_cost=round(
                 trade_cost_estimate.total_estimated_cost,
                 4,
