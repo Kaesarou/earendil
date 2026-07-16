@@ -11,6 +11,9 @@ from app.risk.stale_position_guard import StalePositionConfig
 from app.risk.trade_cost_model import TradeCostConfig
 
 
+US_INTRADAY_FIXED_PROFILE = 'us_intraday_fixed_v1'
+
+
 @dataclass(frozen=True)
 class EquityUsConfig(InstrumentConfig):
     trend: TrendStrategyConfig = TrendStrategyConfig(
@@ -33,21 +36,15 @@ class EquityUsConfig(InstrumentConfig):
     )
     risk: RiskProfile = RiskProfile(
         asset_class=AssetClass.EQUITY_US,
+        profile_key=US_INTRADAY_FIXED_PROFILE,
         max_position_size_percent=0.75,
-        stop_loss_percent=0.90,
-        take_profit_percent=1.60,
+        stop_loss_percent=0.70,
+        take_profit_percent=1.20,
         force_close_enabled=False,
         force_close_hour=21,
         force_close_minute=55,
         max_spread_percent=0.10,
         min_move_spread_ratio=3.0,
-        dynamic_sl_tp_enabled=False,
-        stop_loss_atr_multiplier=1.2,
-        take_profit_atr_multiplier=2.0,
-        min_stop_loss_percent=0.4,
-        max_stop_loss_percent=1.5,
-        min_take_profit_percent=0.8,
-        max_take_profit_percent=3.0,
         breakeven_stop_enabled=True,
         breakeven_trigger_percent=0.60,
         breakeven_buffer_percent=0.05,
