@@ -32,34 +32,18 @@ def context(
         regime=MarketRegime.RISK_OFF,
         alignment=ContextAlignment.OPPOSED,
         benchmark=BenchmarkContext(
-            'SPX500',
-            True,
-            MarketDirection.BEARISH,
-            benchmark_return,
-            benchmark_momentum,
-            0.02,
-            0.0,
+            'SPX500', True, MarketDirection.BEARISH,
+            benchmark_return, benchmark_momentum, 0.02, 0.0,
         ),
         breadth=BreadthContext(
-            True,
-            MarketDirection.BEARISH,
-            20,
-            20,
-            1.0,
+            True, MarketDirection.BEARISH, 20, 20, 1.0,
             int(breadth_ratio * 20),
             int((1.0 - breadth_ratio) * 20),
-            0,
-            breadth_ratio,
-            benchmark_return,
+            0, breadth_ratio, benchmark_return,
         ),
         sector=SectorContext(
-            'TECHNOLOGY',
-            True,
-            MarketDirection.BEARISH,
-            10,
-            10,
-            sector_ratio,
-            benchmark_return,
+            'TECHNOLOGY', True, MarketDirection.BEARISH,
+            10, 10, sector_ratio, benchmark_return,
         ),
         symbol_session_return_percent=(
             benchmark_return + relative_strength
@@ -69,39 +53,60 @@ def context(
     )
 
 
-def test_strong_relative_strength_can_overcome_bearish_market_for_buy():
+def test_strong_fresh_relative_strength_can_overcome_bearish_background():
     weak = score_market_context(
         context=context(relative_strength=0.2),
         side='BUY',
+        entry_freshness_score=100.0,
     )
     strong = score_market_context(
         context=context(relative_strength=3.5),
         side='BUY',
+        entry_freshness_score=100.0,
     )
 
     assert weak.score < 0
     assert strong.score > 0
-    assert strong.components['relative_strength'] > 10.0
-
-
-def test_relative_strength_compensation_is_progressive_not_boolean():
-    low = score_market_context(
-        context=context(relative_strength=0.5),
-        side='BUY',
-    )
-    medium = score_market_context(
-        context=context(relative_strength=1.5),
-        side='BUY',
-    )
-    high = score_market_context(
-        context=context(relative_strength=3.0),
-        side='BUY',
+    assert strong.components['relative_strength_raw'] > 10.0
+    assert strong.components['relative_strength_adjustment'] < (
+        strong.components['relative_strength_raw']
     )
 
-    assert low.score < medium.score < high.score
+
+def test_relative_strength_compensation_is_progressive_when_entry_is_fresh():
+    scores = [
+        score_market_context(
+            context=context(relative_strength=value),
+            side='BUY',
+            entry_freshness_score=100.0,
+        ).score
+        for value in (0.5, 1.5, 3.0)
+    ]
+    assert scores[0] < scores[1] < scores[2]
 
 
-def test_sell_direction_inverts_benchmark_breadth_and_relative_strength():
+def test_consumed_move_limits_positive_relative_strength_compensation():
+    fresh = score_market_context(
+        context=context(relative_strength=3.5),
+        side='BUY',
+        entry_freshness_score=100.0,
+    )
+    consumed = score_market_context(
+        context=context(relative_strength=3.5),
+        side='BUY',
+        entry_freshness_score=10.0,
+    )
+    preliminary = score_market_context(
+        context=context(relative_strength=3.5),
+        side='BUY',
+    )
+
+    assert fresh.score > consumed.score
+    assert consumed.score < 0
+    assert preliminary.components['relative_strength_adjustment'] == 0.0
+
+
+def test_sell_direction_inverts_background_and_relative_strength():
     bullish_for_buy = context(
         benchmark_return=1.0,
         benchmark_momentum=0.2,
@@ -109,22 +114,31 @@ def test_sell_direction_inverts_benchmark_breadth_and_relative_strength():
         sector_ratio=0.70,
         relative_strength=2.0,
     )
-    buy = score_market_context(context=bullish_for_buy, side='BUY')
-    sell = score_market_context(context=bullish_for_buy, side='SELL')
+    buy = score_market_context(
+        context=bullish_for_buy,
+        side='BUY',
+        entry_freshness_score=100.0,
+    )
+    sell = score_market_context(
+        context=bullish_for_buy,
+        side='SELL',
+        entry_freshness_score=100.0,
+    )
 
     assert buy.score > 0
     assert sell.score < 0
-    assert buy.components['relative_strength'] > 0
-    assert sell.components['relative_strength'] < 0
+    assert buy.components['relative_strength_adjustment'] > 0
+    assert sell.components['relative_strength_adjustment'] < 0
 
 
 def test_context_score_is_bounded_and_missing_context_is_neutral():
     extreme = score_market_context(
         context=context(relative_strength=100.0),
         side='BUY',
+        entry_freshness_score=100.0,
     )
     missing = score_market_context(context=None, side='BUY')
 
-    assert -20.0 <= extreme.score <= 20.0
+    assert -15.0 <= extreme.score <= 15.0
     assert missing.score == 0.0
     assert all(value == 0.0 for value in missing.components.values())
