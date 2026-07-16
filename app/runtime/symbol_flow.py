@@ -21,11 +21,16 @@ from app.persistence.trade_cooldown_store import TradeCooldownStore
 from app.risk.models import TradePlan
 from app.risk.risk_manager import RiskManager
 from app.risk.trade_cooldown_guard import TradeCooldownGuard
+from app.runtime.entry_horizon import evaluate_entry_horizon
 from app.runtime.pending_entry import PendingEntryManager
 from app.runtime.pending_entry_flow import advance_pending_entry, write_pending_events
-from app.runtime.position_lifecycle import BrokerAuthorizationErrorChecker, close_positions_triggered_by_snapshot
+from app.runtime.position_lifecycle import (
+    BrokerAuthorizationErrorChecker,
+    close_positions_triggered_by_snapshot,
+)
 from app.runtime.session_position_lifecycle import close_positions_before_session_end
 from app.strategies.strategy import TrendStrategy
+
 
 logger = logging.getLogger(__name__)
 
@@ -54,7 +59,10 @@ def process_symbol(
     run_id: str = '',
 ) -> TradeCandidate | None:
     snapshot = snapshot or broker.get_market_snapshot(symbol)
-    market_journal.write('market_snapshot', {'symbol': symbol, 'snapshot': snapshot, 'loop_id': loop_id})
+    market_journal.write(
+        'market_snapshot',
+        {'symbol': symbol, 'snapshot': snapshot, 'loop_id': loop_id},
+    )
     strategy.on_snapshot(snapshot)
 
     close_positions_triggered_by_snapshot(
@@ -72,10 +80,19 @@ def process_symbol(
         latest_stop_loss = cooldown_store.find_latest_stop_loss(symbol=symbol)
         if latest_stop_loss is not None:
             config = risk_manager.risk_profile_for(symbol).trade_cooldown
-            if latest_stop_loss.symbol_lock_remaining_seconds(config=config, now=snapshot.timestamp) > 0:
+            if (
+                latest_stop_loss.symbol_lock_remaining_seconds(
+                    config=config,
+                    now=snapshot.timestamp,
+                )
+                > 0
+            ):
                 write_pending_events(
                     trade_journal,
-                    pending_entry_manager.invalidate_symbol(symbol, 'stop_loss_symbol_lock_registered'),
+                    pending_entry_manager.invalidate_symbol(
+                        symbol,
+                        'stop_loss_symbol_lock_registered',
+                    ),
                 )
 
     if session_decision is not None:
@@ -130,7 +147,10 @@ def process_closed_candle(
     multi_timeframe_service: MultiTimeframeService | None = None,
     run_id: str = '',
 ) -> TradeCandidate | None:
-    candle_journal.write('candle_closed', {'symbol': symbol, 'candle': closed_candle, 'loop_id': loop_id})
+    candle_journal.write(
+        'candle_closed',
+        {'symbol': symbol, 'candle': closed_candle, 'loop_id': loop_id},
+    )
     if multi_timeframe_service is not None and session_decision is not None:
         update = multi_timeframe_service.on_base_candle(
             symbol=symbol,
@@ -195,14 +215,91 @@ def process_closed_candle(
             return confirmed_candidate
 
     if signal.action == 'HOLD':
-        logger.debug('Strategy hold | symbol=%s | reason=%s | candle_close=%s', symbol, signal.reason, closed_candle.close)
-        return _write_rejected_decision(symbol=symbol, snapshot=snapshot, closed_candle=closed_candle, signal=signal, reason=signal.reason, risk_manager=risk_manager, trade_journal=trade_journal, session_decision=session_decision, loop_id=loop_id)
+        logger.debug(
+            'Strategy hold | symbol=%s | reason=%s | candle_close=%s',
+            symbol,
+            signal.reason,
+            closed_candle.close,
+        )
+        return _write_rejected_decision(
+            symbol=symbol,
+            snapshot=snapshot,
+            closed_candle=closed_candle,
+            signal=signal,
+            reason=signal.reason,
+            risk_manager=risk_manager,
+            trade_journal=trade_journal,
+            session_decision=session_decision,
+            loop_id=loop_id,
+        )
 
-    logger.info('Strategy candidate signal | symbol=%s | action=%s | setup_quality=%s | reason=%s | candle_close=%s', symbol, signal.action, signal.setup_quality, signal.reason, closed_candle.close)
+    logger.info(
+        'Strategy candidate signal | symbol=%s | action=%s | '
+        'setup_quality=%s | reason=%s | candle_close=%s',
+        symbol,
+        signal.action,
+        signal.setup_quality,
+        signal.reason,
+        closed_candle.close,
+    )
     if session_decision is None or session_decision.session_key is None:
-        return _write_rejected_decision(symbol=symbol, snapshot=snapshot, closed_candle=closed_candle, signal=signal, reason='missing_trading_session', risk_manager=risk_manager, trade_journal=trade_journal, session_decision=session_decision, loop_id=loop_id)
+        return _write_rejected_decision(
+            symbol=symbol,
+            snapshot=snapshot,
+            closed_candle=closed_candle,
+            signal=signal,
+            reason='missing_trading_session',
+            risk_manager=risk_manager,
+            trade_journal=trade_journal,
+            session_decision=session_decision,
+            loop_id=loop_id,
+        )
     if not session_decision.new_entries_allowed:
-        return _write_rejected_decision(symbol=symbol, snapshot=snapshot, closed_candle=closed_candle, signal=signal, reason=session_decision.reason, risk_manager=risk_manager, trade_journal=trade_journal, session_decision=session_decision, loop_id=loop_id)
+        return _write_rejected_decision(
+            symbol=symbol,
+            snapshot=snapshot,
+            closed_candle=closed_candle,
+            signal=signal,
+            reason=session_decision.reason,
+            risk_manager=risk_manager,
+            trade_journal=trade_journal,
+            session_decision=session_decision,
+            loop_id=loop_id,
+        )
+
+    risk_profile = risk_manager.risk_profile_for(symbol)
+    horizon = evaluate_entry_horizon(
+        risk_profile=risk_profile,
+        side=signal.action,
+        session_decision=session_decision,
+    )
+    if not horizon.allowed:
+        trade_journal.write(
+            'entry_horizon_rejected',
+            {
+                'symbol': symbol,
+                'side': signal.action,
+                'reason': horizon.reason,
+                'required_minutes': horizon.required_minutes,
+                'available_minutes': horizon.available_minutes,
+                'profile_key': horizon.profile_key,
+                'source': 'new_signal',
+                'signal': signal,
+                'snapshot': snapshot,
+                'candle': closed_candle,
+            },
+        )
+        return _write_rejected_decision(
+            symbol=symbol,
+            snapshot=snapshot,
+            closed_candle=closed_candle,
+            signal=signal,
+            reason=horizon.reason,
+            risk_manager=risk_manager,
+            trade_journal=trade_journal,
+            session_decision=session_decision,
+            loop_id=loop_id,
+        )
 
     candidate = build_trade_candidate(
         symbol=symbol,
@@ -228,11 +325,19 @@ def process_closed_candle(
             'multi_timeframe_context': multi_timeframe_context,
             'session_decision': session_decision,
             'instrument_profile': risk_manager.instrument_profile_for(symbol),
-            'risk_profile': risk_manager.risk_profile_for(symbol),
+            'risk_profile': risk_profile,
             'loop_id': loop_id,
         },
     )
-    logger.info('Trade candidate detected | candidate_id=%s | symbol=%s | action=%s | score=%s | reason=%s', candidate.candidate_id, symbol, signal.action, candidate.score, candidate.rank_reason)
+    logger.info(
+        'Trade candidate detected | candidate_id=%s | symbol=%s | '
+        'action=%s | score=%s | reason=%s',
+        candidate.candidate_id,
+        symbol,
+        signal.action,
+        candidate.score,
+        candidate.rank_reason,
+    )
     return candidate
 
 
@@ -246,11 +351,7 @@ def _write_multi_timeframe_update(
     for gap in update.gaps:
         candle_journal.write(
             'candle_gap_detected',
-            {
-                'symbol': symbol,
-                'gap': gap,
-                'loop_id': loop_id,
-            },
+            {'symbol': symbol, 'gap': gap, 'loop_id': loop_id},
         )
     for bar in update.closed_bars:
         event_type = 'timeframe_bar_closed'
@@ -287,7 +388,11 @@ def _side_for_signal(
     if pending_entry_manager is None:
         return None
     pending = next(
-        (item for item in pending_entry_manager.snapshot() if item.symbol == symbol),
+        (
+            item
+            for item in pending_entry_manager.snapshot()
+            if item.symbol == symbol
+        ),
         None,
     )
     return pending.side if pending is not None else None
@@ -331,8 +436,38 @@ def _multi_timeframe_context_for_side(
     )
 
 
-def _write_rejected_decision(*, symbol: str, snapshot: MarketSnapshot, closed_candle: Candle, signal, reason: str, risk_manager: RiskManager, session_decision: TradingSessionDecision | None, trade_journal: JsonlJournal, loop_id: int | None = None) -> None:
-    plan = TradePlan(approved=False, reason=reason, symbol=symbol, side=signal.action)
-    trade_journal.write('decision', {'symbol': symbol, 'snapshot': snapshot, 'candle': closed_candle, 'signal': signal, 'equity': None, 'trade_plan': plan, 'session_decision': session_decision, 'instrument_profile': risk_manager.instrument_profile_for(symbol), 'risk_profile': risk_manager.risk_profile_for(symbol), 'loop_id': loop_id})
+def _write_rejected_decision(
+    *,
+    symbol: str,
+    snapshot: MarketSnapshot,
+    closed_candle: Candle,
+    signal,
+    reason: str,
+    risk_manager: RiskManager,
+    session_decision: TradingSessionDecision | None,
+    trade_journal: JsonlJournal,
+    loop_id: int | None = None,
+) -> None:
+    plan = TradePlan(
+        approved=False,
+        reason=reason,
+        symbol=symbol,
+        side=signal.action,
+    )
+    trade_journal.write(
+        'decision',
+        {
+            'symbol': symbol,
+            'snapshot': snapshot,
+            'candle': closed_candle,
+            'signal': signal,
+            'equity': None,
+            'trade_plan': plan,
+            'session_decision': session_decision,
+            'instrument_profile': risk_manager.instrument_profile_for(symbol),
+            'risk_profile': risk_manager.risk_profile_for(symbol),
+            'loop_id': loop_id,
+        },
+    )
     logger.debug('Trade rejected | symbol=%s | reason=%s', symbol, plan.reason)
     return None
