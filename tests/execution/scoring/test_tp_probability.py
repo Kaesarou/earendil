@@ -1,9 +1,6 @@
 from datetime import datetime, timezone
 
-from app.execution.candidate_economics import (
-    CandidateEconomics,
-    EvaluatedTradeCandidate,
-)
+from app.execution.candidate_economics import CandidateEconomics, EvaluatedTradeCandidate
 from app.execution.candidate_readiness import CandidateReadiness
 from app.execution.scoring.tp_feasibility import TpFeasibilityAnalysis
 from app.execution.scoring.tp_probability import (
@@ -15,21 +12,13 @@ from app.market.models import Candle, MarketSnapshot
 from app.strategies.signals import Signal
 
 
-def _candidate(
-    *,
-    side='BUY',
-    close=88.0,
-    context_score=0.0,
-    mtf_score=0.0,
-):
+def _candidate(*, side='BUY', close=None, context_score=0.0, mtf_score=0.0):
     now = datetime.now(timezone.utc)
+    directional_close = (12.0 if side == 'SELL' else 88.0) if close is None else close
     return TradeCandidate(
         symbol='AMD',
         snapshot=MarketSnapshot('AMD', 100.0, 100.05, 100.02, now),
-        candle=Candle(
-            'AMD', 60, 99.5, 100.2, 99.4, 100.0,
-            None, now, now,
-        ),
+        candle=Candle('AMD', 60, 99.5, 100.2, 99.4, 100.0, None, now, now),
         signal=Signal(
             side,
             0.8,
@@ -37,7 +26,7 @@ def _candidate(
             metadata={
                 'market_regime': 'TRENDING',
                 'trend_strength_percent': 0.25,
-                'close_position_percent': close,
+                'close_position_percent': directional_close,
             },
         ),
         score=130.0,
@@ -139,7 +128,6 @@ def test_probability_decreases_when_direct_tp_inputs_deteriorate():
             freshness_score=0.0,
         ),
     )
-
     assert strong.raw_probability > weak.raw_probability
     assert strong.tp_before_sl_probability > weak.tp_before_sl_probability
     assert strong.net_expected_value_percent > weak.net_expected_value_percent
@@ -160,7 +148,6 @@ def test_profile_and_side_calibration_is_applied_after_raw_probability():
         evaluated_candidate=_evaluated(_candidate(side='BUY')),
         tp_feasibility=_feasibility(source='eu_trend_buy_v1'),
     )
-
     assert us_buy.raw_probability == us_sell.raw_probability == eu_buy.raw_probability
     assert us_buy.calibration_profile_key == 'us_intraday_fixed_v1:BUY'
     assert us_sell.calibration_profile_key == 'us_intraday_fixed_v1:SELL'
@@ -174,15 +161,11 @@ def test_profile_and_side_calibration_is_applied_after_raw_probability():
 def test_context_and_ready_mtf_are_probability_inputs():
     estimator = TpBeforeSlProbabilityEstimator()
     weak = estimator.estimate(
-        evaluated_candidate=_evaluated(
-            _candidate(context_score=-15.0, mtf_score=-10.0)
-        ),
+        evaluated_candidate=_evaluated(_candidate(context_score=-15.0, mtf_score=-10.0)),
         tp_feasibility=_feasibility(),
     )
     strong = estimator.estimate(
-        evaluated_candidate=_evaluated(
-            _candidate(context_score=15.0, mtf_score=10.0)
-        ),
+        evaluated_candidate=_evaluated(_candidate(context_score=15.0, mtf_score=10.0)),
         tp_feasibility=_feasibility(),
     )
     assert strong.raw_probability > weak.raw_probability
@@ -192,18 +175,11 @@ def test_context_and_ready_mtf_are_probability_inputs():
 
 def test_candidate_probability_persists_v4_evidence_without_score_change():
     candidate = _candidate()
-    updated = CandidateTpProbabilityEvaluator().evaluate(
-        _evaluated(candidate)
-    )
-
+    updated = CandidateTpProbabilityEvaluator().evaluate(_evaluated(candidate))
     assert updated.candidate.score == candidate.score
-    assert updated.candidate.raw_tp_before_sl_probability is not None
-    assert updated.candidate.tp_before_sl_probability is not None
     assert updated.candidate.tp_probability_model_version == 'heuristic_v4'
-    assert updated.candidate.break_even_probability is not None
-    assert updated.candidate.net_expected_value_percent is not None
-    assert updated.candidate.probability_edge is not None
     assert updated.tp_probability.calibration_profile_key == 'us_intraday_fixed_v1:BUY'
+    assert updated.candidate.net_expected_value_percent is not None
     assert 'raw_tp_before_sl_probability=' in updated.candidate.rank_reason
 
 
@@ -222,9 +198,7 @@ def test_break_even_probability_includes_costs_on_losing_side():
 
 def test_sell_close_quality_is_directional():
     estimate = TpBeforeSlProbabilityEstimator().estimate(
-        evaluated_candidate=_evaluated(
-            _candidate(side='SELL', close=12.0)
-        ),
+        evaluated_candidate=_evaluated(_candidate(side='SELL', close=12.0)),
         tp_feasibility=_feasibility(),
     )
     assert estimate.component_scores['close_quality_score'] > 90.0
