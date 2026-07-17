@@ -13,7 +13,6 @@ from app.instruments.models import EntryDecisionConfig
 class CandidateSelectionConfig:
     top_n: int
     min_score: float
-    dynamic_min_score: float | None = None
 
 
 @dataclass(frozen=True)
@@ -194,13 +193,6 @@ def selection_threshold_for(
     evaluated_candidate: EvaluatedTradeCandidate,
     config: CandidateSelectionConfig,
 ) -> tuple[float, str]:
-    effective_sl_tp = evaluated_candidate.effective_sl_tp
-    if (
-        effective_sl_tp is not None
-        and effective_sl_tp.mode == 'dynamic'
-        and config.dynamic_min_score is not None
-    ):
-        return config.dynamic_min_score, 'dynamic_min_score'
     return config.min_score, 'min_score'
 
 

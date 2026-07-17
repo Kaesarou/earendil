@@ -8,6 +8,7 @@ from app.market.multi_timeframe import MultiTimeframeContext
 from app.market.session_rules import TradingSessionDecision
 from app.risk.risk_manager import RiskManager
 from app.risk.trade_cooldown_guard import TradeCooldownGuard
+from app.runtime.entry_horizon import evaluate_entry_horizon
 from app.runtime.pending_entry import PendingEntryEvent, PendingEntryManager
 from app.strategies.signals import Signal
 from app.utils.commons import spread_percent
@@ -41,6 +42,29 @@ def advance_pending_entry(
         return None
 
     risk_profile = risk_manager.risk_profile_for(symbol)
+    horizon = evaluate_entry_horizon(
+        risk_profile=risk_profile,
+        side=active_pending.side,
+        session_decision=session_decision,
+    )
+    if not horizon.allowed:
+        events = pending_manager.invalidate_symbol(symbol, horizon.reason)
+        write_pending_events(trade_journal, events)
+        trade_journal.write(
+            'entry_horizon_rejected',
+            {
+                'symbol': symbol,
+                'side': active_pending.side,
+                'pending_entry_id': active_pending.pending_entry_id,
+                'reason': horizon.reason,
+                'required_minutes': horizon.required_minutes,
+                'available_minutes': horizon.available_minutes,
+                'profile_key': horizon.profile_key,
+                'source': 'pending_confirmation',
+            },
+        )
+        return None
+
     cooldown_active = False
     if cooldown_guard is not None:
         cooldown_active = not cooldown_guard.check(

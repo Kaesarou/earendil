@@ -11,6 +11,9 @@ class EntryConfirmationConfig:
     retest_atr_multiplier: float = 0.50
     retest_spread_multiplier: float = 1.00
     retest_candle_range_multiplier: float = 0.25
+    structural_stop_atr_multiplier: float = 1.20
+    minimum_structural_stop_percent: float = 0.40
+    maximum_structural_stop_percent: float = 1.50
     min_reward_to_risk: float = 1.0
 
 
@@ -107,7 +110,11 @@ class EntryConfirmationEvaluator:
 
         return EntryConfirmationDecision(
             state=next_state,
-            reason='retest_detected' if next_state == 'retest_detected' else 'waiting_for_retest',
+            reason=(
+                'retest_detected'
+                if next_state == 'retest_detected'
+                else 'waiting_for_retest'
+            ),
             consecutive_closes=0,
             retest_extreme_price=retest_extreme,
             structural_invalidation_price=structure_extreme,
@@ -123,7 +130,9 @@ class EntryConfirmationEvaluator:
     ) -> float:
         atr_percent = self._float((signal.metadata or {}).get('atr_percent')) or 0.0
         candle_range_percent = (
-            ((candle.high - candle.low) / candle.open) * 100 if candle.open > 0 else 0.0
+            ((candle.high - candle.low) / candle.open) * 100
+            if candle.open > 0
+            else 0.0
         )
         return max(
             atr_percent * config.retest_atr_multiplier,
@@ -166,22 +175,50 @@ class EntryConfirmationEvaluator:
         tolerance_price: float,
     ) -> bool:
         if side == 'BUY':
-            return candle.low <= breakout_level + tolerance_price and candle.close >= breakout_level - tolerance_price
-        return candle.high >= breakout_level - tolerance_price and candle.close <= breakout_level + tolerance_price
+            return (
+                candle.low <= breakout_level + tolerance_price
+                and candle.close >= breakout_level - tolerance_price
+            )
+        return (
+            candle.high >= breakout_level - tolerance_price
+            and candle.close <= breakout_level + tolerance_price
+        )
 
-    def _continuation_candle(self, *, side: str, candle: Candle, breakout_level: float) -> bool:
+    def _continuation_candle(
+        self,
+        *,
+        side: str,
+        candle: Candle,
+        breakout_level: float,
+    ) -> bool:
         if side == 'BUY':
             return candle.close > candle.open and candle.close > breakout_level
         return candle.close < candle.open and candle.close < breakout_level
 
-    def _updated_retest_extreme(self, *, side: str, previous: float | None, candle: Candle) -> float:
+    def _updated_retest_extreme(
+        self,
+        *,
+        side: str,
+        previous: float | None,
+        candle: Candle,
+    ) -> float:
         current = candle.low if side == 'BUY' else candle.high
         if previous is None:
             return current
         return min(previous, current) if side == 'BUY' else max(previous, current)
 
-    def _updated_structure_extreme(self, *, side: str, previous: float | None, candle: Candle) -> float:
-        return self._updated_retest_extreme(side=side, previous=previous, candle=candle)
+    def _updated_structure_extreme(
+        self,
+        *,
+        side: str,
+        previous: float | None,
+        candle: Candle,
+    ) -> float:
+        return self._updated_retest_extreme(
+            side=side,
+            previous=previous,
+            candle=candle,
+        )
 
     def _float(self, value) -> float | None:
         try:

@@ -7,8 +7,6 @@ from app.risk.risk_manager import RiskManager
 from app.risk.trade_cost_model import TradeCostConfig
 from app.strategies.signals import Signal
 
-SESSION_KEY = 'test-session'
-
 
 class StubInstrumentRegistry(InstrumentRegistry):
     def __init__(self, risk_profile: RiskProfile):
@@ -24,21 +22,15 @@ class StubInstrumentRegistry(InstrumentRegistry):
 def risk_profile() -> RiskProfile:
     return RiskProfile(
         asset_class=AssetClass.EQUITY_US,
+        profile_key='us_test_fixed_v1',
         max_position_size_percent=1.0,
-        stop_loss_percent=0.9,
-        take_profit_percent=1.6,
+        stop_loss_percent=0.7,
+        take_profit_percent=1.2,
         force_close_enabled=False,
         force_close_hour=21,
         force_close_minute=55,
         max_spread_percent=1.0,
         min_move_spread_ratio=0.0,
-        dynamic_sl_tp_enabled=False,
-        stop_loss_atr_multiplier=1.0,
-        take_profit_atr_multiplier=2.0,
-        min_stop_loss_percent=0.0,
-        max_stop_loss_percent=2.0,
-        min_take_profit_percent=0.0,
-        max_take_profit_percent=3.0,
         breakeven_stop_enabled=True,
         breakeven_trigger_percent=0.6,
         breakeven_buffer_percent=0.05,
@@ -54,21 +46,16 @@ def risk_profile() -> RiskProfile:
     )
 
 
-def build_risk_manager(profile: RiskProfile) -> RiskManager:
-    return RiskManager(
+def test_risk_manager_propagates_net_breakeven_and_trailing_contract():
+    manager = RiskManager(
         settings=Settings(
             MAX_OPEN_POSITIONS=10,
             MAX_OPEN_POSITIONS_PER_SYMBOL=10,
             MAX_TRADES_PER_SESSION=10,
         ),
         position_sizing_strategy=FixedPercentPositionSizing(),
-        instrument_registry=StubInstrumentRegistry(profile),
+        instrument_registry=StubInstrumentRegistry(risk_profile()),
     )
-
-
-def test_risk_manager_keeps_breakeven_cost_aware_and_propagates_trailing_net_buffer():
-    manager = build_risk_manager(risk_profile())
-
     plan = manager.evaluate(
         signal=Signal(action='BUY', setup_quality=0.8, reason='test'),
         snapshot=MarketSnapshot.now(
@@ -78,15 +65,16 @@ def test_risk_manager_keeps_breakeven_cost_aware_and_propagates_trailing_net_buf
             last=100.0,
         ),
         account_equity=100_000.0,
-        session_key=SESSION_KEY,
+        session_key='test-session',
     )
 
     assert plan.approved is True
+    assert plan.profile_key == 'us_test_fixed_v1'
+    assert plan.estimated_total_cost_percent == 0.3
     assert plan.configured_breakeven_trigger_percent == 0.6
     assert plan.configured_breakeven_buffer_percent == 0.05
-    assert plan.estimated_total_cost_percent == 0.3
-    assert plan.breakeven_trigger_percent == 0.9
-    assert plan.breakeven_buffer_percent == 0.35
+    assert plan.breakeven_trigger_percent == 0.6
+    assert plan.breakeven_buffer_percent == 0.05
     assert plan.trailing_stop_trigger_percent == 1.0
     assert plan.trailing_stop_distance_percent == 0.45
     assert plan.trailing_stop_net_buffer_percent == 0.1

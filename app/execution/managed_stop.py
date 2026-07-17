@@ -26,35 +26,45 @@ def calculate_buy_managed_stop(
     trailing_stop_net_buffer_percent: float,
     estimated_total_cost_percent: float,
 ) -> ManagedStopDecision:
-    mfe_percent = _buy_mfe_percent(entry_price=entry_price, highest_price=highest_price)
+    mfe_percent = _buy_mfe_percent(
+        entry_price=entry_price,
+        highest_price=highest_price,
+    )
     stop_loss = current_stop_loss
     protection_type: str | None = None
     metadata: ManagedStopMetadata | None = None
 
     if breakeven_stop_enabled and mfe_percent >= breakeven_trigger_percent:
-        candidate_stop = entry_price * (1 + breakeven_buffer_percent / 100)
+        locked_gross_percent = (
+            estimated_total_cost_percent + breakeven_buffer_percent
+        )
+        candidate_stop = entry_price * (1 + locked_gross_percent / 100)
         if candidate_stop > stop_loss:
             stop_loss, protection_type, metadata = _build_decision_values(
                 side='BUY',
                 entry_price=entry_price,
                 previous_stop_loss=stop_loss,
                 candidate_stop=candidate_stop,
-                protection_type='break_even',
+                protection_type='net_breakeven',
                 estimated_total_cost_percent=estimated_total_cost_percent,
-                trailing_stop_net_buffer_percent=trailing_stop_net_buffer_percent,
+                trailing_stop_net_buffer_percent=breakeven_buffer_percent,
                 highest_price=highest_price,
                 lowest_price=lowest_price,
                 mfe_percent=mfe_percent,
             )
 
     if trailing_stop_enabled and mfe_percent >= trailing_stop_trigger_percent:
-        candidate_stop = highest_price * (1 - trailing_stop_distance_percent / 100)
+        candidate_stop = highest_price * (
+            1 - trailing_stop_distance_percent / 100
+        )
         if candidate_stop > stop_loss and _is_net_locked(
             side='BUY',
             entry_price=entry_price,
             candidate_stop=candidate_stop,
             estimated_total_cost_percent=estimated_total_cost_percent,
-            trailing_stop_net_buffer_percent=trailing_stop_net_buffer_percent,
+            trailing_stop_net_buffer_percent=(
+                trailing_stop_net_buffer_percent
+            ),
         ):
             stop_loss, protection_type, metadata = _build_decision_values(
                 side='BUY',
@@ -63,7 +73,9 @@ def calculate_buy_managed_stop(
                 candidate_stop=candidate_stop,
                 protection_type='trailing',
                 estimated_total_cost_percent=estimated_total_cost_percent,
-                trailing_stop_net_buffer_percent=trailing_stop_net_buffer_percent,
+                trailing_stop_net_buffer_percent=(
+                    trailing_stop_net_buffer_percent
+                ),
                 highest_price=highest_price,
                 lowest_price=lowest_price,
                 mfe_percent=mfe_percent,
@@ -91,35 +103,45 @@ def calculate_sell_managed_stop(
     trailing_stop_net_buffer_percent: float,
     estimated_total_cost_percent: float,
 ) -> ManagedStopDecision:
-    mfe_percent = _sell_mfe_percent(entry_price=entry_price, lowest_price=lowest_price)
+    mfe_percent = _sell_mfe_percent(
+        entry_price=entry_price,
+        lowest_price=lowest_price,
+    )
     stop_loss = current_stop_loss
     protection_type: str | None = None
     metadata: ManagedStopMetadata | None = None
 
     if breakeven_stop_enabled and mfe_percent >= breakeven_trigger_percent:
-        candidate_stop = entry_price * (1 - breakeven_buffer_percent / 100)
+        locked_gross_percent = (
+            estimated_total_cost_percent + breakeven_buffer_percent
+        )
+        candidate_stop = entry_price * (1 - locked_gross_percent / 100)
         if candidate_stop < stop_loss:
             stop_loss, protection_type, metadata = _build_decision_values(
                 side='SELL',
                 entry_price=entry_price,
                 previous_stop_loss=stop_loss,
                 candidate_stop=candidate_stop,
-                protection_type='break_even',
+                protection_type='net_breakeven',
                 estimated_total_cost_percent=estimated_total_cost_percent,
-                trailing_stop_net_buffer_percent=trailing_stop_net_buffer_percent,
+                trailing_stop_net_buffer_percent=breakeven_buffer_percent,
                 highest_price=highest_price,
                 lowest_price=lowest_price,
                 mfe_percent=mfe_percent,
             )
 
     if trailing_stop_enabled and mfe_percent >= trailing_stop_trigger_percent:
-        candidate_stop = lowest_price * (1 + trailing_stop_distance_percent / 100)
+        candidate_stop = lowest_price * (
+            1 + trailing_stop_distance_percent / 100
+        )
         if candidate_stop < stop_loss and _is_net_locked(
             side='SELL',
             entry_price=entry_price,
             candidate_stop=candidate_stop,
             estimated_total_cost_percent=estimated_total_cost_percent,
-            trailing_stop_net_buffer_percent=trailing_stop_net_buffer_percent,
+            trailing_stop_net_buffer_percent=(
+                trailing_stop_net_buffer_percent
+            ),
         ):
             stop_loss, protection_type, metadata = _build_decision_values(
                 side='SELL',
@@ -128,7 +150,9 @@ def calculate_sell_managed_stop(
                 candidate_stop=candidate_stop,
                 protection_type='trailing',
                 estimated_total_cost_percent=estimated_total_cost_percent,
-                trailing_stop_net_buffer_percent=trailing_stop_net_buffer_percent,
+                trailing_stop_net_buffer_percent=(
+                    trailing_stop_net_buffer_percent
+                ),
                 highest_price=highest_price,
                 lowest_price=lowest_price,
                 mfe_percent=mfe_percent,
@@ -141,7 +165,12 @@ def calculate_sell_managed_stop(
     )
 
 
-def locked_gross_percent(*, side: str, entry_price: float, stop_loss: float) -> float:
+def locked_gross_percent(
+    *,
+    side: str,
+    entry_price: float,
+    stop_loss: float,
+) -> float:
     if side == 'BUY':
         return ((stop_loss - entry_price) / entry_price) * 100
     if side == 'SELL':
@@ -162,8 +191,13 @@ def _is_net_locked(
         entry_price=entry_price,
         stop_loss=candidate_stop,
     )
-    estimated_net_locked_percent = gross_locked_percent - estimated_total_cost_percent
-    return estimated_net_locked_percent >= trailing_stop_net_buffer_percent
+    estimated_net_locked_percent = (
+        gross_locked_percent - estimated_total_cost_percent
+    )
+    return (
+        estimated_net_locked_percent
+        >= trailing_stop_net_buffer_percent
+    )
 
 
 def _build_decision_values(
@@ -189,9 +223,18 @@ def _build_decision_values(
         'new_stop_loss': round(candidate_stop, 5),
         'protection_type': protection_type,
         'gross_locked_percent': round(gross_locked_percent, 4),
-        'estimated_total_cost_percent': round(estimated_total_cost_percent, 4),
-        'estimated_net_locked_percent': round(gross_locked_percent - estimated_total_cost_percent, 4),
-        'trailing_stop_net_buffer_percent': round(trailing_stop_net_buffer_percent, 4),
+        'estimated_total_cost_percent': round(
+            estimated_total_cost_percent,
+            4,
+        ),
+        'estimated_net_locked_percent': round(
+            gross_locked_percent - estimated_total_cost_percent,
+            4,
+        ),
+        'trailing_stop_net_buffer_percent': round(
+            trailing_stop_net_buffer_percent,
+            4,
+        ),
         'highest_price': round(highest_price, 5),
         'lowest_price': round(lowest_price, 5),
         'mfe_percent': round(mfe_percent, 4),
