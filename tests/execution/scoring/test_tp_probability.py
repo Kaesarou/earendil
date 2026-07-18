@@ -173,11 +173,11 @@ def test_context_and_ready_mtf_are_probability_inputs():
     assert strong.component_scores['multi_timeframe_score'] == 100.0
 
 
-def test_candidate_probability_persists_v4_evidence_without_score_change():
+def test_candidate_probability_persists_v5_evidence_without_score_change():
     candidate = _candidate()
     updated = CandidateTpProbabilityEvaluator().evaluate(_evaluated(candidate))
     assert updated.candidate.score == candidate.score
-    assert updated.candidate.tp_probability_model_version == 'heuristic_v4'
+    assert updated.candidate.tp_probability_model_version == 'heuristic_v5'
     assert updated.tp_probability.calibration_profile_key == 'us_intraday_fixed_v1:BUY'
     assert updated.candidate.net_expected_value_percent is not None
     assert 'raw_tp_before_sl_probability=' in updated.candidate.rank_reason

@@ -7,7 +7,7 @@ from app.instruments.models import EntryDecisionConfig
 from app.market.market_context import ContextAlignment
 
 
-ENTRY_DECISION_MODEL_VERSION = 'entry_router_v5'
+ENTRY_DECISION_MODEL_VERSION = 'entry_router_v6'
 
 
 class EntryAction(StrEnum):
@@ -89,17 +89,31 @@ class EntryDecisionEngine:
             )
 
         extension_percent, retest_level = _extension_from_reference(candidate)
+        effective_take_profit_percent = _effective_take_profit_percent(
+            evaluated_candidate
+        )
+        extension_to_tp_ratio = _ratio(
+            extension_percent,
+            effective_take_profit_percent,
+        )
         structural_retest_score = _structural_retest_score(candidate)
         retest_eligible = (
             retest_level is not None
-            and extension_percent is not None
-            and extension_percent >= config.moderate_extension_percent
+            and extension_to_tp_ratio is not None
+            and extension_to_tp_ratio >= config.minimum_extension_to_tp_ratio
             and structural_retest_score
             >= config.minimum_structural_retest_score
         )
         diagnostics.update(
             {
                 'extension_percent': _round_optional(extension_percent),
+                'effective_take_profit_percent': _round_optional(
+                    effective_take_profit_percent
+                ),
+                'extension_to_tp_ratio': _round_optional(extension_to_tp_ratio),
+                'minimum_extension_to_tp_ratio': (
+                    config.minimum_extension_to_tp_ratio
+                ),
                 'retest_level': _round_optional(retest_level),
                 'structural_retest_score': _round_optional(
                     structural_retest_score
@@ -191,6 +205,33 @@ def _extension_from_reference(
     else:
         return None, level
     return max(0.0, extension), level
+
+
+def _effective_take_profit_percent(
+    evaluated_candidate: EvaluatedTradeCandidate,
+) -> float | None:
+    value = getattr(
+        evaluated_candidate.tp_feasibility,
+        'effective_take_profit_percent',
+        None,
+    )
+    if value is None:
+        value = getattr(
+            evaluated_candidate.economics,
+            'effective_take_profit_percent',
+            None,
+        )
+    try:
+        parsed = float(value)
+    except (TypeError, ValueError):
+        return None
+    return parsed if parsed > 0 else None
+
+
+def _ratio(numerator: float | None, denominator: float | None) -> float | None:
+    if numerator is None or denominator is None or denominator <= 0:
+        return None
+    return numerator / denominator
 
 
 def _structural_retest_score(candidate) -> float:

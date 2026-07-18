@@ -7,7 +7,7 @@ from app.market.multi_timeframe import MultiTimeframeContext
 from app.market.timeframes import TimeframeDirection, TimeframeMaturity
 
 
-MULTI_TIMEFRAME_SCORER_VERSION = 'multi_timeframe_score_v1'
+MULTI_TIMEFRAME_SCORER_VERSION = 'multi_timeframe_score_v2'
 
 
 @dataclass(frozen=True)
@@ -19,11 +19,11 @@ class MultiTimeframeScore:
 
 
 _READY_WEIGHTS = {
-    'm5': 4.0,
-    'm15': 6.0,
-    'm30': 2.0,
+    'm5': 3.0,
+    'm15': 0.0,
+    'm30': 0.0,
 }
-_MAXIMUM_ABSOLUTE_SCORE = 10.0
+_MAXIMUM_ABSOLUTE_SCORE = 3.0
 
 
 def score_multi_timeframe(
@@ -47,6 +47,8 @@ def score_multi_timeframe(
         if feature is None or maturity != TimeframeMaturity.READY:
             continue
         ready_timeframes.append(timeframe)
+        if weight == 0.0:
+            continue
         components[timeframe] = _direction_component(
             feature.direction,
             direction,
@@ -69,6 +71,8 @@ def score_multi_timeframe(
             'side': side.strip().upper(),
             'ready_timeframes': ready_timeframes,
             'ready_alignment': context.ready_alignment.value,
+            'live_timeframes': ['m5'],
+            'diagnostic_timeframes': ['m15', 'm30', 'h1'],
             'provisional_timeframes_ignored': [
                 timeframe
                 for timeframe, maturity in context.maturity_by_timeframe.items()

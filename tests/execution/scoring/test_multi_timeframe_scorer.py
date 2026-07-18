@@ -61,7 +61,7 @@ def context(features):
     )
 
 
-def test_ready_m5_m15_m30_contribute_with_documented_weights():
+def test_only_ready_m5_contributes_to_live_score():
     result = score_multi_timeframe(
         context=context(
             {
@@ -79,8 +79,8 @@ def test_ready_m5_m15_m30_contribute_with_documented_weights():
         side='BUY',
     )
 
-    assert result.components == {'m5': 4.0, 'm15': 6.0, 'm30': -2.0}
-    assert result.score == 8.0
+    assert result.components == {'m5': 3.0, 'm15': 0.0, 'm30': 0.0}
+    assert result.score == 3.0
 
 
 def test_provisional_and_h1_do_not_change_live_score():
@@ -119,8 +119,8 @@ def test_sell_direction_inverts_ready_timeframe_contributions():
     buy = score_multi_timeframe(context=mtf_context, side='BUY')
     sell = score_multi_timeframe(context=mtf_context, side='SELL')
 
-    assert buy.score == -10.0
-    assert sell.score == 10.0
+    assert buy.score == -3.0
+    assert sell.score == 3.0
 
 
 def test_missing_context_is_neutral():

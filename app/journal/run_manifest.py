@@ -110,7 +110,7 @@ def build_run_manifest(
     actual_manifest_path = manifest_path or settings.run_manifest_path
     actual_summary_path = summary_path or settings.daily_summary_path
     return {
-        'schema_version': 8,
+        'schema_version': 9,
         'run_id': run_id,
         'status': 'running',
         'started_at': started_at,
@@ -192,6 +192,8 @@ def build_run_manifest(
                 'base_score',
                 'directional_score',
                 'market_context_score',
+                'raw_market_context_score',
+                'effective_market_context_contribution',
                 'market_context_components',
                 'multi_timeframe_score',
                 'multi_timeframe_components',
@@ -201,6 +203,7 @@ def build_run_manifest(
                 'entry_freshness_score',
                 'entry_route_action',
                 'entry_route_reason',
+                'extension_to_tp_ratio',
                 'selection_outcome',
                 'selection_reason',
                 'raw_tp_before_sl_probability',

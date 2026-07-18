@@ -1,4 +1,3 @@
-import math
 from dataclasses import dataclass, replace
 
 from app.execution.candidate_economics import EvaluatedTradeCandidate
@@ -208,14 +207,11 @@ def rank_evaluated_trade_candidates(
 
 def _evaluated_candidate_ranking_key(
     evaluated_candidate: EvaluatedTradeCandidate,
-) -> tuple[float, float, float, float]:
+) -> tuple[float, float, float]:
     candidate = evaluated_candidate.candidate
-    score = candidate.score
-    score_bucket = math.floor(score / 5) * 5
-    net_expected_value = candidate.net_expected_value_percent
-    return (
-        score_bucket,
-        net_expected_value if net_expected_value is not None else -999.0,
-        evaluated_candidate.economics.expected_net_profit,
-        score,
+    feasibility_score = (
+        candidate.tp_feasibility_score
+        if candidate.tp_feasibility_score is not None
+        else -1.0
     )
+    return candidate.score, feasibility_score, candidate.directional_score

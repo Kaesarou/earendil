@@ -129,7 +129,8 @@ def evaluated(
         tp_feasibility=SimpleNamespace(
             tp_feasibility_hard_rejection_reason=(
                 hard_rejection_reason
-            )
+            ),
+            effective_take_profit_percent=1.0,
         ),
     )
 

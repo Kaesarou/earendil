@@ -34,10 +34,10 @@ class TpFeasibilityConfig:
     bad_cost_to_tp_ratio: float = 1.00
     good_movement_consumed_to_tp_ratio: float = 0.50
     bad_movement_consumed_to_tp_ratio: float = 2.00
-    tp_vs_atr_weight: float = 0.30
-    tp_vs_momentum_weight: float = 0.25
-    cost_vs_tp_weight: float = 0.30
-    entry_freshness_weight: float = 0.15
+    tp_vs_atr_weight: float = 0.35
+    tp_vs_momentum_weight: float = 0.30
+    cost_vs_tp_weight: float = 0.35
+    entry_freshness_weight: float = 0.0
     maximum_score_contribution: float = 15.0
     cost_to_tp_hard_reject_ratio: float = 1.0
 
@@ -68,7 +68,7 @@ class MarketContextConfig:
 
 @dataclass(frozen=True)
 class EntryDecisionConfig:
-    moderate_extension_percent: float = 0.12
+    minimum_extension_to_tp_ratio: float = 0.20
     minimum_structural_retest_score: float = 25.0
     maximum_retest_candles: int = 5
 
