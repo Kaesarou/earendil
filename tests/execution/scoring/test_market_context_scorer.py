@@ -90,7 +90,7 @@ def test_relative_strength_compensation_is_progressive_before_its_cap():
     assert results[0].score < results[1].score < results[2].score
 
 
-def test_consumed_move_limits_positive_relative_strength_compensation():
+def test_freshness_is_diagnostic_for_context_scoring():
     fresh = score_market_context(
         context=context(relative_strength=3.5),
         side='BUY',
@@ -106,9 +106,9 @@ def test_consumed_move_limits_positive_relative_strength_compensation():
         side='BUY',
     )
 
-    assert fresh.score > consumed.score
-    assert consumed.score < 0
-    assert preliminary.components['relative_strength_adjustment'] == 0.0
+    assert fresh.score == consumed.score == preliminary.score
+    assert fresh.components == consumed.components == preliminary.components
+    assert consumed.diagnostics['entry_freshness_used_in_live_score'] is False
 
 
 def test_sell_direction_inverts_background_and_relative_strength():
@@ -144,6 +144,6 @@ def test_context_score_is_bounded_and_missing_context_is_neutral():
     )
     missing = score_market_context(context=None, side='BUY')
 
-    assert -15.0 <= extreme.score <= 15.0
+    assert -4.0 <= extreme.score <= 4.0
     assert missing.score == 0.0
     assert all(value == 0.0 for value in missing.components.values())

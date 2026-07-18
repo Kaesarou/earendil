@@ -367,7 +367,7 @@ class DailySummaryAggregator:
         gap_total = sum(self.candle_gaps_by_symbol.values())
         blocked_spread_count = len(self.pending_blocked_spread_values)
         return {
-            'schema_version': 6,
+            'schema_version': 9,
             'run_id': self.run_id,
             'strategy': self.strategy,
             'profile': self.profile,

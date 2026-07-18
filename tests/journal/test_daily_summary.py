@@ -68,7 +68,7 @@ def test_summary_separates_entry_route_selection_and_risk():
     )
 
     data = summary.to_dict()
-    assert data['schema_version'] == 6
+    assert data['schema_version'] == 9
     assert data['entry_routing']['ready_for_selection'] == 1
     assert data['entry_routing']['wait_for_retest'] == 1
     assert data['decision_pipeline']['unique_candidates'] == 2

@@ -8,7 +8,7 @@ from app.execution.scoring.tp_feasibility import TpFeasibilityAnalysis
 from app.execution.trade_candidate import TradeCandidate
 
 
-TP_PROBABILITY_MODEL_VERSION = 'heuristic_v4'
+TP_PROBABILITY_MODEL_VERSION = 'heuristic_v5'
 
 
 @dataclass(frozen=True)
@@ -29,8 +29,8 @@ class TpProbabilityConfig:
     strong_trend_strength_percent: float = 0.30
     weak_close_quality_percent: float = 55.0
     strong_close_quality_percent: float = 90.0
-    maximum_context_score: float = 15.0
-    maximum_multi_timeframe_score: float = 10.0
+    maximum_context_score: float = 4.0
+    maximum_multi_timeframe_score: float = 3.0
 
     def base_rate_for(self, profile_key: str) -> float:
         rates = self.calibration_base_rates or {
@@ -93,9 +93,6 @@ class TpBeforeSlProbabilityEstimator:
                 self.config.good_tp_to_momentum_ratio,
                 self.config.bad_tp_to_momentum_ratio, missing,
             ),
-            'entry_freshness_score': _bounded(
-                tp_feasibility.entry_freshness_score, 0.0, 100.0
-            ),
             'trend_score': self._low_is_bad(
                 'trend_strength_percent',
                 abs(_optional_float(metadata.get('trend_strength_percent')) or 0.0),
@@ -118,15 +115,14 @@ class TpBeforeSlProbabilityEstimator:
             ),
         }
         raw_score = (
-            0.14 * scores['cost_score']
-            + 0.12 * scores['atr_distance_score']
-            + 0.16 * scores['momentum_distance_score']
-            + 0.14 * scores['entry_freshness_score']
-            + 0.10 * scores['trend_score']
-            + 0.08 * scores['close_quality_score']
-            + 0.06 * scores['regime_score']
-            + 0.10 * scores['market_context_score']
-            + 0.10 * scores['multi_timeframe_score']
+            0.20 * scores['cost_score']
+            + 0.17 * scores['atr_distance_score']
+            + 0.22 * scores['momentum_distance_score']
+            + 0.14 * scores['trend_score']
+            + 0.10 * scores['close_quality_score']
+            + 0.07 * scores['regime_score']
+            + 0.04 * scores['market_context_score']
+            + 0.06 * scores['multi_timeframe_score']
         )
         raw_probability = _bounded(
             self.config.raw_base_probability

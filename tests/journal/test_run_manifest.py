@@ -19,7 +19,7 @@ from app.journal.run_manifest import (
 from app.strategies.balanced_strategy_config import BalancedStrategyConfig
 
 
-def test_run_manifest_captures_pr5c_contract_without_broker_secrets():
+def test_run_manifest_captures_pr5d_contract_without_broker_secrets():
     settings = Settings(
         WATCHLIST='AAPL',
         EQUITY_US_SYMBOLS='AAPL',
@@ -40,7 +40,7 @@ def test_run_manifest_captures_pr5c_contract_without_broker_secrets():
     )
 
     snapshot = manifest['runtime']['settings']
-    assert manifest['schema_version'] == 8
+    assert manifest['schema_version'] == 9
     assert 'ETORO_API_KEY' not in snapshot
     assert 'ETORO_USER_KEY' not in snapshot
     assert manifest['strategy']['profile'] == 'balanced'
@@ -54,10 +54,13 @@ def test_run_manifest_captures_pr5c_contract_without_broker_secrets():
         'pending_entry_id',
         'profile_key',
         'market_context_score',
+        'raw_market_context_score',
+        'effective_market_context_contribution',
         'multi_timeframe_score',
         'tp_feasibility_score',
         'movement_consumed_to_tp_ratio',
         'entry_freshness_score',
+        'extension_to_tp_ratio',
         'raw_tp_before_sl_probability',
         'tp_before_sl_probability',
         'calibration_profile_key',
@@ -66,15 +69,15 @@ def test_run_manifest_captures_pr5c_contract_without_broker_secrets():
     ):
         assert field in fields
     assert manifest['models']['entry_decision'] == ENTRY_DECISION_MODEL_VERSION
-    assert manifest['models']['entry_decision'] == 'entry_router_v5'
+    assert manifest['models']['entry_decision'] == 'entry_router_v6'
     assert manifest['models']['market_context_score'] == MARKET_CONTEXT_SCORER_VERSION
-    assert manifest['models']['market_context_score'] == 'market_context_score_v2'
+    assert manifest['models']['market_context_score'] == 'market_context_score_v3'
     assert manifest['models']['multi_timeframe_score'] == MULTI_TIMEFRAME_SCORER_VERSION
-    assert manifest['models']['multi_timeframe_score'] == 'multi_timeframe_score_v1'
+    assert manifest['models']['multi_timeframe_score'] == 'multi_timeframe_score_v2'
     assert manifest['models']['tp_feasibility'] == TP_FEASIBILITY_MODEL_VERSION
-    assert manifest['models']['tp_feasibility'] == 'tp_feasibility_score_v3'
+    assert manifest['models']['tp_feasibility'] == 'tp_feasibility_score_v4'
     assert manifest['models']['tp_probability'] == TP_PROBABILITY_MODEL_VERSION
-    assert manifest['models']['tp_probability'] == 'heuristic_v4'
+    assert manifest['models']['tp_probability'] == 'heuristic_v5'
     assert manifest['models']['multi_timeframe'] == 'multi_timeframe_features_v2'
     assert manifest['runtime']['multi_timeframe']['supported_timeframes_seconds'] == [60, 300, 900, 1800, 3600]
     assert manifest['code']['source_sha256']

@@ -31,9 +31,9 @@ Goblin currently includes:
 - canonical fixed M1 candles and deterministic M5/M15/M30/H1 bars;
 - explicit timeframe maturity: `UNAVAILABLE`, `PROVISIONAL`, `READY`;
 - context-only benchmark instruments: `Crypto10`, `SPX500`, `FRA40`;
-- benchmark, breadth, sector and freshness-gated relative-strength scoring;
+- benchmark, breadth, sector and compressed relative-strength scoring;
 - deterministic BUY and SELL trend/breakout signals;
-- TP-aware feasibility and entry-freshness scoring;
+- three-factor TP feasibility with diagnostic entry freshness;
 - profile-and-side-calibrated TP-before-SL probability and net expectancy;
 - structural retest pending entries with deterministic lineage;
 - fixed named SL/TP profiles and structural pending stops;
@@ -76,8 +76,8 @@ flowchart TD
 ```text
 final score
 = directional setup score
-+ freshness-gated market-context contribution
-+ READY multi-timeframe contribution
++ compressed market-context contribution [-4, +4]
++ READY M5 contribution [-3, +3]
 + TP-feasibility contribution
 ```
 
@@ -92,7 +92,7 @@ movement_consumed_to_tp_ratio
 = directional session move / effective TP
 ```
 
-The ratio becomes a continuous `entry_freshness_score` from 0 to 100. It is a probabilistic input, never a standalone veto.
+The ratio becomes a continuous `entry_freshness_score` from 0 to 100. It is retained for diagnosis and counterfactual analysis, but has no live score or probability weight.
 
 ### Market context
 
@@ -113,7 +113,7 @@ strong relative strength + consumed move
 → limited compensation
 ```
 
-A contrary benchmark is never a veto. Context is bounded to `[-15, +15]`.
+A contrary benchmark is never a veto. The raw context remains bounded to `[-15, +15]`; its live contribution is `clip(raw × 0.25, -4, +4)`.
 
 ### Multi-timeframe contribution
 
@@ -121,24 +121,24 @@ Only `READY` observations contribute:
 
 | Timeframe | Aligned | Opposed |
 |---|---:|---:|
-| M5 | +4 | -4 |
-| M15 | +6 | -6 |
-| M30 | +2 | -2 |
+| M5 | +3 | -3 |
+| M15 | 0 | 0 |
+| M30 | 0 | 0 |
 | H1 | 0 | 0 |
 | `PROVISIONAL` | 0 | 0 |
 
-The total remains bounded to `[-10, +10]`. These initial weights are calibration parameters, not proven constants.
+Only M5 affects the live score, bounded to `[-3, +3]`. M15, M30 and H1 remain fully journalled diagnostics.
 
 ### TP feasibility
 
-`tp_feasibility_score_v3` combines:
+`tp_feasibility_score_v4` combines:
 
 | Component | Weight |
 |---|---:|
-| TP versus ATR | 30% |
-| TP versus recent momentum | 25% |
-| Estimated costs versus TP | 30% |
-| TP-aware entry freshness | 15% |
+| TP versus ATR | 35% |
+| TP versus recent momentum | 30% |
+| Estimated costs versus TP | 35% |
+| TP-aware entry freshness | 0% — diagnostic only |
 
 It contributes between `-15` and `+15`. The only feasibility hard reject is:
 
@@ -148,16 +148,15 @@ estimated total costs >= gross TP distance
 
 ## Probability and ranking
 
-`heuristic_v4` uses direct components once each:
+`heuristic_v5` uses direct components once each:
 
 - cost/TP;
 - TP/ATR;
 - TP/momentum;
-- entry freshness;
 - trend and close quality;
 - regime;
 - final context;
-- READY MTF.
+- READY M5.
 
 Calibration is keyed by the named profile and side, for example:
 
@@ -168,7 +167,7 @@ eu_trend_buy_v1:BUY
 eu_intraday_fixed_v1:SELL
 ```
 
-The model exposes raw probability, calibrated probability, break-even probability, probability edge and net expected value. EV ranks candidates inside the same five-point score bucket but is not a veto.
+The model exposes raw probability, calibrated probability, break-even probability, probability edge and net expected value. EV remains diagnostic and is not a veto. Live ranking uses exact score, then TP feasibility, then directional score.
 
 ## Fixed V1 profiles
 
@@ -244,7 +243,7 @@ python -m app.main
 
 ## Analysis contract
 
-PR5-C uses summary and run-manifest schema **v8**. Standalone `entry_decision` records include:
+PR5-D uses summary and run-manifest schema **v9**. Standalone `entry_decision` records include:
 
 - deterministic candidate/pending lineage;
 - named profile and effective SL/TP;

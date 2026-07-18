@@ -253,7 +253,7 @@ def test_negative_feasibility_contribution_is_rejected_only_by_visible_score():
     )
 
 
-def test_calibrated_ev_breaks_ties_inside_same_score_bucket():
+def test_exact_score_ranks_before_diagnostic_ev():
     base = candidate('BASE')
     lower_ev = evaluated_candidate_with_profit(
         replace(
@@ -275,6 +275,6 @@ def test_calibrated_ev_breaks_ties_inside_same_score_bucket():
     ranked = rank_evaluated_trade_candidates([lower_ev, higher_ev])
 
     assert [item.candidate.symbol for item in ranked] == [
-        'HIGH_EV',
         'LOW_EV',
+        'HIGH_EV',
     ]

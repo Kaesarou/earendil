@@ -8,7 +8,7 @@ from app.instruments.models import AssetClass
 from app.market.market_context import CandidateMarketContext
 
 
-MARKET_CONTEXT_SCORER_VERSION = 'market_context_score_v2'
+MARKET_CONTEXT_SCORER_VERSION = 'market_context_score_v3'
 
 
 @dataclass(frozen=True)
@@ -21,7 +21,9 @@ class MarketContextScoreConfig:
     benchmark_session_scale_percent: float
     benchmark_momentum_scale_percent: float
     relative_strength_scale_percent: float
-    maximum_absolute_score: float = 15.0
+    maximum_absolute_raw_score: float = 15.0
+    effective_score_scale: float = 0.25
+    maximum_absolute_effective_score: float = 4.0
     favorable_background_relative_bonus: float = 4.0
     opposed_background_excess_bonus: float = 2.0
     maximum_negative_relative_adjustment: float = 8.0
@@ -123,8 +125,17 @@ def score_market_context(
     relative_strength_adjustment = _relative_strength_adjustment(
         raw_adjustment=relative_strength_raw,
         market_background=market_background,
-        entry_freshness_score=entry_freshness_score,
         config=config,
+    )
+    raw_score = _clamp(
+        market_background + relative_strength_adjustment,
+        -config.maximum_absolute_raw_score,
+        config.maximum_absolute_raw_score,
+    )
+    score = _clamp(
+        raw_score * config.effective_score_scale,
+        -config.maximum_absolute_effective_score,
+        config.maximum_absolute_effective_score,
     )
     components = {
         'benchmark_session': round(benchmark_session, 4),
@@ -133,16 +144,10 @@ def score_market_context(
         'sector': round(sector, 4),
         'market_background': round(market_background, 4),
         'relative_strength_raw': round(relative_strength_raw, 4),
-        'relative_strength_adjustment': round(
-            relative_strength_adjustment,
-            4,
-        ),
+        'relative_strength_adjustment': round(relative_strength_adjustment, 4),
+        'raw_market_context_score': round(raw_score, 4),
+        'effective_market_context_contribution': round(score, 4),
     }
-    score = _clamp(
-        market_background + relative_strength_adjustment,
-        -config.maximum_absolute_score,
-        config.maximum_absolute_score,
-    )
     return MarketContextScore(
         score=round(score, 4),
         components=components,
@@ -169,9 +174,10 @@ def score_market_context(
             'entry_freshness_factor': _freshness_factor(
                 entry_freshness_score
             ),
-            'finalized_with_entry_freshness': (
-                entry_freshness_score is not None
-            ),
+            'raw_market_context_score': round(raw_score, 4),
+            'effective_market_context_contribution': round(score, 4),
+            'effective_score_scale': config.effective_score_scale,
+            'entry_freshness_used_in_live_score': False,
         },
     )
 
@@ -180,20 +186,17 @@ def _relative_strength_adjustment(
     *,
     raw_adjustment: float,
     market_background: float,
-    entry_freshness_score: float | None,
     config: MarketContextScoreConfig,
 ) -> float:
-    freshness = _freshness_factor(entry_freshness_score)
-    gated_adjustment = raw_adjustment * freshness
-    if gated_adjustment >= 0:
+    if raw_adjustment >= 0:
         maximum_positive = (
             abs(market_background) + config.opposed_background_excess_bonus
             if market_background < 0
             else config.favorable_background_relative_bonus
         )
-        return min(gated_adjustment, maximum_positive)
+        return min(raw_adjustment, maximum_positive)
     return max(
-        gated_adjustment,
+        raw_adjustment,
         -config.maximum_negative_relative_adjustment,
     )
 
@@ -213,6 +216,8 @@ def _empty_components() -> dict[str, float]:
         'market_background': 0.0,
         'relative_strength_raw': 0.0,
         'relative_strength_adjustment': 0.0,
+        'raw_market_context_score': 0.0,
+        'effective_market_context_contribution': 0.0,
     }
 
 
