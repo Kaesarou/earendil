@@ -276,24 +276,49 @@ def reconcile_externally_closed_positions(
     trade_journal: JsonlJournal,
     is_broker_authorization_error: BrokerAuthorizationErrorChecker,
 ) -> None:
-    for position in position_tracker.open_positions_snapshot():
-        try:
-            if broker.is_position_open(position.position_id):
-                continue
-        except Exception as exc:
-            if is_broker_authorization_error(exc):
-                raise
-            logger.exception(
-                'Position reconciliation check failed | position_id=%s | '
-                'symbol=%s | error=%s',
+    positions = position_tracker.open_positions_snapshot()
+    if not positions:
+        return
+    try:
+        open_states = broker.get_position_open_states(
+            [position.position_id for position in positions]
+        )
+    except Exception as exc:
+        if is_broker_authorization_error(exc):
+            raise
+        logger.exception(
+            'Position reconciliation snapshot failed | position_count=%s | '
+            'error=%s',
+            len(positions),
+            exc,
+        )
+        trade_journal.write(
+            'position_reconciliation_warning',
+            {
+                'positions': positions,
+                'position_count': len(positions),
+                'message': str(exc),
+            },
+        )
+        return
+
+    for position in positions:
+        if position.position_id not in open_states:
+            logger.error(
+                'Position reconciliation state missing | position_id=%s | '
+                'symbol=%s',
                 position.position_id,
                 position.symbol,
-                exc,
             )
             trade_journal.write(
                 'position_reconciliation_warning',
-                {'position': position, 'message': str(exc)},
+                {
+                    'position': position,
+                    'message': 'broker_position_state_missing',
+                },
             )
+            continue
+        if open_states[position.position_id]:
             continue
         removed_position = position_tracker.remove_position(
             position.position_id
@@ -365,64 +390,86 @@ def restore_persisted_positions(
         'Restoring persisted open positions | count=%s',
         len(restored_positions),
     )
-    for position in restored_positions:
-        try:
-            if not broker.is_position_open(position.position_id):
-                closed_at = datetime.now(timezone.utc)
-                logger.warning(
-                    'Persisted position no longer open at broker | '
-                    'position_id=%s | symbol=%s',
-                    position.position_id,
-                    position.symbol,
-                )
-                position_store.delete_open_position(position.position_id)
-                if cooldown_store is not None:
-                    register_trade_cooldown_for_missing_position(
-                        position=position,
-                        closed_at=closed_at,
-                        risk_manager=risk_manager,
-                        cooldown_store=cooldown_store,
-                        trade_journal=trade_journal,
-                    )
-                trade_journal.write(
-                    'position_reconciled_closed',
-                    {
-                        'source': 'startup_broker_reconciliation',
-                        'position': position,
-                        'closed_at': closed_at,
-                    },
-                )
-                continue
-        except Exception as exc:
-            if is_broker_authorization_error(exc):
-                logger.critical(
-                    'Broker authorization failed during position '
-                    'reconciliation. Stopping before restoring unverified '
-                    'positions | position_id=%s | symbol=%s | error=%s',
-                    position.position_id,
-                    position.symbol,
-                    exc,
-                )
-                trade_journal.write(
-                    'broker_authorization_error',
-                    {
-                        'stage': 'position_reconciliation',
-                        'position': position,
-                        'message': str(exc),
-                    },
-                )
-                raise
-            logger.exception(
-                'Position reconciliation check failed | position_id=%s | '
-                'symbol=%s | error=%s',
-                position.position_id,
-                position.symbol,
+    open_states: dict[str, bool] | None
+    try:
+        open_states = broker.get_position_open_states(
+            [position.position_id for position in restored_positions]
+        )
+    except Exception as exc:
+        if is_broker_authorization_error(exc):
+            logger.critical(
+                'Broker authorization failed during position reconciliation. '
+                'Stopping before restoring unverified positions | count=%s | '
+                'error=%s',
+                len(restored_positions),
                 exc,
             )
             trade_journal.write(
-                'position_reconciliation_warning',
-                {'position': position, 'message': str(exc)},
+                'broker_authorization_error',
+                {
+                    'stage': 'position_reconciliation',
+                    'positions': restored_positions,
+                    'message': str(exc),
+                },
             )
+            raise
+        logger.exception(
+            'Position reconciliation snapshot failed during restore | '
+            'position_count=%s | error=%s',
+            len(restored_positions),
+            exc,
+        )
+        trade_journal.write(
+            'position_reconciliation_warning',
+            {
+                'positions': restored_positions,
+                'position_count': len(restored_positions),
+                'message': str(exc),
+            },
+        )
+        open_states = None
+
+    for position in restored_positions:
+        if open_states is not None and position.position_id not in open_states:
+            logger.error(
+                'Position reconciliation state missing during restore | '
+                'position_id=%s | symbol=%s',
+                position.position_id,
+                position.symbol,
+            )
+            trade_journal.write(
+                'position_reconciliation_warning',
+                {
+                    'position': position,
+                    'message': 'broker_position_state_missing',
+                },
+            )
+        elif open_states is not None and not open_states[position.position_id]:
+            closed_at = datetime.now(timezone.utc)
+            logger.warning(
+                'Persisted position no longer open at broker | '
+                'position_id=%s | symbol=%s',
+                position.position_id,
+                position.symbol,
+            )
+            position_store.delete_open_position(position.position_id)
+            if cooldown_store is not None:
+                register_trade_cooldown_for_missing_position(
+                    position=position,
+                    closed_at=closed_at,
+                    risk_manager=risk_manager,
+                    cooldown_store=cooldown_store,
+                    trade_journal=trade_journal,
+                )
+            trade_journal.write(
+                'position_reconciled_closed',
+                {
+                    'source': 'startup_broker_reconciliation',
+                    'position': position,
+                    'closed_at': closed_at,
+                },
+            )
+            continue
         position_tracker.restore_open_position(position)
         risk_manager.restore_open_position(position.symbol)
         if hasattr(broker, 'remember_position_instrument'):

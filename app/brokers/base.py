@@ -42,6 +42,21 @@ class BrokerClient(ABC):
     def is_position_open(self, position_id: str) -> bool:
         raise NotImplementedError
 
+    def get_position_open_states(
+        self,
+        position_ids: list[str],
+    ) -> dict[str, bool]:
+        """Return broker open/closed state for each requested position.
+
+        Brokers with a portfolio endpoint should override this method so one
+        portfolio snapshot can answer every position lookup. The default keeps
+        existing broker implementations compatible.
+        """
+        return {
+            position_id: self.is_position_open(position_id)
+            for position_id in position_ids
+        }
+
     def remember_position_instrument(self, position_id: str, symbol: str) -> None:
         """Optional hook for brokers that must restore local position metadata.
 

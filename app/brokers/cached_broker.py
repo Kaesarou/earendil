@@ -57,6 +57,48 @@ class CachedBrokerClient(BrokerClient):
         self._put_cache_entry(self.position_status_cache, position_id, is_open, self.position_status_ttl_seconds)
         return is_open
 
+    def get_position_open_states(
+        self,
+        position_ids: list[str],
+    ) -> dict[str, bool]:
+        states: dict[str, bool] = {}
+        missing_position_ids: list[str] = []
+        for position_id in position_ids:
+            cached_status = self._get_cache_entry(
+                self.position_status_cache,
+                position_id,
+                'position_status',
+            )
+            if cached_status is None:
+                missing_position_ids.append(position_id)
+                continue
+            states[position_id] = bool(cached_status)
+
+        if missing_position_ids:
+            fresh_states = self.delegate.get_position_open_states(
+                missing_position_ids
+            )
+            missing_results = [
+                position_id
+                for position_id in missing_position_ids
+                if position_id not in fresh_states
+            ]
+            if missing_results:
+                raise ValueError(
+                    'Broker did not return position states for: '
+                    f'{missing_results}'
+                )
+            for position_id in missing_position_ids:
+                is_open = bool(fresh_states[position_id])
+                states[position_id] = is_open
+                self._put_cache_entry(
+                    self.position_status_cache,
+                    position_id,
+                    is_open,
+                    self.position_status_ttl_seconds,
+                )
+        return states
+
     def remember_position_instrument(self, position_id: str, symbol: str) -> None:
         self.delegate.remember_position_instrument(position_id, symbol)
 

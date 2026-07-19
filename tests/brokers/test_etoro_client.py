@@ -37,6 +37,32 @@ def test_find_instrument_id_uses_exact_symbol_match(monkeypatch):
     assert client._find_instrument_id('BTC') == 100000
 
 
+def test_get_position_open_states_uses_one_portfolio_snapshot(monkeypatch):
+    client = EtoroClient(settings=build_settings('etoro_demo'))
+    portfolio_calls = 0
+
+    def fake_get_portfolio():
+        nonlocal portfolio_calls
+        portfolio_calls += 1
+        return {
+            'clientPortfolio': {
+                'positions': [
+                    {'positionID': 9001, 'isOpen': True},
+                    {'positionID': 9002, 'isOpen': False},
+                ]
+            }
+        }
+
+    monkeypatch.setattr(client, 'get_portfolio', fake_get_portfolio)
+
+    assert client.get_position_open_states(['9001', '9002', '9003']) == {
+        '9001': True,
+        '9002': False,
+        '9003': False,
+    }
+    assert portfolio_calls == 1
+
+
 def test_etoro_headers_include_required_keys():
     client = EtoroClient(settings=build_settings())
 

@@ -78,6 +78,22 @@ def test_cached_broker_caches_position_status():
     assert delegate.position_status_calls == 1
 
 
+def test_cached_broker_batches_missing_position_states_and_caches_results():
+    delegate = CountingBroker(
+        positions={'position-1': True, 'position-2': False}
+    )
+    broker = CachedBrokerClient(
+        delegate=delegate,
+        position_status_ttl_seconds=60.0,
+    )
+
+    expected = {'position-1': True, 'position-2': False}
+
+    assert broker.get_position_open_states(list(expected)) == expected
+    assert broker.get_position_open_states(list(expected)) == expected
+    assert delegate.position_status_calls == 2
+
+
 def test_cached_broker_invalidates_account_and_position_cache_after_open():
     delegate = CountingBroker(positions={'position-1': True})
     broker = CachedBrokerClient(
