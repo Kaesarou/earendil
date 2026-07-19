@@ -23,6 +23,9 @@ dev = [
     "pytest>=8.0.0",
     "ruff>=0.4.0",
 ]
+market-data-probe = [
+    "websockets>=13.0,<16.0",
+]
 
 [tool.setuptools.packages.find]
 include = ["app*"]
