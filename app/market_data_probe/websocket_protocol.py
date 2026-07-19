@@ -69,6 +69,7 @@ def parse_websocket_rates(
     *,
     symbol_by_instrument_id: dict[int, str],
     received_at: datetime,
+    rate_state_by_instrument_id: dict[int, dict] | None = None,
 ) -> list[NormalizedRate]:
     payload = json.loads(raw_message)
     if not isinstance(payload, dict):
@@ -91,6 +92,19 @@ def parse_websocket_rates(
         if symbol is None:
             continue
         content = _content_payload(message.get('content'))
+        if not content:
+            continue
+        state_reconstructed = False
+        if rate_state_by_instrument_id is not None:
+            is_snapshot = message.get('type') == 'Snapshot'
+            previous = (
+                {}
+                if is_snapshot
+                else rate_state_by_instrument_id.get(instrument_id, {})
+            )
+            content = {**previous, **content}
+            rate_state_by_instrument_id[instrument_id] = content
+            state_reconstructed = bool(previous)
         rate = normalize_rate_payload(
             content,
             source='websocket_rate',
@@ -98,6 +112,7 @@ def parse_websocket_rates(
             instrument_id=instrument_id,
             received_at=received_at,
             message_id=optional_string(message.get('id')),
+            state_reconstructed=state_reconstructed,
         )
         if rate is not None:
             rates.append(rate)
@@ -112,6 +127,7 @@ def normalize_rate_payload(
     instrument_id: int,
     received_at: datetime,
     message_id: str | None = None,
+    state_reconstructed: bool = False,
 ) -> NormalizedRate | None:
     bid = _first_float(payload, 'Bid', 'bid', 'bidPrice')
     ask = _first_float(payload, 'Ask', 'ask', 'askPrice')
@@ -156,6 +172,7 @@ def normalize_rate_payload(
         source_timestamp=source_timestamp,
         message_id=message_id,
         price_rate_id=price_rate_id,
+        state_reconstructed=state_reconstructed,
     )
 
 

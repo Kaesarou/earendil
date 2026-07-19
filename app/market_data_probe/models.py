@@ -51,6 +51,7 @@ class NormalizedRate:
     source_timestamp: datetime | None = None
     message_id: str | None = None
     price_rate_id: str | None = None
+    state_reconstructed: bool = False
 
     def to_dict(self) -> dict[str, Any]:
         return _serialize_dataclass(self)

@@ -14,6 +14,7 @@ def rate(
     message_id: str | None,
     price_rate_id: str | None,
     last: float,
+    state_reconstructed: bool = False,
 ) -> NormalizedRate:
     return NormalizedRate(
         source=source,
@@ -27,6 +28,7 @@ def rate(
         source_timestamp=source_timestamp,
         message_id=message_id,
         price_rate_id=price_rate_id,
+        state_reconstructed=state_reconstructed,
     )
 
 
@@ -48,6 +50,7 @@ def test_metrics_detect_quality_issues_and_request_reduction():
         message_id='message-1',
         price_rate_id='rate-1',
         last=100.0,
+        state_reconstructed=True,
     )
     metrics.add_rate(first)
     metrics.add_rate(duplicate_and_older)
@@ -80,6 +83,7 @@ def test_metrics_detect_quality_issues_and_request_reduction():
     assert ws['duplicate_message_ids'] == 1
     assert ws['duplicate_rate_ids'] == 1
     assert ws['out_of_order_source_timestamps'] == 1
+    assert ws['state_reconstructed_observations'] == 1
     assert summary['request_budget']['reduction_percent'] == pytest.approx(
         83.333,
         abs=0.001,

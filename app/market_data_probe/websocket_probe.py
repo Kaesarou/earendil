@@ -51,6 +51,7 @@ class EtoroWebSocketProbe:
         self.forced_reconnect_after_seconds = forced_reconnect_after_seconds
         self.connector = connector or _default_connector
         self._forced_reconnect_done = False
+        self._rate_state_by_instrument_id: dict[int, dict] = {}
 
     async def run(self, *, duration_seconds: float) -> None:
         started = time.monotonic()
@@ -156,6 +157,7 @@ class EtoroWebSocketProbe:
                 list(self.symbol_by_instrument_id),
                 snapshot=True,
             )
+            self._rate_state_by_instrument_id.clear()
             await websocket.send(json.dumps(subscription_request))
             self.recorder.append(
                 'events',
@@ -183,6 +185,8 @@ class EtoroWebSocketProbe:
                     )
                 except TimeoutError:
                     self._raise_for_scheduled_reconnect(forced_reconnect_at)
+                    if time.monotonic() >= deadline:
+                        return
                     consecutive_silences += 1
                     self.metrics.add_silence()
                     self.recorder.append(
@@ -209,8 +213,32 @@ class EtoroWebSocketProbe:
                         )
                     continue
 
-                consecutive_silences = 0
                 received_at = utc_now()
+                if _is_null_frame(raw_message):
+                    transport = (
+                        'text' if isinstance(raw_message, str) else 'binary_utf8'
+                    )
+                    diagnostics = _frame_diagnostics(
+                        raw_message,
+                        transport=transport,
+                    )
+                    self.recorder.append(
+                        'raw_websocket',
+                        {
+                            'received_at': received_at,
+                            'phase': 'stream_null_frame',
+                            **diagnostics,
+                        },
+                    )
+                    self.recorder.append(
+                        'events',
+                        {
+                            'event': 'websocket_null_frame',
+                            **diagnostics,
+                            'observed_at': received_at,
+                        },
+                    )
+                    continue
                 try:
                     decoded_message, transport = _decode_websocket_frame(
                         raw_message
@@ -220,6 +248,9 @@ class EtoroWebSocketProbe:
                         decoded_message,
                         symbol_by_instrument_id=self.symbol_by_instrument_id,
                         received_at=received_at,
+                        rate_state_by_instrument_id=(
+                            self._rate_state_by_instrument_id
+                        ),
                     )
                 except (
                     UnicodeDecodeError,
@@ -250,6 +281,8 @@ class EtoroWebSocketProbe:
                 for rate in rates:
                     self.metrics.add_rate(rate)
                     self.recorder.append('normalized_rates', rate.to_dict())
+                if rates:
+                    consecutive_silences = 0
 
     async def _receive_authentication_response(
         self,
@@ -374,6 +407,10 @@ def _decode_websocket_frame(raw_message: str | bytes) -> tuple[str, str]:
     raise TypeError(
         f'Unsupported WebSocket frame type: {type(raw_message).__name__}'
     )
+
+
+def _is_null_frame(raw_message: str | bytes) -> bool:
+    return raw_message in ('\x00', b'\x00')
 
 
 def _parse_json_frame(raw_message: str) -> tuple[object, str]:

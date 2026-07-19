@@ -112,6 +112,10 @@ WebSocket authentication or market-rate observation succeeds.
 Non-JSON or unrelated frames received before the matching authentication
 response are recorded as bounded diagnostics and skipped within the same
 10-second authentication window.
+After each snapshot, field-level WebSocket deltas are merged into the latest
+instrument state before normalization. Reconstructed observations are marked
+explicitly and counted separately in the summary. Periodic null frames are
+recorded as protocol events rather than JSON parsing errors.
 
 This window answers whether WebSocket observations are more frequent, fresher,
 less repetitive, and closer to the high/low of subsequently closed REST M1

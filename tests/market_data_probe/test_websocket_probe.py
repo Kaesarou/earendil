@@ -87,6 +87,18 @@ class GreetingFakeWebSocket(FakeWebSocket):
         return await super().recv()
 
 
+class NullBeforeRateFakeWebSocket(FakeWebSocket):
+    def __init__(self):
+        super().__init__(binary_frames=True)
+        self.null_sent = False
+
+    async def recv(self) -> str | bytes:
+        if self.receive_count == 1 and not self.null_sent:
+            self.null_sent = True
+            return b'\x00'
+        return await super().recv()
+
+
 @pytest.mark.parametrize('binary_frames', [False, True])
 def test_probe_authenticates_subscribes_and_records_rate(
     tmp_path,
@@ -115,6 +127,7 @@ def test_probe_authenticates_subscribes_and_records_rate(
     }
     assert metrics.authentication_successes == 1
     assert metrics.rate_counts[('websocket_rate', 'BTC')] == 1
+    assert metrics.silence_events == 0
     assert (tmp_path / 'raw_websocket.jsonl').is_file()
     assert (tmp_path / 'normalized_rates.jsonl').is_file()
     raw_messages = [
@@ -152,6 +165,32 @@ def test_probe_ignores_non_json_greeting_before_authentication(tmp_path):
     assert raw_messages[0]['phase'] == 'pre_authentication_non_json'
     assert raw_messages[0]['prefix_hex'] == b'Connected'.hex()
     assert raw_messages[1]['phase'] == 'authentication_response'
+
+
+def test_probe_records_stream_null_frame_without_parse_error(tmp_path):
+    websocket = NullBeforeRateFakeWebSocket()
+    recorder = ProbeRecorder(tmp_path, echo_events_to_console=False)
+    metrics = StudyMetrics()
+    probe = EtoroWebSocketProbe(
+        api_key='api-key',
+        user_key='user-key',
+        instrument_id_by_symbol={'BTC': 100000},
+        recorder=recorder,
+        metrics=metrics,
+        silence_seconds=1.0,
+        connector=lambda url: FakeConnection(websocket),
+    )
+
+    asyncio.run(probe.run(duration_seconds=0.02))
+
+    events = [
+        json.loads(line)
+        for line in (tmp_path / 'events.jsonl').read_text().splitlines()
+    ]
+    assert any(event['event'] == 'websocket_null_frame' for event in events)
+    assert not any(event['event'] == 'websocket_parse_error' for event in events)
+    assert metrics.rate_counts[('websocket_rate', 'BTC')] == 1
+    assert metrics.silence_events == 0
 
 
 def test_parse_json_frame_accepts_control_framing():

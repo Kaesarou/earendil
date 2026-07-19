@@ -123,3 +123,93 @@ def test_ignores_unknown_topics_and_invalid_content():
         symbol_by_instrument_id={100000: 'BTC'},
         received_at=datetime.now(timezone.utc),
     ) == []
+
+
+def test_reconstructs_incremental_rates_from_snapshot_state():
+    received_at = datetime(2026, 7, 19, 21, 0, 1, tzinfo=timezone.utc)
+    state: dict[int, dict] = {}
+    snapshot = json.dumps(
+        {
+            'messages': [
+                {
+                    'topic': 'instrument:100000',
+                    'type': 'Snapshot',
+                    'id': 'snapshot-1',
+                    'content': json.dumps(
+                        {
+                            'Bid': '99',
+                            'Ask': '101',
+                            'LastExecution': '100',
+                            'Date': '2026-07-19T21:00:00Z',
+                            'PriceRateID': 'rate-1',
+                        }
+                    ),
+                }
+            ]
+        }
+    )
+    ask_delta = json.dumps(
+        {
+            'messages': [
+                {
+                    'topic': 'instrument:100000',
+                    'type': 'Trading.Instrument.Rate',
+                    'id': 'delta-1',
+                    'content': json.dumps(
+                        {
+                            'Ask': '102',
+                            'Date': '2026-07-19T21:00:01Z',
+                            'PriceRateID': 'rate-2',
+                        }
+                    ),
+                }
+            ]
+        }
+    )
+    timestamp_delta = json.dumps(
+        {
+            'messages': [
+                {
+                    'topic': 'instrument:100000',
+                    'type': 'Trading.Instrument.Rate',
+                    'id': 'delta-2',
+                    'content': json.dumps(
+                        {
+                            'Date': '2026-07-19T21:00:02Z',
+                            'PriceRateID': 'rate-3',
+                        }
+                    ),
+                }
+            ]
+        }
+    )
+
+    snapshot_rate = parse_websocket_rates(
+        snapshot,
+        symbol_by_instrument_id={100000: 'BTC'},
+        received_at=received_at,
+        rate_state_by_instrument_id=state,
+    )[0]
+    ask_rate = parse_websocket_rates(
+        ask_delta,
+        symbol_by_instrument_id={100000: 'BTC'},
+        received_at=received_at,
+        rate_state_by_instrument_id=state,
+    )[0]
+    timestamp_rate = parse_websocket_rates(
+        timestamp_delta,
+        symbol_by_instrument_id={100000: 'BTC'},
+        received_at=received_at,
+        rate_state_by_instrument_id=state,
+    )[0]
+
+    assert snapshot_rate.state_reconstructed is False
+    assert (ask_rate.bid, ask_rate.ask, ask_rate.last) == (99.0, 102.0, 100.0)
+    assert ask_rate.state_reconstructed is True
+    assert (timestamp_rate.bid, timestamp_rate.ask, timestamp_rate.last) == (
+        99.0,
+        102.0,
+        100.0,
+    )
+    assert timestamp_rate.price_rate_id == 'rate-3'
+    assert timestamp_rate.state_reconstructed is True

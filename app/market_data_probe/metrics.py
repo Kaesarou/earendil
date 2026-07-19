@@ -34,6 +34,9 @@ class StudyMetrics:
         self.duplicate_message_ids: Counter[tuple[str, str]] = Counter()
         self.duplicate_rate_ids: Counter[tuple[str, str]] = Counter()
         self.out_of_order_timestamps: Counter[tuple[str, str]] = Counter()
+        self.state_reconstructed_observations: Counter[
+            tuple[str, str]
+        ] = Counter()
         self.latencies_ms: dict[tuple[str, str], list[float]] = defaultdict(list)
         self.silence_events = 0
         self.reconnections = 0
@@ -100,6 +103,9 @@ class StudyMetrics:
                     ).total_seconds()
                     * 1000
                 )
+
+            if rate.state_reconstructed:
+                self.state_reconstructed_observations[key] += 1
 
             minute = rate.source_timestamp or rate.received_at
             minute = minute.astimezone(timezone.utc).replace(
@@ -203,6 +209,9 @@ class StudyMetrics:
                 'duplicate_rate_ids': self.duplicate_rate_ids[key],
                 'out_of_order_source_timestamps': (
                     self.out_of_order_timestamps[key]
+                ),
+                'state_reconstructed_observations': (
+                    self.state_reconstructed_observations[key]
                 ),
                 'data_age_ms': _distribution(self.latencies_ms[key]),
             }
