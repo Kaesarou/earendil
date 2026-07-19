@@ -10,7 +10,7 @@ WORKDIR /app
 
 COPY pyproject.toml ./
 RUN pip install --no-cache-dir --upgrade pip && \
-    pip install --no-cache-dir .
+    pip install --no-cache-dir ".[market-data-probe]"
 
 COPY app ./app
 COPY scripts ./scripts

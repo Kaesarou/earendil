@@ -40,18 +40,56 @@ that the socket is reachable; it does not prove that prices are fresh.
 
 ## Sunday crypto protocol
 
-Install the project and provide demo credentials through `.env`:
+The normal Goblin launcher is unchanged. The probe has its own Docker Compose
+wrapper and reads its symbols from the existing `.env` file.
 
-```bash
-python -m pip install -e ".[dev,market-data-probe]"
-```
-
-Required configuration:
+Required configuration for the crypto test:
 
 ```dotenv
 BROKER=etoro_demo
 ETORO_API_KEY=...
 ETORO_USER_KEY=...
+WATCHLIST=BTC,ETH,SOL
+CRYPTO_SYMBOLS=BTC,ETH,SOL
+MARKET_BENCHMARK_CRYPTO=Crypto10
+```
+
+## End-to-end test procedure
+
+Fetch and select only the WebSocket study branch:
+
+```bash
+git fetch origin
+git switch agent/etoro-market-data-study
+git pull --ff-only origin agent/etoro-market-data-study
+```
+
+Update `.env` with the demo credentials and crypto configuration shown above.
+Do not merge or switch to the portfolio-reconciliation branch for this test.
+
+Stop any normal Goblin container before collecting data, otherwise its REST
+polling would contaminate the request count:
+
+```bash
+docker compose down
+```
+
+An optional five-minute smoke run verifies authentication, subscription,
+capture, and container wiring:
+
+```bash
+bash scripts/run_market_data_probe.sh compare 300
+```
+
+Then execute Window A and Window B below. Every invocation rebuilds the image
+from the selected branch. Captures survive container removal through the
+existing `./data:/app/data` volume.
+
+After a run, find its unique output directory and inspect `summary.json` and
+`events.jsonl` before starting the next window:
+
+```bash
+ls -1dt data/market-data-study/* | head -1
 ```
 
 ### Window A — quality comparison
@@ -60,12 +98,12 @@ Run WebSocket continuously while preserving Goblin's current REST shape: one
 tradable batch and one benchmark batch every 10 seconds.
 
 ```bash
-python -m scripts.run_etoro_market_data_probe \
-  --mode compare \
-  --symbols BTC,ETH,SOL \
-  --benchmark Crypto10 \
-  --duration-seconds 1800
+bash scripts/run_market_data_probe.sh compare
 ```
+
+The default duration is 1800 seconds. A shorter smoke run can be requested as
+the optional second argument, for example
+`bash scripts/run_market_data_probe.sh compare 300`.
 
 This window answers whether WebSocket observations are more frequent, fresher,
 less repetitive, and closer to the high/low of subsequently closed REST M1
@@ -78,12 +116,12 @@ Run WebSocket continuously and reduce both REST groups to one validation every
 60 seconds:
 
 ```bash
-python -m scripts.run_etoro_market_data_probe \
-  --mode ws-primary \
-  --symbols BTC,ETH,SOL \
-  --benchmark Crypto10 \
-  --duration-seconds 3600
+bash scripts/run_market_data_probe.sh ws-primary
 ```
+
+The default duration is 3600 seconds. The wrapper builds the current branch,
+starts a one-off container with the repository `.env`, mounts `./data`, and
+removes the container when the probe completes. It does not start `app.main`.
 
 This is still a data-only sidecar. `ws-primary` describes the acquisition mode
 inside the probe; it does not make WebSocket authoritative for Goblin.

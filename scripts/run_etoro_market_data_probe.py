@@ -29,9 +29,19 @@ def parse_args() -> argparse.Namespace:
             'uses two validation batches every 60 seconds.'
         ),
     )
-    parser.add_argument('--symbols', default='BTC,ETH,SOL')
-    parser.add_argument('--benchmark', default='Crypto10')
-    parser.add_argument('--duration-seconds', type=float, default=1800.0)
+    parser.add_argument(
+        '--symbols',
+        help='Defaults to WATCHLIST from .env.',
+    )
+    parser.add_argument(
+        '--benchmark',
+        help='Defaults to MARKET_BENCHMARK_CRYPTO from .env.',
+    )
+    parser.add_argument(
+        '--duration-seconds',
+        type=float,
+        help='Defaults to 1800 for compare and 3600 for ws-primary.',
+    )
     parser.add_argument('--rest-interval-seconds', type=float)
     parser.add_argument('--silence-seconds', type=float, default=15.0)
     parser.add_argument(
@@ -50,7 +60,10 @@ def parse_args() -> argparse.Namespace:
 
 
 async def run_probe(args: argparse.Namespace) -> Path:
-    if args.duration_seconds <= 0:
+    duration_seconds = args.duration_seconds
+    if duration_seconds is None:
+        duration_seconds = 1800.0 if args.mode == 'compare' else 3600.0
+    if duration_seconds <= 0:
         raise ValueError('duration-seconds must be positive')
     if args.silence_seconds <= 0:
         raise ValueError('silence-seconds must be positive')
@@ -58,8 +71,10 @@ async def run_probe(args: argparse.Namespace) -> Path:
         raise ValueError('historical-candle-count must be between 1 and 1000')
 
     settings = Settings()
-    symbols = _parse_symbols(args.symbols)
-    benchmark_symbols = _parse_symbols(args.benchmark)
+    symbols = _parse_symbols(args.symbols or settings.watchlist)
+    benchmark_symbols = _parse_symbols(
+        args.benchmark or settings.market_benchmark_crypto
+    )
     benchmark_symbols = [
         symbol for symbol in benchmark_symbols if symbol not in symbols
     ]
@@ -111,7 +126,7 @@ async def run_probe(args: argparse.Namespace) -> Path:
         'tradable_symbols': symbols,
         'benchmark_symbols': benchmark_symbols,
         'instrument_id_by_symbol': instrument_id_by_symbol,
-        'duration_seconds': args.duration_seconds,
+        'duration_seconds': duration_seconds,
         'rest_interval_seconds': rest_interval_seconds,
         'websocket_url': EtoroWebSocketProbe.websocket_url,
         'silence_seconds': args.silence_seconds,
@@ -147,10 +162,10 @@ async def run_probe(args: argparse.Namespace) -> Path:
     )
     collection_started = time.monotonic()
     await asyncio.gather(
-        websocket_probe.run(duration_seconds=args.duration_seconds),
+        websocket_probe.run(duration_seconds=duration_seconds),
         _poll_rest_rates(
             rest_probe=rest_probe,
-            duration_seconds=args.duration_seconds,
+            duration_seconds=duration_seconds,
             interval_seconds=rest_interval_seconds,
             symbols=symbols,
             benchmark_symbols=benchmark_symbols,
