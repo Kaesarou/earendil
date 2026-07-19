@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 import argparse
 import asyncio
+import os
 import subprocess
 import time
 from datetime import datetime, timezone
@@ -275,12 +276,20 @@ def _default_run_id(mode: str) -> str:
 
 
 def _source_commit() -> str | None:
-    result = subprocess.run(
-        ['git', 'rev-parse', 'HEAD'],
-        check=False,
-        capture_output=True,
-        text=True,
-    )
+    for variable_name in ('GIT_COMMIT', 'GITHUB_SHA', 'SOURCE_VERSION'):
+        value = os.getenv(variable_name, '').strip()
+        if value:
+            return value
+
+    try:
+        result = subprocess.run(
+            ['git', 'rev-parse', 'HEAD'],
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+    except OSError:
+        return None
     return result.stdout.strip() or None
 
 
