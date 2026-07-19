@@ -69,7 +69,10 @@ def test_metrics_detect_quality_issues_and_request_reduction():
     metrics.add_request('rest_rates', duration_ms=10.0, succeeded=True)
     metrics.add_request('rest_rates', duration_ms=12.0, succeeded=True)
 
-    summary = metrics.summary(elapsed_seconds=60.0)
+    summary = metrics.summary(
+        elapsed_seconds=63.8,
+        planned_duration_seconds=60.0,
+    )
     ws = summary['rates']['websocket_rate']['BTC']
 
     assert ws['observations'] == 2
@@ -81,6 +84,27 @@ def test_metrics_detect_quality_issues_and_request_reduction():
         83.333,
         abs=0.001,
     )
+    assert summary['request_budget'][
+        'baseline_two_batches_every_10_seconds'
+    ] == 12
     comparison = summary['ohlc_comparison']['websocket_rate']['BTC']
     assert comparison['comparable_closed_minutes'] == 1
     assert comparison['mean_observations_per_minute'] == 2.0
+
+
+def test_compare_budget_does_not_report_artificial_reduction():
+    metrics = StudyMetrics()
+    for _ in range(60):
+        metrics.add_request('rest_rates', duration_ms=10.0, succeeded=True)
+
+    summary = metrics.summary(
+        elapsed_seconds=303.8,
+        planned_duration_seconds=300.0,
+    )
+
+    assert summary['request_budget'] == {
+        'baseline_two_batches_every_10_seconds': 60,
+        'observed_rest_rate_requests': 60,
+        'reduction_percent': 0.0,
+        'startup_search_and_final_candle_requests_excluded': True,
+    }

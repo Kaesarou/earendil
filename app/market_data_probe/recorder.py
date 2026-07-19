@@ -6,9 +6,15 @@ from typing import Any
 
 
 class ProbeRecorder:
-    def __init__(self, output_directory: Path):
+    def __init__(
+        self,
+        output_directory: Path,
+        *,
+        echo_events_to_console: bool = True,
+    ):
         self.output_directory = output_directory
         self.output_directory.mkdir(parents=True, exist_ok=True)
+        self.echo_events_to_console = echo_events_to_console
         self._lock = Lock()
 
     def append(self, stream: str, record: dict[str, Any]) -> None:
@@ -21,6 +27,8 @@ class ProbeRecorder:
         )
         with self._lock, path.open('a', encoding='utf-8') as file:
             file.write(f'{serialized}\n')
+            if stream == 'events' and self.echo_events_to_console:
+                print(f'[market-data-probe] {serialized}', flush=True)
 
     def write_json(self, filename: str, payload: dict[str, Any]) -> None:
         path = self.output_directory / filename

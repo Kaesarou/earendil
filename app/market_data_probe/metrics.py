@@ -142,11 +142,21 @@ class StudyMetrics:
         with self._lock:
             self.authentication_successes += 1
 
-    def summary(self, *, elapsed_seconds: float) -> dict:
+    def summary(
+        self,
+        *,
+        elapsed_seconds: float,
+        planned_duration_seconds: float | None = None,
+    ) -> dict:
         with self._lock:
+            budget_duration_seconds = (
+                planned_duration_seconds
+                if planned_duration_seconds is not None
+                else elapsed_seconds
+            )
             baseline_rate_requests = max(
                 1,
-                math.ceil(elapsed_seconds / 10) * 2,
+                math.ceil(budget_duration_seconds / 10) * 2,
             )
             actual_rate_requests = self.request_counts['rest_rates']
             reduction = (

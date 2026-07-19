@@ -1,23 +1,26 @@
 import asyncio
 import json
 
+import pytest
+
 from app.market_data_probe.metrics import StudyMetrics
 from app.market_data_probe.recorder import ProbeRecorder
 from app.market_data_probe.websocket_probe import EtoroWebSocketProbe
 
 
 class FakeWebSocket:
-    def __init__(self):
+    def __init__(self, *, binary_frames: bool = False):
         self.sent: list[dict] = []
         self.receive_count = 0
+        self.binary_frames = binary_frames
 
     async def send(self, raw_message: str) -> None:
         self.sent.append(json.loads(raw_message))
 
-    async def recv(self) -> str:
+    async def recv(self) -> str | bytes:
         self.receive_count += 1
         if self.receive_count == 1:
-            return json.dumps(
+            return self._frame(
                 {
                     'id': self.sent[-1]['id'],
                     'success': True,
@@ -25,7 +28,7 @@ class FakeWebSocket:
                 }
             )
         if self.receive_count == 2:
-            return json.dumps(
+            return self._frame(
                 {
                     'messages': [
                         {
@@ -47,6 +50,10 @@ class FakeWebSocket:
         await asyncio.sleep(60)
         raise AssertionError('unreachable')
 
+    def _frame(self, payload: dict) -> str | bytes:
+        serialized = json.dumps(payload)
+        return serialized.encode('utf-8') if self.binary_frames else serialized
+
     async def ping(self):
         future = asyncio.get_running_loop().create_future()
         future.set_result(None)
@@ -64,8 +71,12 @@ class FakeConnection:
         return None
 
 
-def test_probe_authenticates_subscribes_and_records_rate(tmp_path):
-    websocket = FakeWebSocket()
+@pytest.mark.parametrize('binary_frames', [False, True])
+def test_probe_authenticates_subscribes_and_records_rate(
+    tmp_path,
+    binary_frames,
+):
+    websocket = FakeWebSocket(binary_frames=binary_frames)
     recorder = ProbeRecorder(tmp_path)
     metrics = StudyMetrics()
     probe = EtoroWebSocketProbe(
@@ -90,3 +101,11 @@ def test_probe_authenticates_subscribes_and_records_rate(tmp_path):
     assert metrics.rate_counts[('websocket_rate', 'BTC')] == 1
     assert (tmp_path / 'raw_websocket.jsonl').is_file()
     assert (tmp_path / 'normalized_rates.jsonl').is_file()
+    raw_messages = [
+        json.loads(line)
+        for line in (tmp_path / 'raw_websocket.jsonl').read_text().splitlines()
+    ]
+    expected_transport = 'binary_utf8' if binary_frames else 'text'
+    assert {message['transport'] for message in raw_messages} == {
+        expected_transport
+    }

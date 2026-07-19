@@ -105,6 +105,11 @@ The default duration is 1800 seconds. A shorter smoke run can be requested as
 the optional second argument, for example
 `bash scripts/run_market_data_probe.sh compare 300`.
 
+Important lifecycle events and one progress line per REST batch are mirrored to
+the console while the detailed raw and normalized payloads remain in JSONL
+files. A run exits non-zero and marks its manifest as `failed` when no
+WebSocket authentication or market-rate observation succeeds.
+
 This window answers whether WebSocket observations are more frequent, fresher,
 less repetitive, and closer to the high/low of subsequently closed REST M1
 candles. It does not claim a REST saving because polling is deliberately kept

@@ -30,3 +30,28 @@ def test_source_commit_tolerates_missing_git(monkeypatch):
     )
 
     assert run_etoro_market_data_probe._source_commit() is None
+
+
+def test_probe_validation_requires_websocket_authentication_and_rates():
+    summary = {
+        'websocket': {'authentication_successes': 0},
+        'rates': {'rest_rate': {'BTC': {'observations': 30}}},
+    }
+
+    assert run_etoro_market_data_probe._probe_validation_errors(summary) == [
+        'no successful WebSocket authentication',
+        'no WebSocket market-rate observations',
+    ]
+
+
+def test_probe_validation_accepts_websocket_observations():
+    summary = {
+        'websocket': {'authentication_successes': 1},
+        'rates': {
+            'websocket_rate': {
+                'BTC': {'observations': 1},
+            }
+        },
+    }
+
+    assert run_etoro_market_data_probe._probe_validation_errors(summary) == []

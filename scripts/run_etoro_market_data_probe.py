@@ -3,6 +3,7 @@ import argparse
 import asyncio
 import os
 import subprocess
+import sys
 import time
 from datetime import datetime, timezone
 from pathlib import Path
@@ -13,6 +14,10 @@ from app.market_data_probe.models import utc_now
 from app.market_data_probe.recorder import ProbeRecorder
 from app.market_data_probe.rest_probe import EtoroRestProbe
 from app.market_data_probe.websocket_probe import EtoroWebSocketProbe
+
+
+class ProbeValidationError(RuntimeError):
+    pass
 
 
 def parse_args() -> argparse.Namespace:
@@ -149,6 +154,18 @@ async def run_probe(args: argparse.Namespace) -> Path:
         },
     }
     recorder.write_json('manifest.json', manifest)
+    recorder.append(
+        'events',
+        {
+            'event': 'probe_started',
+            'run_id': run_id,
+            'mode': args.mode,
+            'duration_seconds': duration_seconds,
+            'rest_interval_seconds': rest_interval_seconds,
+            'output_directory': str(output_directory),
+            'observed_at': utc_now(),
+        },
+    )
 
     websocket_probe = EtoroWebSocketProbe(
         api_key=settings.etoro_api_key,
@@ -197,27 +214,55 @@ async def run_probe(args: argparse.Namespace) -> Path:
             )
 
     elapsed_seconds = time.monotonic() - collection_started
-    summary = metrics.summary(elapsed_seconds=elapsed_seconds)
+    summary = metrics.summary(
+        elapsed_seconds=elapsed_seconds,
+        planned_duration_seconds=duration_seconds,
+    )
+    validation_errors = _probe_validation_errors(summary)
+    completed_at = utc_now()
     summary.update(
         {
             'schema_version': 1,
             'run_id': run_id,
             'mode': args.mode,
             'started_at': started_at,
-            'completed_at': utc_now(),
+            'completed_at': completed_at,
             'orders_sent': 0,
+            'validation': {
+                'passed': not validation_errors,
+                'errors': validation_errors,
+            },
         }
     )
     recorder.write_json('summary.json', summary)
+    status = 'completed' if not validation_errors else 'failed'
     recorder.write_json(
         'manifest.json',
         {
             **manifest,
-            'status': 'completed',
-            'completed_at': utc_now(),
+            'status': status,
+            'completed_at': completed_at,
             'summary_path': 'summary.json',
         },
     )
+    recorder.append(
+        'events',
+        {
+            'event': (
+                'probe_completed' if not validation_errors
+                else 'probe_validation_failed'
+            ),
+            'run_id': run_id,
+            'errors': validation_errors,
+            'summary_path': str(output_directory / 'summary.json'),
+            'observed_at': completed_at,
+        },
+    )
+    if validation_errors:
+        raise ProbeValidationError(
+            f'Probe validation failed: {"; ".join(validation_errors)}. '
+            f'Results: {output_directory}'
+        )
     return output_directory
 
 
@@ -237,11 +282,21 @@ async def _poll_rest_rates(
     while time.monotonic() < deadline:
         for group_name, group_symbols in groups:
             try:
-                await asyncio.to_thread(
+                rates = await asyncio.to_thread(
                     rest_probe.fetch_rates,
                     group_name=group_name,
                     symbols=group_symbols,
                     instrument_id_by_symbol=instrument_id_by_symbol,
+                )
+                recorder.append(
+                    'events',
+                    {
+                        'event': 'rest_rates_poll_completed',
+                        'group': group_name,
+                        'symbol_count': len(group_symbols),
+                        'observations': len(rates),
+                        'observed_at': utc_now(),
+                    },
                 )
             except Exception as exc:
                 recorder.append(
@@ -293,9 +348,29 @@ def _source_commit() -> str | None:
     return result.stdout.strip() or None
 
 
+def _probe_validation_errors(summary: dict) -> list[str]:
+    errors: list[str] = []
+    websocket_summary = summary.get('websocket', {})
+    if websocket_summary.get('authentication_successes', 0) < 1:
+        errors.append('no successful WebSocket authentication')
+
+    websocket_rates = summary.get('rates', {}).get('websocket_rate', {})
+    observation_count = sum(
+        symbol_summary.get('observations', 0)
+        for symbol_summary in websocket_rates.values()
+    )
+    if observation_count < 1:
+        errors.append('no WebSocket market-rate observations')
+    return errors
+
+
 def main() -> None:
     args = parse_args()
-    output_directory = asyncio.run(run_probe(args))
+    try:
+        output_directory = asyncio.run(run_probe(args))
+    except ProbeValidationError as exc:
+        print(f'Market-data probe failed: {exc}', file=sys.stderr, flush=True)
+        raise SystemExit(1) from None
     print(f'Market-data probe completed: {output_directory}')
 
 

@@ -131,15 +131,16 @@ class EtoroWebSocketProbe:
                 user_key=self.user_key,
             )
             await websocket.send(json.dumps(auth_request))
-            auth_raw = await asyncio.wait_for(websocket.recv(), timeout=10.0)
-            if not isinstance(auth_raw, str):
-                raise ValueError('Expected text WebSocket authentication response.')
+            auth_frame = await asyncio.wait_for(websocket.recv(), timeout=10.0)
+            auth_raw, auth_transport = _decode_websocket_frame(auth_frame)
+            auth_payload = json.loads(auth_raw)
             self.recorder.append(
                 'raw_websocket',
                 {
                     'received_at': utc_now(),
                     'phase': 'authentication_response',
-                    'payload': json.loads(auth_raw),
+                    'transport': auth_transport,
+                    'payload': auth_payload,
                 },
             )
             validate_authentication_response(
@@ -147,6 +148,14 @@ class EtoroWebSocketProbe:
                 request_id=auth_request['id'],
             )
             self.metrics.add_authentication_success()
+            self.recorder.append(
+                'events',
+                {
+                    'event': 'websocket_authenticated',
+                    'transport': auth_transport,
+                    'observed_at': utc_now(),
+                },
+            )
 
             subscription_request = build_subscription_request(
                 list(self.symbol_by_instrument_id),
@@ -207,30 +216,29 @@ class EtoroWebSocketProbe:
 
                 consecutive_silences = 0
                 received_at = utc_now()
-                if not isinstance(raw_message, str):
-                    self.recorder.append(
-                        'events',
-                        {
-                            'event': 'websocket_binary_message_ignored',
-                            'size': len(raw_message),
-                            'observed_at': received_at,
-                        },
-                    )
-                    continue
                 try:
-                    payload = json.loads(raw_message)
+                    decoded_message, transport = _decode_websocket_frame(
+                        raw_message
+                    )
+                    payload = json.loads(decoded_message)
                     rates = parse_websocket_rates(
-                        raw_message,
+                        decoded_message,
                         symbol_by_instrument_id=self.symbol_by_instrument_id,
                         received_at=received_at,
                     )
-                except (json.JSONDecodeError, TypeError, ValueError) as exc:
+                except (
+                    UnicodeDecodeError,
+                    json.JSONDecodeError,
+                    TypeError,
+                    ValueError,
+                ) as exc:
                     self.recorder.append(
                         'events',
                         {
                             'event': 'websocket_parse_error',
                             'message': str(exc),
-                            'raw_message': raw_message[:2000],
+                            'frame_type': type(raw_message).__name__,
+                            'frame_size': len(raw_message),
                             'observed_at': received_at,
                         },
                     )
@@ -240,6 +248,7 @@ class EtoroWebSocketProbe:
                     {
                         'received_at': received_at,
                         'phase': 'stream',
+                        'transport': transport,
                         'payload': payload,
                     },
                 )
@@ -283,4 +292,14 @@ def _default_connector(url: str):
         ping_timeout=10,
         close_timeout=5,
         max_queue=2048,
+    )
+
+
+def _decode_websocket_frame(raw_message: str | bytes) -> tuple[str, str]:
+    if isinstance(raw_message, str):
+        return raw_message, 'text'
+    if isinstance(raw_message, bytes):
+        return raw_message.decode('utf-8'), 'binary_utf8'
+    raise TypeError(
+        f'Unsupported WebSocket frame type: {type(raw_message).__name__}'
     )
