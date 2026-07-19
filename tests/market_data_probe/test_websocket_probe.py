@@ -5,7 +5,11 @@ import pytest
 
 from app.market_data_probe.metrics import StudyMetrics
 from app.market_data_probe.recorder import ProbeRecorder
-from app.market_data_probe.websocket_probe import EtoroWebSocketProbe
+from app.market_data_probe.websocket_probe import (
+    EtoroWebSocketProbe,
+    _parse_json_frame,
+    _redact_sensitive_payload,
+)
 
 
 class FakeWebSocket:
@@ -71,6 +75,18 @@ class FakeConnection:
         return None
 
 
+class GreetingFakeWebSocket(FakeWebSocket):
+    def __init__(self):
+        super().__init__(binary_frames=True)
+        self.greeting_sent = False
+
+    async def recv(self) -> str | bytes:
+        if not self.greeting_sent:
+            self.greeting_sent = True
+            return b'Connected'
+        return await super().recv()
+
+
 @pytest.mark.parametrize('binary_frames', [False, True])
 def test_probe_authenticates_subscribes_and_records_rate(
     tmp_path,
@@ -108,4 +124,58 @@ def test_probe_authenticates_subscribes_and_records_rate(
     expected_transport = 'binary_utf8' if binary_frames else 'text'
     assert {message['transport'] for message in raw_messages} == {
         expected_transport
+    }
+
+
+def test_probe_ignores_non_json_greeting_before_authentication(tmp_path):
+    websocket = GreetingFakeWebSocket()
+    recorder = ProbeRecorder(tmp_path, echo_events_to_console=False)
+    metrics = StudyMetrics()
+    probe = EtoroWebSocketProbe(
+        api_key='api-key',
+        user_key='user-key',
+        instrument_id_by_symbol={'BTC': 100000},
+        recorder=recorder,
+        metrics=metrics,
+        silence_seconds=1.0,
+        connector=lambda url: FakeConnection(websocket),
+    )
+
+    asyncio.run(probe.run(duration_seconds=0.02))
+
+    assert metrics.authentication_successes == 1
+    assert metrics.rate_counts[('websocket_rate', 'BTC')] == 1
+    raw_messages = [
+        json.loads(line)
+        for line in (tmp_path / 'raw_websocket.jsonl').read_text().splitlines()
+    ]
+    assert raw_messages[0]['phase'] == 'pre_authentication_non_json'
+    assert raw_messages[0]['prefix_hex'] == b'Connected'.hex()
+    assert raw_messages[1]['phase'] == 'authentication_response'
+
+
+def test_parse_json_frame_accepts_control_framing():
+    payload, framing = _parse_json_frame(
+        '\x00{"id":"auth-id","success":true}\x1e'
+    )
+
+    assert payload == {'id': 'auth-id', 'success': True}
+    assert framing == 'embedded_json'
+
+
+def test_pre_authentication_diagnostics_redact_credentials():
+    payload = {
+        'operation': 'Authenticate',
+        'data': {
+            'apiKey': 'api-secret',
+            'user_key': 'user-secret',
+        },
+    }
+
+    assert _redact_sensitive_payload(payload) == {
+        'operation': 'Authenticate',
+        'data': {
+            'apiKey': '[REDACTED]',
+            'user_key': '[REDACTED]',
+        },
     }

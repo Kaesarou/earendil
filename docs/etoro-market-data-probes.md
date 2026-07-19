@@ -109,6 +109,9 @@ Important lifecycle events and one progress line per REST batch are mirrored to
 the console while the detailed raw and normalized payloads remain in JSONL
 files. A run exits non-zero and marks its manifest as `failed` when no
 WebSocket authentication or market-rate observation succeeds.
+Non-JSON or unrelated frames received before the matching authentication
+response are recorded as bounded diagnostics and skipped within the same
+10-second authentication window.
 
 This window answers whether WebSocket observations are more frequent, fresher,
 less repetitive, and closer to the high/low of subsequently closed REST M1

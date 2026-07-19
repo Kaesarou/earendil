@@ -1,4 +1,5 @@
 import asyncio
+import hashlib
 import json
 import time
 from collections.abc import Callable
@@ -131,17 +132,11 @@ class EtoroWebSocketProbe:
                 user_key=self.user_key,
             )
             await websocket.send(json.dumps(auth_request))
-            auth_frame = await asyncio.wait_for(websocket.recv(), timeout=10.0)
-            auth_raw, auth_transport = _decode_websocket_frame(auth_frame)
-            auth_payload = json.loads(auth_raw)
-            self.recorder.append(
-                'raw_websocket',
-                {
-                    'received_at': utc_now(),
-                    'phase': 'authentication_response',
-                    'transport': auth_transport,
-                    'payload': auth_payload,
-                },
+            auth_raw, auth_transport = (
+                await self._receive_authentication_response(
+                    websocket,
+                    request_id=auth_request['id'],
+                )
             )
             validate_authentication_response(
                 auth_raw,
@@ -256,6 +251,82 @@ class EtoroWebSocketProbe:
                     self.metrics.add_rate(rate)
                     self.recorder.append('normalized_rates', rate.to_dict())
 
+    async def _receive_authentication_response(
+        self,
+        websocket,
+        *,
+        request_id: str,
+        timeout_seconds: float = 10.0,
+    ) -> tuple[str, str]:
+        deadline = time.monotonic() + timeout_seconds
+        while True:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise TimeoutError(
+                    'No matching WebSocket authentication response within '
+                    f'{timeout_seconds:g} seconds.'
+                )
+
+            frame = await asyncio.wait_for(websocket.recv(), timeout=remaining)
+            received_at = utc_now()
+            decoded, transport = _decode_websocket_frame(frame)
+            try:
+                payload, framing = _parse_json_frame(decoded)
+            except json.JSONDecodeError:
+                diagnostics = _frame_diagnostics(frame, transport=transport)
+                self.recorder.append(
+                    'raw_websocket',
+                    {
+                        'received_at': received_at,
+                        'phase': 'pre_authentication_non_json',
+                        **diagnostics,
+                    },
+                )
+                self.recorder.append(
+                    'events',
+                    {
+                        'event': 'websocket_pre_auth_non_json_frame',
+                        **diagnostics,
+                        'observed_at': received_at,
+                    },
+                )
+                continue
+
+            phase = 'authentication_response'
+            if not isinstance(payload, dict) or payload.get('id') != request_id:
+                phase = 'pre_authentication_json'
+            self.recorder.append(
+                'raw_websocket',
+                {
+                    'received_at': received_at,
+                    'phase': phase,
+                    'transport': transport,
+                    'framing': framing,
+                    'payload': _redact_sensitive_payload(payload),
+                },
+            )
+            if phase == 'authentication_response':
+                return json.dumps(payload, separators=(',', ':')), transport
+
+            self.recorder.append(
+                'events',
+                {
+                    'event': 'websocket_pre_auth_json_frame',
+                    'transport': transport,
+                    'framing': framing,
+                    'payload_type': type(payload).__name__,
+                    'message_id': (
+                        payload.get('id') if isinstance(payload, dict) else None
+                    ),
+                    'operation': (
+                        payload.get('operation')
+                        if isinstance(payload, dict)
+                        else None
+                    ),
+                    'observed_at': received_at,
+                },
+            )
+
     def _receive_timeout(
         self,
         *,
@@ -303,3 +374,62 @@ def _decode_websocket_frame(raw_message: str | bytes) -> tuple[str, str]:
     raise TypeError(
         f'Unsupported WebSocket frame type: {type(raw_message).__name__}'
     )
+
+
+def _parse_json_frame(raw_message: str) -> tuple[object, str]:
+    try:
+        return json.loads(raw_message), 'json'
+    except json.JSONDecodeError as original_error:
+        decoder = json.JSONDecoder()
+        starts = sorted(
+            index
+            for index in (
+                raw_message.find('{'),
+                raw_message.find('['),
+            )
+            if 0 <= index <= 32
+        )
+        for start in starts:
+            try:
+                payload, end = decoder.raw_decode(raw_message[start:])
+            except json.JSONDecodeError:
+                continue
+            trailing = raw_message[start + end :]
+            if trailing.strip(' \t\r\n\x00\x1e'):
+                continue
+            return payload, 'embedded_json'
+        raise original_error
+
+
+def _frame_diagnostics(
+    raw_message: str | bytes,
+    *,
+    transport: str,
+) -> dict[str, object]:
+    encoded = (
+        raw_message.encode('utf-8')
+        if isinstance(raw_message, str)
+        else raw_message
+    )
+    return {
+        'transport': transport,
+        'frame_type': type(raw_message).__name__,
+        'frame_size': len(encoded),
+        'prefix_hex': encoded[:12].hex(),
+        'sha256': hashlib.sha256(encoded).hexdigest(),
+    }
+
+
+def _redact_sensitive_payload(payload: object) -> object:
+    if isinstance(payload, dict):
+        result = {}
+        for key, value in payload.items():
+            normalized_key = str(key).lower().replace('_', '').replace('-', '')
+            if normalized_key in {'apikey', 'userkey', 'authorization'}:
+                result[key] = '[REDACTED]'
+            else:
+                result[key] = _redact_sensitive_payload(value)
+        return result
+    if isinstance(payload, list):
+        return [_redact_sensitive_payload(value) for value in payload]
+    return payload
