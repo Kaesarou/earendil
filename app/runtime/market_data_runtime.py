@@ -119,6 +119,7 @@ class EventDrivenMarketRuntime(
         self._degraded_buckets: set[tuple[str, datetime]] = set()
         self._feed_started = False
         self._subscribed_symbols: tuple[str, ...] = ()
+        self._applied_feed_symbols: tuple[str, ...] = ()
 
     def run(self) -> str:
         session_now = datetime.now(timezone.utc)
@@ -129,8 +130,12 @@ class EventDrivenMarketRuntime(
         self.live_market_data.start(monitored_symbols)
         self._feed_started = True
         self._subscribed_symbols = tuple(monitored_symbols)
+        self._applied_feed_symbols = self.live_market_data.subscribed_symbols()
         started_at = datetime.now(timezone.utc)
-        self.coordinator.initialize_symbols(monitored_symbols, now=started_at)
+        self.coordinator.initialize_symbols(
+            list(self._applied_feed_symbols),
+            now=started_at,
+        )
 
         started_monotonic = time.monotonic()
         self._last_rest_control = started_monotonic
@@ -144,7 +149,8 @@ class EventDrivenMarketRuntime(
                     if self.live_market_data.requires_websocket_health
                     else 'polling'
                 ),
-                'monitored_symbols': monitored_symbols,
+                'requested_symbols': monitored_symbols,
+                'subscribed_symbols': list(self._applied_feed_symbols),
                 'rest_control_interval_seconds': (
                     self.settings.rest_control_interval_seconds
                 ),
@@ -159,6 +165,7 @@ class EventDrivenMarketRuntime(
                 now = datetime.now(timezone.utc)
                 monotonic_now = time.monotonic()
                 self._refresh_sessions_if_due(now, monotonic_now)
+                self._refresh_applied_market_data_subscription(now)
                 self._reconcile_positions_if_due(now, monotonic_now)
                 event = self.live_market_data.next_event(timeout_seconds=0.25)
                 now = datetime.now(timezone.utc)
