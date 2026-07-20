@@ -85,6 +85,20 @@ def build_strategies(
     }
 
 
+def build_market_data_manifest(settings: Settings) -> dict[str, object]:
+    return {
+        'mode': settings.market_data_mode,
+        'queue_capacity': settings.market_data_queue_capacity,
+        'position_silence_seconds': settings.ws_position_silence_seconds,
+        'global_silence_seconds': settings.ws_global_silence_seconds,
+        'rest_control_interval_seconds': settings.rest_control_interval_seconds,
+        'position_fallback_interval_seconds': (
+            settings.position_fallback_interval_seconds
+        ),
+        'decision_window_grace_seconds': settings.decision_window_grace_seconds,
+    }
+
+
 def main() -> None:
     started_at = datetime.now(timezone.utc)
     run_id = build_run_id(started_at)
@@ -122,15 +136,7 @@ def main() -> None:
     )
     manifest['schema_version'] = 10
     manifest['models']['market_data'] = MARKET_DATA_MODEL_VERSION
-    manifest['runtime']['market_data'] = {
-        'mode': settings.market_data_mode,
-        'queue_capacity': settings.market_data_queue_capacity,
-        'symbol_silence_seconds': settings.ws_symbol_silence_seconds,
-        'global_silence_seconds': settings.ws_global_silence_seconds,
-        'rest_control_interval_seconds': settings.rest_control_interval_seconds,
-        'fallback_cooldown_seconds': settings.rest_fallback_cooldown_seconds,
-        'decision_window_grace_seconds': settings.decision_window_grace_seconds,
-    }
+    manifest['runtime']['market_data'] = build_market_data_manifest(settings)
     write_run_manifest(archived_manifest_path, manifest)
     write_run_manifest(settings.run_manifest_path, manifest)
 
