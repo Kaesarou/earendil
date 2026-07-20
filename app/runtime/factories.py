@@ -2,8 +2,8 @@ from dataclasses import dataclass
 
 from app.brokers.base import BrokerClient
 from app.brokers.cached_broker import CachedBrokerClient
-from app.brokers.etoro.etoro_client import EtoroClient
 from app.brokers.etoro.market_data_client import EtoroRestMarketDataClient
+from app.brokers.etoro.resilient_client import ResilientEtoroClient
 from app.brokers.etoro.websocket_feed import EtoroWebSocketMarketDataFeed
 from app.brokers.fake.fake_broker import FakeBrokerClient
 from app.config.settings import Settings
@@ -34,7 +34,7 @@ def build_runtime_clients(settings: Settings) -> RuntimeClients:
         )
 
     if settings.broker in {'etoro_demo', 'etoro_live'}:
-        etoro = EtoroClient(settings=settings)
+        etoro = ResilientEtoroClient(settings=settings)
         market_data = EtoroRestMarketDataClient(
             etoro,
             instrument_id_cache_path=settings.instrument_id_cache_path,
