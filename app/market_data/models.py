@@ -5,7 +5,7 @@ from enum import StrEnum
 from app.market.models import Candle, MarketSnapshot
 
 
-MARKET_DATA_MODEL_VERSION = 'market_data_v2_ws_1'
+MARKET_DATA_MODEL_VERSION = 'market_data_v2_ws_clocked_1'
 
 
 class MarketDataSource(StrEnum):
@@ -55,6 +55,10 @@ class CandleQuality:
     fallback_event_count: int
     out_of_order_drop_count: int
     degraded: bool
+    carried_forward: bool = False
+    last_price_age_seconds: float | None = None
+    ordering_drop_ratio: float = 0.0
+    degraded_reasons: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
