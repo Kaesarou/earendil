@@ -6,10 +6,10 @@ from app.execution.position_tracker import PositionTracker
 from app.execution.trade_candidate import TradeCandidate
 from app.execution.trade_executor import TradeExecutor
 from app.journal.jsonl_journal import JsonlJournal
-from app.main import execute_ranked_candidates
 from app.market.models import Candle, MarketSnapshot
 from app.risk.models import TradePlan
 from app.risk.risk_manager import RiskManager
+from app.runtime.candidate_flow import execute_ranked_candidates
 from app.strategies.signals import Signal
 
 TEST_SESSION_KEY = 'test-session'
