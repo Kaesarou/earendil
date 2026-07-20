@@ -19,7 +19,6 @@ from app.persistence.trade_cooldown_store import TradeCooldownStore
 from app.risk.risk_manager import RiskManager
 from app.risk.trade_cooldown_guard import TradeCooldownGuard
 from app.runtime.async_broker_operations import AsyncBrokerOperationsCoordinator
-from app.runtime.async_candidate_execution import AsyncCandidateExecutionCoordinator
 from app.runtime.broker_task_runner import BrokerTaskRunner
 from app.runtime.clocked_candle_flow import ClockedCandleFlow
 from app.runtime.decision_window import DecisionWindowCoordinator
@@ -28,6 +27,9 @@ from app.runtime.market_data_maintenance import MarketDataMaintenance
 from app.runtime.market_data_session_flow import MarketDataSessionFlow
 from app.runtime.pending_entry import PendingEntryManager
 from app.runtime.position_lifecycle import BrokerAuthorizationErrorChecker
+from app.runtime.resilient_candidate_execution import (
+    ResilientCandidateExecutionCoordinator,
+)
 from app.runtime.runtime_heartbeat import RuntimeHeartbeat
 from app.runtime.trading_session_window import TradingSessionState
 from app.strategies.balanced_strategy_config import BalancedStrategyConfig
@@ -136,7 +138,7 @@ class EventDrivenMarketRuntime(
                 settings.rest_control_anomaly_percent
             ),
         )
-        self.candidate_execution = AsyncCandidateExecutionCoordinator(
+        self.candidate_execution = ResilientCandidateExecutionCoordinator(
             runner=self.broker_task_runner,
             execution_broker=execution_broker,
             executor=executor,
