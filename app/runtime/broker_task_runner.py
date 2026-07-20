@@ -14,6 +14,9 @@ class BrokerTaskLane(StrEnum):
     CLOSE = 'close'
 
 
+CLOSE_TASK_KINDS = frozenset({'close_position'})
+
+
 @dataclass(frozen=True)
 class BrokerTaskCompletion:
     task_id: str
@@ -60,16 +63,17 @@ class BrokerTaskRunner:
         operation: Callable[[], Any],
         context: Any = None,
         task_id: str | None = None,
-        lane: BrokerTaskLane = BrokerTaskLane.STANDARD,
+        lane: BrokerTaskLane | None = None,
     ) -> str:
         identifier = task_id or f'{kind}:{uuid4()}'
+        actual_lane = lane or self._lane_for_kind(kind)
         with self._lock:
             if self._closed:
                 raise RuntimeError('Broker task runner is closed.')
             if identifier in self._pending:
                 raise ValueError(f'Duplicate broker task id: {identifier}')
-            future = self._executors[lane].submit(operation)
-            self._pending[identifier] = (kind, lane, context, future)
+            future = self._executors[actual_lane].submit(operation)
+            self._pending[identifier] = (kind, actual_lane, context, future)
         future.add_done_callback(
             lambda completed, current_id=identifier: self._complete(
                 current_id,
@@ -113,6 +117,12 @@ class BrokerTaskRunner:
             self._closed = True
         for executor in self._executors.values():
             executor.shutdown(wait=wait, cancel_futures=not wait)
+
+    @staticmethod
+    def _lane_for_kind(kind: str) -> BrokerTaskLane:
+        if kind in CLOSE_TASK_KINDS:
+            return BrokerTaskLane.CLOSE
+        return BrokerTaskLane.STANDARD
 
     def _complete(self, task_id: str, future: Future) -> None:
         with self._lock:
