@@ -39,5 +39,13 @@ class LiveMarketDataFeed(ABC):
     def requires_websocket_health(self) -> bool:
         raise NotImplementedError
 
+    def connection_healthy(self) -> bool:
+        """Return whether the primary transport is currently usable.
+
+        Polling feeds are healthy unless they surface a fatal error. WebSocket
+        feeds override this with their actual authenticated connection state.
+        """
+        return True
+
     def diagnostics(self) -> dict[str, object]:
         return {}
