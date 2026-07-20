@@ -47,9 +47,14 @@ class EtoroWebSocketMarketDataFeed(LiveMarketDataFeed):
         self._subscription_changed = threading.Event()
         self._symbols_lock = threading.Lock()
         self._thread: threading.Thread | None = None
+        self._resolver_thread: threading.Thread | None = None
         self._fatal_error: Exception | None = None
+        self._desired_symbols: tuple[str, ...] = ()
         self._symbols: tuple[str, ...] = ()
         self._instrument_id_by_symbol: dict[str, int] = {}
+        self._resolution_generation = 0
+        self._resolution_pending = False
+        self._resolution_errors = 0
         self._connections = 0
         self._reconnections = 0
         self._subscription_restarts = 0
@@ -64,9 +69,20 @@ class EtoroWebSocketMarketDataFeed(LiveMarketDataFeed):
         return True
 
     def start(self, symbols: list[str]) -> None:
-        self.update_symbols(symbols)
+        normalized = _normalize_symbols(symbols)
         if self._thread is not None:
+            self.update_symbols(list(normalized))
             return
+        instrument_ids = self.rest_client.resolve_instrument_ids(list(normalized))
+        with self._symbols_lock:
+            self._resolution_generation += 1
+            self._desired_symbols = normalized
+            self._symbols = normalized
+            self._instrument_id_by_symbol = {
+                symbol: instrument_ids[symbol]
+                for symbol in normalized
+            }
+            self._subscription_updates += 1
         self._thread = threading.Thread(
             target=self._thread_main,
             name='etoro-websocket-market-data',
@@ -75,22 +91,26 @@ class EtoroWebSocketMarketDataFeed(LiveMarketDataFeed):
         self._thread.start()
 
     def update_symbols(self, symbols: list[str]) -> None:
-        normalized = tuple(
-            dict.fromkeys(symbol.strip().upper() for symbol in symbols if symbol.strip())
-        )
+        normalized = _normalize_symbols(symbols)
         with self._symbols_lock:
-            if normalized == self._symbols:
+            if normalized == self._desired_symbols:
                 return
-        instrument_ids = self.rest_client.resolve_instrument_ids(list(normalized))
+            self._desired_symbols = normalized
+            self._resolution_generation += 1
+            generation = self._resolution_generation
+            self._resolution_pending = True
+        resolver = threading.Thread(
+            target=self._resolve_subscription_update,
+            args=(normalized, generation),
+            name='etoro-instrument-resolution',
+            daemon=True,
+        )
+        self._resolver_thread = resolver
+        resolver.start()
+
+    def subscribed_symbols(self) -> tuple[str, ...]:
         with self._symbols_lock:
-            self._symbols = normalized
-            self._instrument_id_by_symbol = {
-                symbol: instrument_ids[symbol]
-                for symbol in normalized
-            }
-            self._subscription_updates += 1
-        if self._thread is not None:
-            self._subscription_changed.set()
+            return self._symbols
 
     def next_event(self, timeout_seconds: float) -> MarketDataEvent | None:
         try:
@@ -109,14 +129,20 @@ class EtoroWebSocketMarketDataFeed(LiveMarketDataFeed):
             self._thread.join(timeout=10.0)
 
     def diagnostics(self) -> dict[str, object]:
-        symbols, _ = self._subscription_snapshot()
+        with self._symbols_lock:
+            desired = self._desired_symbols
+            applied = self._symbols
+            resolution_pending = self._resolution_pending
         return {
             'mode': 'websocket',
             'connections': self._connections,
             'reconnections': self._reconnections,
             'subscription_restarts': self._subscription_restarts,
             'subscription_updates': self._subscription_updates,
-            'subscribed_symbols': list(symbols),
+            'desired_symbols': list(desired),
+            'subscribed_symbols': list(applied),
+            'resolution_pending': resolution_pending,
+            'resolution_errors': self._resolution_errors,
             'events': self._events,
             'null_frames': self._null_frames,
             'global_silences': self._global_silences,
@@ -125,9 +151,37 @@ class EtoroWebSocketMarketDataFeed(LiveMarketDataFeed):
             'fatal_error': str(self._fatal_error) if self._fatal_error else None,
         }
 
-    def _subscription_snapshot(self) -> tuple[tuple[str, ...], dict[str, int]]:
+    def _resolve_subscription_update(
+        self,
+        symbols: tuple[str, ...],
+        generation: int,
+    ) -> None:
+        try:
+            instrument_ids = self.rest_client.resolve_instrument_ids(list(symbols))
+        except Exception as exc:
+            self._last_error = str(exc)
+            self._resolution_errors += 1
+            with self._symbols_lock:
+                if generation == self._resolution_generation:
+                    self._resolution_pending = False
+            return
+        if self._stop_event.is_set():
+            return
         with self._symbols_lock:
-            return self._symbols, dict(self._instrument_id_by_symbol)
+            if generation != self._resolution_generation:
+                return
+            self._symbols = symbols
+            self._instrument_id_by_symbol = {
+                symbol: instrument_ids[symbol]
+                for symbol in symbols
+            }
+            self._resolution_pending = False
+            self._subscription_updates += 1
+        self._subscription_changed.set()
+
+    def _subscription_snapshot(self) -> dict[str, int]:
+        with self._symbols_lock:
+            return dict(self._instrument_id_by_symbol)
 
     def _thread_main(self) -> None:
         try:
@@ -141,7 +195,7 @@ class EtoroWebSocketMarketDataFeed(LiveMarketDataFeed):
         connected_once = False
         while not self._stop_event.is_set():
             self._subscription_changed.clear()
-            _, instrument_id_by_symbol = self._subscription_snapshot()
+            instrument_id_by_symbol = self._subscription_snapshot()
             if not instrument_id_by_symbol:
                 await asyncio.sleep(0.25)
                 continue
@@ -249,6 +303,12 @@ class EtoroWebSocketMarketDataFeed(LiveMarketDataFeed):
             )
             self._stop_event.set()
             raise self._fatal_error from exc
+
+
+def _normalize_symbols(symbols: list[str]) -> tuple[str, ...]:
+    return tuple(
+        dict.fromkeys(symbol.strip().upper() for symbol in symbols if symbol.strip())
+    )
 
 
 def _default_connector(url: str):
