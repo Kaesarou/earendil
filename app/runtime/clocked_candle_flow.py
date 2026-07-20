@@ -10,17 +10,26 @@ from app.runtime.symbol_flow import process_closed_candle
 
 class ClockedCandleFlow:
     def _finalize_clocked_candles(self, now: datetime) -> None:
+        candle_builders = getattr(self, 'candle_builders', {})
+        session_decisions = getattr(self, 'session_decisions', {})
+        latest_snapshots = getattr(self, 'latest_snapshots', {})
         for symbol in list(self.active_symbols):
-            builder = self.candle_builders.get(symbol)
-            session_decision = self.session_decisions.get(symbol)
-            latest = self.latest_snapshots.get(symbol)
+            builder = candle_builders.get(symbol)
+            session_decision = session_decisions.get(symbol)
+            latest = latest_snapshots.get(symbol)
             if builder is None or session_decision is None or latest is None:
                 continue
             for result in builder.finalize_until(
                 now,
-                grace_seconds=self.settings.candle_clock_grace_seconds,
-                max_carry_forward_age_seconds=(
-                    self.settings.candle_max_carry_forward_age_seconds
+                grace_seconds=getattr(
+                    self.settings,
+                    'candle_clock_grace_seconds',
+                    1.0,
+                ),
+                max_carry_forward_age_seconds=getattr(
+                    self.settings,
+                    'candle_max_carry_forward_age_seconds',
+                    180.0,
                 ),
             ):
                 self._process_candle_result(
