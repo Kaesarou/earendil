@@ -25,7 +25,14 @@ class AnalysisReadySummaryAggregator(DailySummaryAggregator):
 
     def record(self, event_type: str, payload: dict[str, Any]) -> None:
         super().record(event_type, payload)
-        if event_type == 'market_batch_validated':
+        if event_type == 'market_data_event_received':
+            self.market_data_received += 1
+        elif event_type == 'market_price_changed':
+            self.market_snapshots += 1
+            self.market_data_accepted += 1
+        elif event_type == 'candle_finalized':
+            self.candles_closed += 1
+        elif event_type == 'market_batch_validated':
             batch = payload.get('batch')
             accepted = _attribute(batch, 'accepted') or {}
             self.validated_accepted_total += len(accepted)
