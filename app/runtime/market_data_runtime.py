@@ -107,10 +107,18 @@ class EventDrivenMarketRuntime(
         self.is_broker_authorization_error = is_broker_authorization_error
         self.coordinator = MarketDataCoordinator(
             websocket_required=live_market_data.requires_websocket_health,
-            symbol_silence_seconds=settings.ws_position_silence_seconds,
+            symbol_silence_seconds=getattr(
+                settings,
+                'ws_position_silence_seconds',
+                15.0,
+            ),
         )
         self.decision_windows = DecisionWindowCoordinator(
-            grace_seconds=settings.decision_window_grace_seconds
+            grace_seconds=getattr(
+                settings,
+                'decision_window_grace_seconds',
+                5.0,
+            )
         )
         self.broker_task_runner = BrokerTaskRunner()
         self.broker_operations = AsyncBrokerOperationsCoordinator(
@@ -125,17 +133,25 @@ class EventDrivenMarketRuntime(
             trade_journal=trade_journal,
             market_data_coordinator=self.coordinator,
             is_broker_authorization_error=is_broker_authorization_error,
-            reconciliation_grace_seconds=(
-                settings.position_reconciliation_grace_seconds
+            reconciliation_grace_seconds=getattr(
+                settings,
+                'position_reconciliation_grace_seconds',
+                30.0,
             ),
-            reconciliation_required_misses=(
-                settings.position_reconciliation_required_misses
+            reconciliation_required_misses=getattr(
+                settings,
+                'position_reconciliation_required_misses',
+                3,
             ),
-            reconciliation_miss_interval_seconds=(
-                settings.position_reconciliation_miss_interval_seconds
+            reconciliation_miss_interval_seconds=getattr(
+                settings,
+                'position_reconciliation_miss_interval_seconds',
+                10.0,
             ),
-            rest_control_anomaly_percent=(
-                settings.rest_control_anomaly_percent
+            rest_control_anomaly_percent=getattr(
+                settings,
+                'rest_control_anomaly_percent',
+                0.25,
             ),
         )
         self.candidate_execution = ResilientCandidateExecutionCoordinator(
@@ -150,11 +166,15 @@ class EventDrivenMarketRuntime(
             cooldown_guard=cooldown_guard,
             candidate_economics_estimator=candidate_economics_estimator,
             pending_entry_manager=pending_entry_manager,
-            unknown_lookup_interval_seconds=(
-                settings.unknown_order_lookup_interval_seconds
+            unknown_lookup_interval_seconds=getattr(
+                settings,
+                'unknown_order_lookup_interval_seconds',
+                15.0,
             ),
-            unknown_max_age_minutes=(
-                settings.unknown_order_max_age_minutes
+            unknown_max_age_minutes=getattr(
+                settings,
+                'unknown_order_max_age_minutes',
+                30.0,
             ),
         )
         self.latest_snapshots = {}
@@ -203,17 +223,25 @@ class EventDrivenMarketRuntime(
                 ),
                 'requested_symbols': monitored_symbols,
                 'subscribed_symbols': list(self._applied_feed_symbols),
-                'rest_control_interval_seconds': (
-                    self.settings.rest_control_interval_seconds
+                'rest_control_interval_seconds': getattr(
+                    self.settings,
+                    'rest_control_interval_seconds',
+                    60.0,
                 ),
-                'position_silence_seconds': (
-                    self.settings.ws_position_silence_seconds
+                'position_silence_seconds': getattr(
+                    self.settings,
+                    'ws_position_silence_seconds',
+                    15.0,
                 ),
-                'position_fallback_interval_seconds': (
-                    self.settings.position_fallback_interval_seconds
+                'position_fallback_interval_seconds': getattr(
+                    self.settings,
+                    'position_fallback_interval_seconds',
+                    10.0,
                 ),
-                'candle_clock_grace_seconds': (
-                    self.settings.candle_clock_grace_seconds
+                'candle_clock_grace_seconds': getattr(
+                    self.settings,
+                    'candle_clock_grace_seconds',
+                    1.0,
                 ),
             },
         )
@@ -236,15 +264,26 @@ class EventDrivenMarketRuntime(
                 self._run_position_fallback_if_due(now, monotonic_now)
                 self._run_rest_control_if_due(now, monotonic_now)
                 self._flush_decision_windows(now)
-                self.candidate_execution.schedule_unknown_order_lookups(now=now)
+                candidate_execution = getattr(
+                    self,
+                    'candidate_execution',
+                    None,
+                )
+                if candidate_execution is not None:
+                    candidate_execution.schedule_unknown_order_lookups(now=now)
                 self._drain_broker_completions(now)
+                pending_open_count = (
+                    candidate_execution.pending_open_count()
+                    if candidate_execution is not None
+                    else 0
+                )
                 self.heartbeat.maybe_emit(
                     journal=self.trade_journal,
                     logger=logger,
                     metrics=self.trade_journal.runtime_metrics(),
                     open_positions=(
                         len(self.position_tracker.open_positions_snapshot())
-                        + self.candidate_execution.pending_open_count()
+                        + pending_open_count
                     ),
                     active_symbols=len(self.active_symbols),
                 )
@@ -258,29 +297,52 @@ class EventDrivenMarketRuntime(
         finally:
             self._feed_started = False
             self.live_market_data.stop()
-            self.broker_task_runner.close(wait=False)
+            runner = getattr(self, 'broker_task_runner', None)
+            if runner is not None:
+                runner.close(wait=False)
+            broker_operations = getattr(self, 'broker_operations', None)
+            candidate_execution = getattr(self, 'candidate_execution', None)
             self.trade_journal.write(
                 'market_data_runtime_stopped',
                 {
                     'coordinator_metrics': self.coordinator.metrics,
                     'feed_diagnostics': self.live_market_data.diagnostics(),
                     'symbol_states': self.coordinator.snapshot(),
-                    'broker_operations': self.broker_operations.diagnostics(),
-                    'candidate_execution': self.candidate_execution.diagnostics(),
-                    'broker_tasks_pending': self.broker_task_runner.pending_count(),
+                    'broker_operations': (
+                        broker_operations.diagnostics()
+                        if broker_operations is not None
+                        else {}
+                    ),
+                    'candidate_execution': (
+                        candidate_execution.diagnostics()
+                        if candidate_execution is not None
+                        else {}
+                    ),
+                    'broker_tasks_pending': (
+                        runner.pending_count() if runner is not None else 0
+                    ),
                     'loop_id': self.loop_id,
                 },
             )
 
     def _drain_broker_completions(self, now: datetime) -> None:
-        for completion in self.broker_task_runner.drain():
-            if self.candidate_execution.handle_completion(
-                completion,
-                now=now,
+        runner = getattr(self, 'broker_task_runner', None)
+        if runner is None:
+            return
+        candidate_execution = getattr(self, 'candidate_execution', None)
+        broker_operations = getattr(self, 'broker_operations', None)
+        for completion in runner.drain():
+            if (
+                candidate_execution is not None
+                and candidate_execution.handle_completion(
+                    completion,
+                    now=now,
+                )
             ):
                 continue
-            self.broker_operations.handle_completion(
-                completion,
-                now=now,
-                latest_snapshots=self.latest_snapshots,
-            )
+            if broker_operations is not None:
+                broker_operations.handle_completion(
+                    completion,
+                    now=now,
+                    latest_snapshots=self.latest_snapshots,
+                )
