@@ -34,8 +34,8 @@ from app.risk.trade_cooldown_guard import TradeCooldownGuard
 from app.runtime.factories import build_runtime_clients
 from app.runtime.market_data_runtime import EventDrivenMarketRuntime
 from app.runtime.pending_entry import PendingEntryManager
-from app.runtime.position_lifecycle import restore_persisted_positions
 from app.runtime.runtime_heartbeat import RuntimeHeartbeat
+from app.runtime.startup_position_restore import restore_persisted_positions_batched
 from app.runtime.trading_session_window import (
     TradingSessionState,
     trading_session_service_from_settings,
@@ -293,13 +293,12 @@ def main() -> None:
     )
 
     try:
-        restore_persisted_positions(
+        restore_persisted_positions_batched(
             position_store=position_store,
             position_tracker=position_tracker,
             risk_manager=risk_manager,
             broker=clients.execution_broker,
             trade_journal=trade_journal,
-            cooldown_store=cooldown_store,
             is_broker_authorization_error=is_broker_authorization_error,
         )
         run_status = runtime.run()
