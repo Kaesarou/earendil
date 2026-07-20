@@ -51,6 +51,7 @@ class FakeJournal:
 
 class SessionAwareRuntime(EventDrivenMarketRuntime):
     def __init__(self) -> None:
+        self.run_id = 'test-run'
         self.settings = SimpleNamespace(
             rest_control_interval_seconds=60.0,
             ws_symbol_silence_seconds=5.0,
