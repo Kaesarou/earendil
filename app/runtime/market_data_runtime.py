@@ -117,12 +117,21 @@ class EventDrivenMarketRuntime(
         self._last_position_reconciliation = 0.0
         self._last_bucket_by_symbol = {}
         self._degraded_buckets: set[tuple[str, datetime]] = set()
+        self._feed_started = False
+        self._subscribed_symbols: tuple[str, ...] = ()
 
     def run(self) -> str:
-        monitored_symbols = self._all_monitored_symbols()
+        session_now = datetime.now(timezone.utc)
+        session_monotonic = time.monotonic()
+        self._refresh_sessions_if_due(session_now, session_monotonic)
+        monitored_symbols = self._desired_market_data_symbols()
+
+        self.live_market_data.start(monitored_symbols)
+        self._feed_started = True
+        self._subscribed_symbols = tuple(monitored_symbols)
         started_at = datetime.now(timezone.utc)
         self.coordinator.initialize_symbols(monitored_symbols, now=started_at)
-        self.live_market_data.start(monitored_symbols)
+
         started_monotonic = time.monotonic()
         self._last_rest_control = started_monotonic
         self._last_position_reconciliation = started_monotonic
@@ -177,6 +186,7 @@ class EventDrivenMarketRuntime(
             logger.info('Stopping Goblin!')
             return 'stopped'
         finally:
+            self._feed_started = False
             self.live_market_data.stop()
             self.trade_journal.write(
                 'market_data_runtime_stopped',
