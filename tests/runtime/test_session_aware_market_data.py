@@ -19,6 +19,9 @@ class FakeFeed:
     def subscribed_symbols(self) -> tuple[str, ...]:
         return tuple(self.started_symbols)
 
+    def connection_healthy(self) -> bool:
+        return True
+
     def next_event(self, timeout_seconds: float):
         raise KeyboardInterrupt
 
@@ -54,7 +57,8 @@ class SessionAwareRuntime(EventDrivenMarketRuntime):
         self.run_id = 'test-run'
         self.settings = SimpleNamespace(
             rest_control_interval_seconds=60.0,
-            ws_symbol_silence_seconds=5.0,
+            ws_position_silence_seconds=15.0,
+            position_fallback_interval_seconds=10.0,
         )
         self.live_market_data = FakeFeed()
         self.coordinator = FakeCoordinator()
@@ -68,6 +72,7 @@ class SessionAwareRuntime(EventDrivenMarketRuntime):
         self.loop_id = 0
         self._last_session_refresh = 0.0
         self._last_rest_control = 0.0
+        self._last_position_fallback = 0.0
         self._last_position_reconciliation = 0.0
         self._feed_started = False
         self._subscribed_symbols: tuple[str, ...] = ()
