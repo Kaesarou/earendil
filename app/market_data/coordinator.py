@@ -16,7 +16,7 @@ class _SymbolState:
     last_message_received_at: datetime | None = None
     last_accepted_timestamp: datetime | None = None
     recovery_events: int = 0
-    last_fallback_requested_at: datetime | None = None
+    fallback_started_at: datetime | None = None
 
 
 class MarketDataCoordinator:
@@ -25,12 +25,10 @@ class MarketDataCoordinator:
         *,
         websocket_required: bool,
         symbol_silence_seconds: float,
-        fallback_cooldown_seconds: float,
         duplicate_cache_size: int = 50_000,
     ) -> None:
         self.websocket_required = websocket_required
         self.symbol_silence_seconds = symbol_silence_seconds
-        self.fallback_cooldown_seconds = fallback_cooldown_seconds
         self._states: dict[str, _SymbolState] = {}
         self._seen_message_ids: set[tuple[str | None, str]] = set()
         self._message_id_order: deque[tuple[str | None, str]] = deque()
@@ -48,7 +46,9 @@ class MarketDataCoordinator:
         actual_now = _as_utc(now)
         for symbol in symbols:
             self._states[symbol.strip().upper()] = _SymbolState(
-                last_message_received_at=actual_now if self.websocket_required else None
+                last_message_received_at=(
+                    actual_now if self.websocket_required else None
+                )
             )
 
     def reset_symbol(self, symbol: str, *, now: datetime | None = None) -> None:
@@ -74,6 +74,21 @@ class MarketDataCoordinator:
         if event.source == MarketDataSource.WEBSOCKET:
             state.last_message_received_at = _as_utc(event.received_at)
 
+        if event.source == MarketDataSource.REST_CONTROL:
+            return self._decision(
+                False,
+                'rest_control_diagnostic_only',
+                event,
+                symbol,
+            )
+        if event.source == MarketDataSource.REST_FALLBACK:
+            return self._decision(
+                False,
+                'rest_fallback_position_only',
+                event,
+                symbol,
+            )
+
         snapshot = event.snapshot
         if snapshot is None:
             self._advance_health_without_price(state, event.source)
@@ -97,17 +112,16 @@ class MarketDataCoordinator:
                 symbol,
             )
 
-        if event.source == MarketDataSource.REST_CONTROL:
-            return self._decision(
-                False,
-                'rest_control_diagnostic_only',
-                event,
-                symbol,
-            )
-
         return self._decision(True, 'precheck_passed', event, symbol)
 
     def mark_accepted(self, event: MarketDataEvent) -> MarketDataDecision:
+        if event.source in {
+            MarketDataSource.REST_CONTROL,
+            MarketDataSource.REST_FALLBACK,
+        }:
+            raise ValueError(
+                f'{event.source.value} snapshots cannot enter the live pipeline.'
+            )
         symbol = event.symbol.strip().upper()
         snapshot = event.snapshot
         if snapshot is None:
@@ -122,46 +136,44 @@ class MarketDataCoordinator:
         decision = self.precheck(event)
         return self.mark_accepted(event) if decision.accepted else decision
 
-    def stale_symbols(
+    def position_fallback_symbols(
         self,
         *,
         symbols: list[str],
         now: datetime,
+        force: bool = False,
     ) -> list[str]:
+        """Return open-position symbols currently requiring REST protection.
+
+        A quiet symbol without an open position is never evaluated here. Once a
+        position enters fallback, it remains there until two coherent WebSocket
+        events restore the live feed state.
+        """
         if not self.websocket_required:
             return []
         actual_now = _as_utc(now)
-        stale: list[str] = []
+        result: list[str] = []
         for raw_symbol in symbols:
             symbol = raw_symbol.strip().upper()
             state = self._states.setdefault(symbol, _SymbolState())
             last_message = state.last_message_received_at
-            is_stale = (
-                last_message is None
-                or (actual_now - last_message).total_seconds()
-                > self.symbol_silence_seconds
-            )
-            if not is_stale:
-                continue
-            if state.state not in {
+            stale = force or last_message is None or (
+                actual_now - last_message
+            ).total_seconds() > self.symbol_silence_seconds
+            if stale and state.state not in {
                 SymbolFeedState.REST_FALLBACK,
                 SymbolFeedState.BLOCKED,
             }:
-                state.state = SymbolFeedState.WS_STALE
-            if self._fallback_due(state, actual_now):
-                stale.append(symbol)
-        return stale
-
-    def mark_fallback_requested(self, symbols: list[str], now: datetime) -> None:
-        actual_now = _as_utc(now)
-        for raw_symbol in symbols:
-            symbol = raw_symbol.strip().upper()
-            state = self._states.setdefault(symbol, _SymbolState())
-            state.last_fallback_requested_at = actual_now
-            if state.state != SymbolFeedState.REST_FALLBACK:
+                state.state = SymbolFeedState.REST_FALLBACK
+                state.recovery_events = 0
+                state.fallback_started_at = actual_now
                 self.metrics['symbol_fallback_count'] += 1
-            state.state = SymbolFeedState.REST_FALLBACK
-            state.recovery_events = 0
+            if state.state in {
+                SymbolFeedState.REST_FALLBACK,
+                SymbolFeedState.BLOCKED,
+            }:
+                result.append(symbol)
+        return result
 
     def mark_fallback_failed(self, symbols: list[str]) -> None:
         for raw_symbol in symbols:
@@ -171,6 +183,13 @@ class MarketDataCoordinator:
                 self.metrics['blocked_symbol_count'] += 1
             state.state = SymbolFeedState.BLOCKED
             state.recovery_events = 0
+
+    def mark_fallback_succeeded(self, symbols: list[str]) -> None:
+        for raw_symbol in symbols:
+            symbol = raw_symbol.strip().upper()
+            state = self._states.setdefault(symbol, _SymbolState())
+            if state.state == SymbolFeedState.BLOCKED:
+                state.state = SymbolFeedState.REST_FALLBACK
 
     def entry_allowed(self, symbol: str) -> bool:
         state = self._states.setdefault(symbol.strip().upper(), _SymbolState())
@@ -189,7 +208,7 @@ class MarketDataCoordinator:
                 'last_message_received_at': state.last_message_received_at,
                 'last_accepted_timestamp': state.last_accepted_timestamp,
                 'recovery_events': state.recovery_events,
-                'last_fallback_requested_at': state.last_fallback_requested_at,
+                'fallback_started_at': state.fallback_started_at,
             }
             for symbol, state in sorted(self._states.items())
         }
@@ -242,30 +261,21 @@ class MarketDataCoordinator:
                 if state.recovery_events >= 2:
                     state.state = SymbolFeedState.WS_HEALTHY
                     state.recovery_events = 0
+                    state.fallback_started_at = None
                     self.metrics['symbol_recovery_count'] += 1
                 return
             state.state = SymbolFeedState.WS_HEALTHY
             state.recovery_events = 0
+            state.fallback_started_at = None
             return
 
         if source in {
-            MarketDataSource.REST_FALLBACK,
             MarketDataSource.REST_POLLING,
             MarketDataSource.PAPER,
         }:
-            state.state = (
-                SymbolFeedState.REST_FALLBACK
-                if self.websocket_required
-                and source == MarketDataSource.REST_FALLBACK
-                else SymbolFeedState.WS_HEALTHY
-            )
-
-    def _fallback_due(self, state: _SymbolState, now: datetime) -> bool:
-        previous = state.last_fallback_requested_at
-        return (
-            previous is None
-            or (now - previous).total_seconds() >= self.fallback_cooldown_seconds
-        )
+            state.state = SymbolFeedState.WS_HEALTHY
+            state.recovery_events = 0
+            state.fallback_started_at = None
 
     def _remember_message_id(self, key: tuple[str | None, str]) -> None:
         self._seen_message_ids.add(key)
