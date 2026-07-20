@@ -1,8 +1,5 @@
 from datetime import datetime
 
-from app.runtime.candidate_flow import execute_ranked_candidates
-from app.runtime.position_lifecycle import close_positions_triggered_by_snapshot
-
 
 class MarketDataMaintenance:
     def _all_monitored_symbols(self) -> list[str]:
@@ -52,7 +49,11 @@ class MarketDataMaintenance:
     ) -> None:
         if not self.live_market_data.requires_websocket_health:
             return
-
+        if (
+            monotonic_now - self._last_position_fallback
+            < self.settings.position_fallback_interval_seconds
+        ):
+            return
         applied = set(self._applied_feed_symbols)
         open_symbols = list(
             dict.fromkeys(
@@ -63,7 +64,6 @@ class MarketDataMaintenance:
         )
         if not open_symbols:
             return
-
         fallback_symbols = self.coordinator.position_fallback_symbols(
             symbols=open_symbols,
             now=now,
@@ -71,60 +71,12 @@ class MarketDataMaintenance:
         )
         if not fallback_symbols:
             return
-        if (
-            monotonic_now - self._last_position_fallback
-            < self.settings.position_fallback_interval_seconds
-        ):
-            return
-        self._last_position_fallback = monotonic_now
-
-        try:
-            snapshots = self.rest_market_data.get_market_snapshots(
-                fallback_symbols
-            )
-        except Exception as exc:
-            self.coordinator.mark_fallback_failed(fallback_symbols)
-            self.trade_journal.write(
-                'rest_position_fallback_error',
-                {
-                    'symbols': fallback_symbols,
-                    'message': str(exc),
-                    'loop_id': self.loop_id,
-                },
-            )
-            return
-
-        received_symbols = list(snapshots)
-        if received_symbols:
-            self.coordinator.mark_fallback_succeeded(received_symbols)
-        missing = [
-            symbol for symbol in fallback_symbols if symbol not in snapshots
-        ]
-        if missing:
-            self.coordinator.mark_fallback_failed(missing)
-
-        for symbol, snapshot in snapshots.items():
-            self.trade_journal.write(
-                'rest_position_fallback_snapshot',
-                {
-                    'symbol': symbol,
-                    'snapshot': snapshot,
-                    'loop_id': self.loop_id,
-                },
-            )
-            close_positions_triggered_by_snapshot(
-                symbol=symbol,
-                snapshot=snapshot,
-                executor=self.executor,
-                position_tracker=self.position_tracker,
-                risk_manager=self.risk_manager,
-                trade_journal=self.trade_journal,
-                position_store=self.position_store,
-                cooldown_store=self.cooldown_store,
-                is_broker_authorization_error=(
-                    self.is_broker_authorization_error
-                ),
-            )
+        scheduled = self.broker_operations.schedule_position_fallback(
+            symbols=fallback_symbols,
+            now=now,
+        )
+        if scheduled:
+            self._last_position_fallback = monotonic_now
 
     def _run_rest_control_if_due(
         self,
@@ -138,53 +90,32 @@ class MarketDataMaintenance:
             < self.settings.rest_control_interval_seconds
         ):
             return
-        self._last_rest_control = monotonic_now
         monitored = self._applied_monitored_symbols()
         if not monitored:
+            self._last_rest_control = monotonic_now
             return
-        try:
-            snapshots = self.rest_market_data.get_market_snapshots(monitored)
-        except Exception as exc:
-            self.trade_journal.write(
-                'rest_control_error',
-                {
-                    'symbols': monitored,
-                    'message': str(exc),
-                    'loop_id': self.loop_id,
-                },
-            )
-            return
-
-        for symbol, snapshot in snapshots.items():
-            websocket_snapshot = self.latest_snapshots.get(symbol)
-            self.trade_journal.write(
-                'rest_control_snapshot',
-                {
-                    'symbol': symbol,
-                    'rest_snapshot': snapshot,
-                    'websocket_snapshot': websocket_snapshot,
-                    'last_delta': (
-                        snapshot.last - websocket_snapshot.last
-                        if websocket_snapshot is not None
-                        else None
-                    ),
-                    'loop_id': self.loop_id,
-                },
-            )
+        scheduled = self.broker_operations.schedule_rest_control(
+            symbols=monitored,
+            now=now,
+        )
+        if scheduled:
+            self._last_rest_control = monotonic_now
 
     def _flush_decision_windows(self, now: datetime) -> None:
-        for candidates in self.decision_windows.pop_ready(now=now):
-            execute_ranked_candidates(
-                candidates=candidates,
-                execution_broker=self.execution_broker,
-                risk_manager=self.risk_manager,
-                executor=self.executor,
-                position_tracker=self.position_tracker,
-                trade_journal=self.trade_journal,
-                position_store=self.position_store,
-                strategy_profile=self.strategy_profile,
-                cooldown_guard=self.cooldown_guard,
-                candidate_economics_estimator=self.candidate_economics_estimator,
-                is_broker_authorization_error=self.is_broker_authorization_error,
-                pending_entry_manager=self.pending_entry_manager,
+        for batch in self.decision_windows.pop_ready_batches(now=now):
+            self.trade_journal.write(
+                'decision_window_finalized',
+                {
+                    'closed_at': batch.closed_at,
+                    'finalization_reason': batch.finalization_reason,
+                    'expected_symbol_count': len(batch.expected_symbols),
+                    'completed_symbol_count': len(batch.completed_symbols),
+                    'missing_symbol_count': len(batch.missing_symbols),
+                    'missing_symbols': list(batch.missing_symbols),
+                    'candidate_count': len(batch.candidates),
+                },
+            )
+            self.candidate_execution.submit_candidates(
+                list(batch.candidates),
+                now=now,
             )
