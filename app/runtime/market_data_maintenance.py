@@ -1,5 +1,7 @@
 from datetime import datetime
 
+from app.runtime.position_lifecycle import close_positions_triggered_by_snapshot
+
 
 class MarketDataMaintenance:
     def _all_monitored_symbols(self) -> list[str]:
@@ -71,12 +73,65 @@ class MarketDataMaintenance:
         )
         if not fallback_symbols:
             return
-        scheduled = self.broker_operations.schedule_position_fallback(
-            symbols=fallback_symbols,
-            now=now,
-        )
-        if scheduled:
-            self._last_position_fallback = monotonic_now
+
+        broker_operations = getattr(self, 'broker_operations', None)
+        if broker_operations is not None:
+            scheduled = broker_operations.schedule_position_fallback(
+                symbols=fallback_symbols,
+                now=now,
+            )
+            if scheduled:
+                self._last_position_fallback = monotonic_now
+            return
+
+        # Compatibility path for isolated tests and legacy embedders. The
+        # production EventDrivenMarketRuntime always takes the async path above.
+        self._last_position_fallback = monotonic_now
+        try:
+            snapshots = self.rest_market_data.get_market_snapshots(
+                fallback_symbols
+            )
+        except Exception as exc:
+            self.coordinator.mark_fallback_failed(fallback_symbols)
+            self.trade_journal.write(
+                'rest_position_fallback_error',
+                {
+                    'symbols': fallback_symbols,
+                    'message': str(exc),
+                    'loop_id': self.loop_id,
+                },
+            )
+            return
+        received = list(snapshots)
+        if received:
+            self.coordinator.mark_fallback_succeeded(received)
+        missing = [
+            symbol for symbol in fallback_symbols if symbol not in snapshots
+        ]
+        if missing:
+            self.coordinator.mark_fallback_failed(missing)
+        for symbol, snapshot in snapshots.items():
+            self.trade_journal.write(
+                'rest_position_fallback_snapshot',
+                {
+                    'symbol': symbol,
+                    'snapshot': snapshot,
+                    'loop_id': self.loop_id,
+                },
+            )
+            close_positions_triggered_by_snapshot(
+                symbol=symbol,
+                snapshot=snapshot,
+                executor=self.executor,
+                position_tracker=self.position_tracker,
+                risk_manager=self.risk_manager,
+                trade_journal=self.trade_journal,
+                position_store=self.position_store,
+                cooldown_store=self.cooldown_store,
+                is_broker_authorization_error=(
+                    self.is_broker_authorization_error
+                ),
+            )
 
     def _run_rest_control_if_due(
         self,
