@@ -1,10 +1,13 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from app.brokers.base import BrokerClient, OpenPositionResult
+from app.brokers.etoro.order_confirmation_error import (
+    EtoroOrderConfirmationUnknownError,
+)
 from app.brokers.etoro.order_response_parser import (
     extract_executed_position_details_list,
     is_order_rejected,
@@ -134,6 +137,11 @@ def resolve_unknown_open_order(
 
 
 def order_id_from_confirmation_error(exc: Exception) -> str | None:
+    if isinstance(exc, EtoroOrderConfirmationUnknownError):
+        return exc.order_id
+    value = getattr(exc, 'order_id', None)
+    if value:
+        return str(value)
     message = str(exc)
     marker = 'order_id='
     if marker not in message:
@@ -142,11 +150,29 @@ def order_id_from_confirmation_error(exc: Exception) -> str | None:
     return candidate.split(',', maxsplit=1)[0].split(' ', maxsplit=1)[0].strip()
 
 
+def reference_id_from_confirmation_error(exc: Exception) -> str | None:
+    if isinstance(exc, EtoroOrderConfirmationUnknownError):
+        return exc.reference_id
+    value = getattr(exc, 'reference_id', None)
+    return str(value) if value else None
+
+
+def submitted_at_from_confirmation_error(
+    exc: Exception,
+    fallback: datetime,
+) -> datetime:
+    value = getattr(exc, 'submitted_at', None)
+    return _as_utc(value) if isinstance(value, datetime) else _as_utc(fallback)
+
+
 def is_confirmation_unknown_error(exc: Exception) -> bool:
+    if isinstance(exc, EtoroOrderConfirmationUnknownError):
+        return True
     message = str(exc).lower()
     return (
         'order was not executed with required details after polling' in message
         or 'order category not found' in message
+        or 'order confirmation unknown' in message
     ) and order_id_from_confirmation_error(exc) is not None
 
 
@@ -155,10 +181,11 @@ def _matching_portfolio_positions(
     portfolio: dict,
     lookup: UnknownOrderLookup,
 ) -> list[dict]:
+    known_ids = set(lookup.known_position_ids)
     positions = [
         item
         for item in extract_open_positions(portfolio)
-        if str(extract_position_id(item)) not in set(lookup.known_position_ids)
+        if str(extract_position_id(item)) not in known_ids
     ]
     instrument_id = None
     resolver = getattr(raw_broker, '_find_instrument_id', None)
@@ -168,6 +195,7 @@ def _matching_portfolio_positions(
         except Exception:
             instrument_id = None
 
+    earliest_plausible_open = _as_utc(lookup.submitted_at) - timedelta(minutes=2)
     result: list[dict] = []
     for position in positions:
         if instrument_id is not None:
@@ -194,7 +222,7 @@ def _matching_portfolio_positions(
             position,
             ('openDateTime', 'openedAt', 'openTime', 'createdAt'),
         )
-        if opened_at is not None and opened_at < _as_utc(lookup.submitted_at):
+        if opened_at is not None and opened_at < earliest_plausible_open:
             continue
         result.append(position)
     return result
@@ -213,7 +241,7 @@ def _position_side(payload: dict) -> str | None:
             return normalized
         if normalized in {'OPENBUY', 'BUYOPEN'}:
             return 'BUY'
-        if normalized in {'OPENSELL', 'SELLSHORT', 'SELL'}:
+        if normalized in {'OPENSELL', 'SELLSHORT'}:
             return 'SELL'
     return None
 
@@ -243,7 +271,9 @@ def _optional_datetime(payload: dict, keys: tuple[str, ...]) -> datetime | None:
         if isinstance(value, datetime):
             return _as_utc(value)
         try:
-            return _as_utc(datetime.fromisoformat(str(value).replace('Z', '+00:00')))
+            return _as_utc(
+                datetime.fromisoformat(str(value).replace('Z', '+00:00'))
+            )
         except ValueError:
             continue
     return None
