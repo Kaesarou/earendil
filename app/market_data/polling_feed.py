@@ -54,6 +54,9 @@ class PollingMarketDataFeed(LiveMarketDataFeed):
             self._symbols = normalized
             self._subscription_updates += 1
 
+    def subscribed_symbols(self) -> tuple[str, ...]:
+        return self._current_symbols()
+
     def next_event(self, timeout_seconds: float) -> MarketDataEvent | None:
         try:
             return self._queue.get(timeout=timeout_seconds)
