@@ -44,6 +44,7 @@ class Settings(BaseSettings):
         default=15,
         alias='JOURNAL_PARTIAL_SUMMARY_INTERVAL_MINUTES',
     )
+    journal_max_runs: int = Field(default=30, alias='JOURNAL_MAX_RUNS')
     runtime_heartbeat_minutes: int = Field(
         default=5,
         alias='RUNTIME_HEARTBEAT_MINUTES',
@@ -73,6 +74,10 @@ class Settings(BaseSettings):
         default=60.0,
         alias='REST_CONTROL_INTERVAL_SECONDS',
     )
+    rest_control_anomaly_percent: float = Field(
+        default=0.25,
+        alias='REST_CONTROL_ANOMALY_PERCENT',
+    )
     position_fallback_interval_seconds: float = Field(
         default=10.0,
         validation_alias=AliasChoices(
@@ -83,6 +88,43 @@ class Settings(BaseSettings):
     decision_window_grace_seconds: float = Field(
         default=5.0,
         alias='DECISION_WINDOW_GRACE_SECONDS',
+    )
+    candle_clock_grace_seconds: float = Field(
+        default=1.0,
+        alias='CANDLE_CLOCK_GRACE_SECONDS',
+    )
+    candle_max_carry_forward_age_seconds: float = Field(
+        default=180.0,
+        alias='CANDLE_MAX_CARRY_FORWARD_AGE_SECONDS',
+    )
+    candle_ordering_drop_degrade_count: int = Field(
+        default=3,
+        alias='CANDLE_ORDERING_DROP_DEGRADE_COUNT',
+    )
+    candle_ordering_drop_degrade_ratio: float = Field(
+        default=0.10,
+        alias='CANDLE_ORDERING_DROP_DEGRADE_RATIO',
+    )
+
+    position_reconciliation_grace_seconds: float = Field(
+        default=30.0,
+        alias='POSITION_RECONCILIATION_GRACE_SECONDS',
+    )
+    position_reconciliation_required_misses: int = Field(
+        default=3,
+        alias='POSITION_RECONCILIATION_REQUIRED_MISSES',
+    )
+    position_reconciliation_miss_interval_seconds: float = Field(
+        default=10.0,
+        alias='POSITION_RECONCILIATION_MISS_INTERVAL_SECONDS',
+    )
+    unknown_order_lookup_interval_seconds: float = Field(
+        default=15.0,
+        alias='UNKNOWN_ORDER_LOOKUP_INTERVAL_SECONDS',
+    )
+    unknown_order_max_age_minutes: float = Field(
+        default=30.0,
+        alias='UNKNOWN_ORDER_MAX_AGE_MINUTES',
     )
 
     etoro_api_key: str = Field(default='', alias='ETORO_API_KEY')
@@ -135,6 +177,16 @@ class Settings(BaseSettings):
     @classmethod
     def enforce_position_fallback_interval_floor(cls, value: float) -> float:
         return max(10.0, value)
+
+    @field_validator('position_reconciliation_required_misses')
+    @classmethod
+    def enforce_reconciliation_miss_floor(cls, value: int) -> int:
+        return max(2, value)
+
+    @field_validator('journal_max_runs')
+    @classmethod
+    def enforce_journal_run_floor(cls, value: int) -> int:
+        return max(1, value)
 
     def watchlist_symbols(self) -> list[str]:
         symbols = self._parse_symbols(self.watchlist)
