@@ -3,24 +3,23 @@ from threading import Event
 from app.runtime.broker_task_runner import BrokerTaskRunner
 
 
-def test_broker_task_runner_returns_success_and_error_completions():
+def test_broker_task_runner_returns_success_completion():
     runner = BrokerTaskRunner()
     gate = Event()
+
+    def succeed():
+        gate.wait(1)
+        return 42
 
     runner.submit(
         kind='success',
         task_id='success-1',
         context={'value': 1},
-        operation=lambda: gate.wait(1) or 42,
+        operation=succeed,
     )
     gate.set()
-
-    completions = []
-    for _ in range(100):
-        completions.extend(runner.drain())
-        if completions:
-            break
     runner.close(wait=True)
+    completions = runner.drain()
 
     assert len(completions) == 1
     assert completions[0].kind == 'success'
