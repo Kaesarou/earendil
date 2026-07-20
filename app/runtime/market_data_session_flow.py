@@ -97,17 +97,36 @@ class MarketDataSessionFlow:
         removed = sorted(previous - current)
 
         self.live_market_data.update_symbols(list(desired))
-        synchronized_at = datetime.now(timezone.utc)
-        for symbol in added:
-            self.coordinator.reset_symbol(symbol, now=synchronized_at)
         self._subscribed_symbols = desired
         self.trade_journal.write(
-            'market_data_subscription_changed',
+            'market_data_subscription_requested',
             {
                 'added_symbols': added,
                 'removed_symbols': removed,
-                'subscribed_symbols': list(desired),
-                'synchronized_at': synchronized_at,
+                'requested_symbols': list(desired),
+                'requested_at': datetime.now(timezone.utc),
+                'loop_id': self.loop_id,
+            },
+        )
+
+    def _refresh_applied_market_data_subscription(self, now: datetime) -> None:
+        applied = tuple(self.live_market_data.subscribed_symbols())
+        if applied == self._applied_feed_symbols:
+            return
+        previous = set(self._applied_feed_symbols)
+        current = set(applied)
+        added = sorted(current - previous)
+        removed = sorted(previous - current)
+        for symbol in added:
+            self.coordinator.reset_symbol(symbol, now=now)
+        self._applied_feed_symbols = applied
+        self.trade_journal.write(
+            'market_data_subscription_applied',
+            {
+                'added_symbols': added,
+                'removed_symbols': removed,
+                'subscribed_symbols': list(applied),
+                'applied_at': now,
                 'loop_id': self.loop_id,
             },
         )
