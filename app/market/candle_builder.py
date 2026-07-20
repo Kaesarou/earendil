@@ -15,6 +15,8 @@ class CandleBuilder:
         self._real_sample_count = 0
         self._carried_forward = False
         self._last_real_timestamp: datetime | None = None
+        self._last_closed_carried_forward = False
+        self._last_closed_price_age_seconds: float | None = None
 
     def reset(self) -> None:
         self._current_bucket_start = None
@@ -23,6 +25,8 @@ class CandleBuilder:
         self._real_sample_count = 0
         self._carried_forward = False
         self._last_real_timestamp = None
+        self._last_closed_carried_forward = False
+        self._last_closed_price_age_seconds = None
 
     @property
     def current_bucket_start(self) -> datetime | None:
@@ -32,11 +36,21 @@ class CandleBuilder:
     def last_price(self) -> float | None:
         return self._prices[-1] if self._prices else None
 
+    def take_last_closed_metadata(self) -> tuple[bool, float | None]:
+        result = (
+            self._last_closed_carried_forward,
+            self._last_closed_price_age_seconds,
+        )
+        self._last_closed_carried_forward = False
+        self._last_closed_price_age_seconds = None
+        return result
+
     def on_snapshot(self, snapshot: MarketSnapshot) -> Candle | None:
         bucket_start = self._bucket_start(snapshot.timestamp)
-        self._last_real_timestamp = self._as_utc(snapshot.timestamp)
+        snapshot_timestamp = self._as_utc(snapshot.timestamp)
 
         if self._current_bucket_start is None:
+            self._last_real_timestamp = snapshot_timestamp
             self._start_new_bucket(snapshot, bucket_start)
             return None
 
@@ -44,11 +58,17 @@ class CandleBuilder:
             return None
 
         if bucket_start == self._current_bucket_start:
+            self._last_real_timestamp = snapshot_timestamp
             self._prices.append(snapshot.last)
             self._real_sample_count += 1
             return None
 
         closed_candle = self._close_current_bucket()
+        self._last_closed_carried_forward = self._carried_forward
+        self._last_closed_price_age_seconds = self._price_age_at(
+            closed_candle.closed_at
+        )
+        self._last_real_timestamp = snapshot_timestamp
         self._start_new_bucket(snapshot, bucket_start)
         return closed_candle
 
@@ -76,15 +96,8 @@ class CandleBuilder:
             <= cutoff
         ):
             candle = self._close_current_bucket()
-            age = (
-                max(
-                    0.0,
-                    (candle.closed_at - self._last_real_timestamp).total_seconds(),
-                )
-                if self._last_real_timestamp is not None
-                else None
-            )
             carried = self._carried_forward
+            age = self._price_age_at(candle.closed_at)
             last_price = candle.close
             symbol = candle.symbol
             next_bucket = candle.closed_at
@@ -139,6 +152,14 @@ class CandleBuilder:
             closed_at=self._current_bucket_start
             + timedelta(seconds=self.timeframe_seconds),
             sample_count=self._real_sample_count,
+        )
+
+    def _price_age_at(self, value: datetime) -> float | None:
+        if self._last_real_timestamp is None:
+            return None
+        return max(
+            0.0,
+            (self._as_utc(value) - self._last_real_timestamp).total_seconds(),
         )
 
     def _bucket_start(self, timestamp: datetime) -> datetime:
