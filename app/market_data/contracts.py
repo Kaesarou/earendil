@@ -18,7 +18,12 @@ class LiveMarketDataFeed(ABC):
 
     @abstractmethod
     def update_symbols(self, symbols: list[str]) -> None:
-        """Replace the subscribed universe with the supplied symbols."""
+        """Request replacement of the subscribed universe."""
+        raise NotImplementedError
+
+    @abstractmethod
+    def subscribed_symbols(self) -> tuple[str, ...]:
+        """Return the symbols whose subscription is currently applied."""
         raise NotImplementedError
 
     @abstractmethod
