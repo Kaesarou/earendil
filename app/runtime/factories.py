@@ -38,10 +38,11 @@ def build_runtime_clients(settings: Settings) -> RuntimeClients:
         market_data = EtoroRestMarketDataClient(etoro)
         mode = settings.market_data_mode.strip().lower()
         if mode not in {'auto', 'websocket', 'polling'}:
-            raise ValueError(f'Unsupported MARKET_DATA_MODE: {settings.market_data_mode}')
-        use_websocket = mode in {'auto', 'websocket'}
+            raise ValueError(
+                f'Unsupported MARKET_DATA_MODE: {settings.market_data_mode}'
+            )
         live_feed: LiveMarketDataFeed
-        if use_websocket:
+        if mode in {'auto', 'websocket'}:
             live_feed = EtoroWebSocketMarketDataFeed(
                 api_key=settings.etoro_api_key,
                 user_key=settings.etoro_user_key,
@@ -63,3 +64,8 @@ def build_runtime_clients(settings: Settings) -> RuntimeClients:
         )
 
     raise ValueError(f'Unsupported broker: {settings.broker}')
+
+
+def build_broker(settings: Settings) -> BrokerClient:
+    """Compatibility entry point for code that only needs execution services."""
+    return build_runtime_clients(settings).execution_broker

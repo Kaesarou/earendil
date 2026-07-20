@@ -25,20 +25,31 @@ def build_subscription_request(
         'id': request_id or str(uuid4()),
         'operation': 'Subscribe',
         'data': {
-            'topics': [f'instrument:{instrument_id}' for instrument_id in instrument_ids],
+            'topics': [
+                f'instrument:{instrument_id}'
+                for instrument_id in instrument_ids
+            ],
             'snapshot': True,
         },
     }
 
 
-def validate_authentication_response(raw_message: str, *, request_id: str) -> None:
-    payload = json.loads(raw_message)
+def validate_authentication_response(
+    raw_message: str,
+    *,
+    request_id: str,
+) -> None:
+    payload = parse_json_frame(raw_message)
     if not isinstance(payload, dict) or payload.get('id') != request_id:
         raise ValueError('Unexpected WebSocket authentication response.')
-    if payload.get('operation') != 'Authenticate' or payload.get('success') is not True:
+    if (
+        payload.get('operation') != 'Authenticate'
+        or payload.get('success') is not True
+    ):
         raise RuntimeError(
             'eToro WebSocket authentication failed: '
-            f"code={payload.get('errorCode')}, message={payload.get('errorMessage')}"
+            f"code={payload.get('errorCode')}, "
+            f"message={payload.get('errorMessage')}"
         )
 
 
@@ -50,7 +61,7 @@ def parse_websocket_events(
     connection_id: str,
     rate_state_by_instrument_id: dict[int, dict],
 ) -> list[MarketDataEvent]:
-    payload = json.loads(raw_message)
+    payload = parse_json_frame(raw_message)
     if not isinstance(payload, dict):
         return []
     messages = payload.get('messages')
@@ -61,16 +72,19 @@ def parse_websocket_events(
     for message in messages:
         if not isinstance(message, dict):
             continue
-        topic = message.get('topic')
-        instrument_id = _instrument_id(topic)
+        instrument_id = _instrument_id(message.get('topic'))
         if instrument_id is None:
             continue
         symbol = symbol_by_instrument_id.get(instrument_id)
         if symbol is None:
             continue
         patch = _content_payload(message.get('content'))
-        is_snapshot = message.get('type') == 'Snapshot'
-        previous = {} if is_snapshot else rate_state_by_instrument_id.get(instrument_id, {})
+        is_snapshot = str(message.get('type') or '').lower() == 'snapshot'
+        previous = (
+            {}
+            if is_snapshot
+            else rate_state_by_instrument_id.get(instrument_id, {})
+        )
         merged = {**previous, **patch}
         rate_state_by_instrument_id[instrument_id] = merged
 
@@ -113,6 +127,31 @@ def parse_websocket_events(
             )
         )
     return result
+
+
+def parse_json_frame(raw_message: str) -> object:
+    try:
+        return json.loads(raw_message)
+    except json.JSONDecodeError as original_error:
+        decoder = json.JSONDecoder()
+        starts = sorted(
+            index
+            for index in (
+                raw_message.find('{'),
+                raw_message.find('['),
+            )
+            if 0 <= index <= 32
+        )
+        for start in starts:
+            try:
+                payload, end = decoder.raw_decode(raw_message[start:])
+            except json.JSONDecodeError:
+                continue
+            trailing = raw_message[start + end :]
+            if trailing.strip(' \t\r\n\x00\x1e'):
+                continue
+            return payload
+        raise original_error
 
 
 def _snapshot(
@@ -174,7 +213,7 @@ def _content_payload(value: object) -> dict:
     if not isinstance(value, str):
         return {}
     try:
-        parsed = json.loads(value)
+        parsed = parse_json_frame(value)
     except json.JSONDecodeError:
         return {}
     return parsed if isinstance(parsed, dict) else {}

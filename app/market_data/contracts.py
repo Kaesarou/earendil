@@ -28,3 +28,6 @@ class LiveMarketDataFeed(ABC):
     @abstractmethod
     def requires_websocket_health(self) -> bool:
         raise NotImplementedError
+
+    def diagnostics(self) -> dict[str, object]:
+        return {}

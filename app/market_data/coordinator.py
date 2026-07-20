@@ -44,10 +44,23 @@ class MarketDataCoordinator:
             'blocked_symbol_count': 0,
         }
 
-    def reset_symbol(self, symbol: str) -> None:
-        self._states[symbol.strip().upper()] = _SymbolState()
+    def initialize_symbols(self, symbols: list[str], *, now: datetime) -> None:
+        actual_now = _as_utc(now)
+        for symbol in symbols:
+            self._states[symbol.strip().upper()] = _SymbolState(
+                last_message_received_at=actual_now if self.websocket_required else None
+            )
 
-    def decision_for(self, event: MarketDataEvent) -> MarketDataDecision:
+    def reset_symbol(self, symbol: str, *, now: datetime | None = None) -> None:
+        self._states[symbol.strip().upper()] = _SymbolState(
+            last_message_received_at=(
+                _as_utc(now)
+                if now is not None and self.websocket_required
+                else None
+            )
+        )
+
+    def precheck(self, event: MarketDataEvent) -> MarketDataDecision:
         symbol = event.symbol.strip().upper()
         state = self._states.setdefault(symbol, _SymbolState())
 
@@ -55,12 +68,7 @@ class MarketDataCoordinator:
             key = (event.connection_id, event.message_id)
             if key in self._seen_message_ids:
                 self.metrics['duplicate_message_ids_dropped'] += 1
-                return MarketDataDecision(
-                    accepted=False,
-                    reason='duplicate_message_id',
-                    event=event,
-                    entry_allowed=self.entry_allowed(symbol),
-                )
+                return self._decision(False, 'duplicate_message_id', event, symbol)
             self._remember_message_id(key)
 
         if event.source == MarketDataSource.WEBSOCKET:
@@ -69,11 +77,11 @@ class MarketDataCoordinator:
         snapshot = event.snapshot
         if snapshot is None:
             self._advance_health_without_price(state, event.source)
-            return MarketDataDecision(
-                accepted=False,
-                reason='message_without_complete_quote',
-                event=event,
-                entry_allowed=self.entry_allowed(symbol),
+            return self._decision(
+                False,
+                'message_without_complete_quote',
+                event,
+                symbol,
             )
 
         timestamp = _as_utc(snapshot.timestamp)
@@ -82,30 +90,37 @@ class MarketDataCoordinator:
             and timestamp < state.last_accepted_timestamp
         ):
             self.metrics['out_of_order_events_dropped'] += 1
-            return MarketDataDecision(
-                accepted=False,
-                reason='strict_out_of_order_timestamp',
-                event=event,
-                entry_allowed=self.entry_allowed(symbol),
+            return self._decision(
+                False,
+                'strict_out_of_order_timestamp',
+                event,
+                symbol,
             )
 
         if event.source == MarketDataSource.REST_CONTROL:
-            return MarketDataDecision(
-                accepted=False,
-                reason='rest_control_diagnostic_only',
-                event=event,
-                entry_allowed=self.entry_allowed(symbol),
+            return self._decision(
+                False,
+                'rest_control_diagnostic_only',
+                event,
+                symbol,
             )
 
+        return self._decision(True, 'precheck_passed', event, symbol)
+
+    def mark_accepted(self, event: MarketDataEvent) -> MarketDataDecision:
+        symbol = event.symbol.strip().upper()
+        snapshot = event.snapshot
+        if snapshot is None:
+            raise ValueError('Cannot accept a market-data event without a snapshot.')
+        state = self._states.setdefault(symbol, _SymbolState())
         self._advance_health(state, event.source)
-        state.last_accepted_timestamp = timestamp
+        state.last_accepted_timestamp = _as_utc(snapshot.timestamp)
         self.metrics['accepted_events'] += 1
-        return MarketDataDecision(
-            accepted=True,
-            reason='accepted',
-            event=event,
-            entry_allowed=self.entry_allowed(symbol),
-        )
+        return self._decision(True, 'accepted', event, symbol)
+
+    def decision_for(self, event: MarketDataEvent) -> MarketDataDecision:
+        decision = self.precheck(event)
+        return self.mark_accepted(event) if decision.accepted else decision
 
     def stale_symbols(
         self,
@@ -159,8 +174,6 @@ class MarketDataCoordinator:
 
     def entry_allowed(self, symbol: str) -> bool:
         state = self._states.setdefault(symbol.strip().upper(), _SymbolState())
-        if not self.websocket_required:
-            return state.state == SymbolFeedState.WS_HEALTHY
         return state.state == SymbolFeedState.WS_HEALTHY
 
     def state_for(self, symbol: str) -> SymbolFeedState:
@@ -180,6 +193,20 @@ class MarketDataCoordinator:
             }
             for symbol, state in sorted(self._states.items())
         }
+
+    def _decision(
+        self,
+        accepted: bool,
+        reason: str,
+        event: MarketDataEvent,
+        symbol: str,
+    ) -> MarketDataDecision:
+        return MarketDataDecision(
+            accepted=accepted,
+            reason=reason,
+            event=event,
+            entry_allowed=self.entry_allowed(symbol),
+        )
 
     def _advance_health_without_price(
         self,
@@ -221,11 +248,17 @@ class MarketDataCoordinator:
             state.recovery_events = 0
             return
 
-        if source in {MarketDataSource.REST_FALLBACK, MarketDataSource.PAPER}:
-            if self.websocket_required:
-                state.state = SymbolFeedState.REST_FALLBACK
-            else:
-                state.state = SymbolFeedState.WS_HEALTHY
+        if source in {
+            MarketDataSource.REST_FALLBACK,
+            MarketDataSource.REST_POLLING,
+            MarketDataSource.PAPER,
+        }:
+            state.state = (
+                SymbolFeedState.REST_FALLBACK
+                if self.websocket_required
+                and source == MarketDataSource.REST_FALLBACK
+                else SymbolFeedState.WS_HEALTHY
+            )
 
     def _fallback_due(self, state: _SymbolState, now: datetime) -> bool:
         previous = state.last_fallback_requested_at

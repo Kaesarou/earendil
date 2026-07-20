@@ -10,6 +10,7 @@ from uuid import uuid4
 from app.brokers.etoro.websocket_protocol import (
     build_authentication_request,
     build_subscription_request,
+    parse_json_frame,
     parse_websocket_events,
     validate_authentication_response,
 )
@@ -35,12 +36,20 @@ class EtoroWebSocketMarketDataFeed(LiveMarketDataFeed):
         self.rest_client = rest_client
         self.global_silence_seconds = global_silence_seconds
         self.connector = connector or _default_connector
-        self._queue: queue.Queue[MarketDataEvent] = queue.Queue(maxsize=queue_capacity)
+        self._queue: queue.Queue[MarketDataEvent] = queue.Queue(
+            maxsize=queue_capacity
+        )
         self._stop_event = threading.Event()
         self._thread: threading.Thread | None = None
         self._fatal_error: Exception | None = None
         self._symbols: list[str] = []
         self._instrument_id_by_symbol: dict[str, int] = {}
+        self._connections = 0
+        self._reconnections = 0
+        self._events = 0
+        self._null_frames = 0
+        self._global_silences = 0
+        self._last_error: str | None = None
 
     @property
     def requires_websocket_health(self) -> bool:
@@ -49,8 +58,12 @@ class EtoroWebSocketMarketDataFeed(LiveMarketDataFeed):
     def start(self, symbols: list[str]) -> None:
         if self._thread is not None:
             return
-        self._symbols = list(dict.fromkeys(symbol.strip().upper() for symbol in symbols))
-        self._instrument_id_by_symbol = self.rest_client.resolve_instrument_ids(self._symbols)
+        self._symbols = list(
+            dict.fromkeys(symbol.strip().upper() for symbol in symbols)
+        )
+        self._instrument_id_by_symbol = (
+            self.rest_client.resolve_instrument_ids(self._symbols)
+        )
         self._thread = threading.Thread(
             target=self._thread_main,
             name='etoro-websocket-market-data',
@@ -63,7 +76,9 @@ class EtoroWebSocketMarketDataFeed(LiveMarketDataFeed):
             return self._queue.get(timeout=timeout_seconds)
         except queue.Empty:
             if self._fatal_error is not None:
-                raise RuntimeError('eToro WebSocket market-data feed failed') from self._fatal_error
+                raise RuntimeError(
+                    'eToro WebSocket market-data feed failed'
+                ) from self._fatal_error
             return None
 
     def stop(self) -> None:
@@ -71,31 +86,52 @@ class EtoroWebSocketMarketDataFeed(LiveMarketDataFeed):
         if self._thread is not None:
             self._thread.join(timeout=10.0)
 
+    def diagnostics(self) -> dict[str, object]:
+        return {
+            'mode': 'websocket',
+            'connections': self._connections,
+            'reconnections': self._reconnections,
+            'events': self._events,
+            'null_frames': self._null_frames,
+            'global_silences': self._global_silences,
+            'queue_size': self._queue.qsize(),
+            'last_error': self._last_error,
+            'fatal_error': str(self._fatal_error) if self._fatal_error else None,
+        }
+
     def _thread_main(self) -> None:
         try:
             asyncio.run(self._run())
         except Exception as exc:
             self._fatal_error = exc
+            self._last_error = str(exc)
 
     async def _run(self) -> None:
         backoff_seconds = 1.0
+        first_connection = True
         while not self._stop_event.is_set():
             try:
+                if not first_connection:
+                    self._reconnections += 1
+                first_connection = False
                 await self._run_connection()
                 backoff_seconds = 1.0
             except asyncio.CancelledError:
                 raise
-            except Exception:
+            except Exception as exc:
+                self._last_error = str(exc)
                 if self._stop_event.is_set():
                     return
                 await asyncio.sleep(backoff_seconds)
                 backoff_seconds = min(backoff_seconds * 2, 30.0)
 
     async def _run_connection(self) -> None:
+        self._connections += 1
         connection_id = str(uuid4())
         symbol_by_instrument_id = {
             instrument_id: symbol
-            for symbol, instrument_id in self._instrument_id_by_symbol.items()
+            for symbol, instrument_id
+            in self._instrument_id_by_symbol.items()
         }
         state: dict[int, dict] = {}
         async with self.connector(self.websocket_url) as websocket:
@@ -108,9 +144,14 @@ class EtoroWebSocketMarketDataFeed(LiveMarketDataFeed):
                 websocket,
                 request_id=auth['id'],
             )
-            validate_authentication_response(auth_text, request_id=auth['id'])
+            validate_authentication_response(
+                auth_text,
+                request_id=auth['id'],
+            )
 
-            subscription = build_subscription_request(list(symbol_by_instrument_id))
+            subscription = build_subscription_request(
+                list(symbol_by_instrument_id)
+            )
             await websocket.send(json.dumps(subscription))
             consecutive_silences = 0
             while not self._stop_event.is_set():
@@ -120,15 +161,19 @@ class EtoroWebSocketMarketDataFeed(LiveMarketDataFeed):
                         timeout=self.global_silence_seconds,
                     )
                 except TimeoutError:
+                    self._global_silences += 1
                     consecutive_silences += 1
                     pong_waiter = await websocket.ping()
                     await asyncio.wait_for(pong_waiter, timeout=5.0)
                     if consecutive_silences >= 2:
-                        raise RuntimeError('WebSocket stream globally silent')
+                        raise RuntimeError(
+                            'WebSocket stream globally silent'
+                        )
                     continue
                 consecutive_silences = 0
                 text = _decode_frame(raw)
                 if text == '\x00':
+                    self._null_frames += 1
                     continue
                 received_at = datetime.now(timezone.utc)
                 for event in parse_websocket_events(
@@ -143,8 +188,11 @@ class EtoroWebSocketMarketDataFeed(LiveMarketDataFeed):
     def _publish(self, event: MarketDataEvent) -> None:
         try:
             self._queue.put(event, timeout=1.0)
+            self._events += 1
         except queue.Full as exc:
-            self._fatal_error = RuntimeError('Market-data queue overflow')
+            self._fatal_error = RuntimeError(
+                'Market-data queue overflow'
+            )
             self._stop_event.set()
             raise self._fatal_error from exc
 
@@ -166,7 +214,9 @@ def _decode_frame(raw: str | bytes) -> str:
         return raw
     if isinstance(raw, bytes):
         return raw.decode('utf-8')
-    raise TypeError(f'Unsupported WebSocket frame type: {type(raw).__name__}')
+    raise TypeError(
+        f'Unsupported WebSocket frame type: {type(raw).__name__}'
+    )
 
 
 async def _receive_authentication_response(
@@ -179,13 +229,18 @@ async def _receive_authentication_response(
     while True:
         remaining = deadline - time.monotonic()
         if remaining <= 0:
-            raise TimeoutError('No matching WebSocket authentication response')
-        raw = await asyncio.wait_for(websocket.recv(), timeout=remaining)
+            raise TimeoutError(
+                'No matching WebSocket authentication response'
+            )
+        raw = await asyncio.wait_for(
+            websocket.recv(),
+            timeout=remaining,
+        )
         text = _decode_frame(raw)
         if text == '\x00':
             continue
         try:
-            payload = json.loads(text)
+            payload = parse_json_frame(text)
         except json.JSONDecodeError:
             continue
         if isinstance(payload, dict) and payload.get('id') == request_id:

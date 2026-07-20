@@ -28,6 +28,16 @@ class MarketDataSessionFlow:
         self.context_asset_classes = self._context_symbols_for_active_assets(
             active_symbols
         )
+        for symbol, decision in session_decisions.items():
+            self.trade_journal.write(
+                'session_state',
+                {
+                    'symbol': symbol,
+                    'session_decision': decision,
+                    'loop_id': self.loop_id,
+                },
+            )
+
         for session_key in completed_session_keys:
             self.risk_manager.reset_session_trades(session_key)
             self.market_context_service.reset_session(session_key)
@@ -51,6 +61,10 @@ class MarketDataSessionFlow:
             self.strategies[symbol] = TrendStrategy(
                 self.instrument_registry.config_for(symbol).trend
             )
+            self._last_bucket_by_symbol.pop(symbol, None)
+            self._degraded_buckets = {
+                item for item in self._degraded_buckets if item[0] != symbol
+            }
             self.trade_journal.write(
                 'session_started',
                 {

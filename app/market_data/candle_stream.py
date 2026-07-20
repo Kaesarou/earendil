@@ -2,6 +2,7 @@ from collections import Counter
 from datetime import datetime, timezone
 
 from app.market.candle_builder import CandleBuilder
+from app.market.models import MarketSnapshot
 from app.market_data.models import (
     CandleBuildResult,
     CandleQuality,
@@ -19,14 +20,41 @@ class QualityAwareCandleBuilder:
         self._fallback_events = 0
         self._out_of_order_drops = 0
         self._sources: Counter[str] = Counter()
+        self._pending_event: MarketDataEvent | None = None
+        self._last_closed_result: CandleBuildResult | None = None
 
     def reset(self) -> None:
         self._builder.reset()
         self._bucket = None
+        self._pending_event = None
+        self._last_closed_result = None
         self._reset_quality()
+
+    def prepare_event(self, event: MarketDataEvent) -> None:
+        self._pending_event = event
+
+    def take_last_closed_result(self) -> CandleBuildResult | None:
+        result = self._last_closed_result
+        self._last_closed_result = None
+        return result
 
     def record_out_of_order_drop(self) -> None:
         self._out_of_order_drops += 1
+
+    def on_snapshot(self, snapshot: MarketSnapshot):
+        event = self._pending_event
+        self._pending_event = None
+        if event is None:
+            event = MarketDataEvent(
+                symbol=snapshot.symbol,
+                source=MarketDataSource.PAPER,
+                received_at=snapshot.received_at or snapshot.timestamp,
+                snapshot=snapshot,
+                price_changed=True,
+            )
+        result = self.on_event(event)
+        self._last_closed_result = result
+        return result.candle if result is not None else None
 
     def on_event(self, event: MarketDataEvent) -> CandleBuildResult | None:
         snapshot = event.snapshot
@@ -42,12 +70,14 @@ class QualityAwareCandleBuilder:
             self._builder.on_snapshot(snapshot)
             return None
 
-        bucket_changed = bucket != self._bucket
-        if not bucket_changed:
+        if bucket < self._bucket:
+            self.record_out_of_order_drop()
+            return None
+
+        if bucket == self._bucket:
             self._record_event(event, forwarded=event.price_changed)
-            if not event.price_changed:
-                return None
-            self._builder.on_snapshot(snapshot)
+            if event.price_changed:
+                self._builder.on_snapshot(snapshot)
             return None
 
         closed_quality = self._quality()

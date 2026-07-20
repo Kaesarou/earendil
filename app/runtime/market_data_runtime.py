@@ -13,6 +13,7 @@ from app.market.session_timeframe_service import FullSessionMultiTimeframeServic
 from app.market_data.candle_stream import QualityAwareCandleBuilder
 from app.market_data.contracts import LiveMarketDataFeed, RestMarketDataClient
 from app.market_data.coordinator import MarketDataCoordinator
+from app.market_data.models import MARKET_DATA_MODEL_VERSION
 from app.persistence.position_store import PositionStore
 from app.persistence.trade_cooldown_store import TradeCooldownStore
 from app.risk.risk_manager import RiskManager
@@ -114,6 +115,8 @@ class EventDrivenMarketRuntime(
         self._last_context_update = 0.0
         self._last_rest_control = 0.0
         self._last_position_reconciliation = 0.0
+        self._last_bucket_by_symbol = {}
+        self._degraded_buckets: set[tuple[str, datetime]] = set()
 
     def run(self) -> str:
         monitored_symbols = self._all_monitored_symbols()
@@ -126,7 +129,7 @@ class EventDrivenMarketRuntime(
         self.trade_journal.write(
             'market_data_runtime_started',
             {
-                'market_data_version': 'market_data_v2_ws_1',
+                'market_data_version': MARKET_DATA_MODEL_VERSION,
                 'primary_source': (
                     'websocket'
                     if self.live_market_data.requires_websocket_health

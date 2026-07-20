@@ -2,7 +2,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from enum import StrEnum
 
-from app.market.models import MarketSnapshot
+from app.market.models import Candle, MarketSnapshot
 
 
 MARKET_DATA_MODEL_VERSION = 'market_data_v2_ws_1'
@@ -10,6 +10,7 @@ MARKET_DATA_MODEL_VERSION = 'market_data_v2_ws_1'
 
 class MarketDataSource(StrEnum):
     WEBSOCKET = 'websocket'
+    REST_POLLING = 'rest_polling'
     REST_CONTROL = 'rest_control'
     REST_FALLBACK = 'rest_fallback'
     PAPER = 'paper'
@@ -58,5 +59,5 @@ class CandleQuality:
 
 @dataclass(frozen=True)
 class CandleBuildResult:
-    candle: object
+    candle: Candle
     quality: CandleQuality
