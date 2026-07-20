@@ -52,6 +52,39 @@ class FakeJournal:
         self.events.append((event_type, payload))
 
 
+class FakeBrokerTaskRunner:
+    def drain(self):
+        return []
+
+    def close(self, *, wait: bool) -> None:
+        return None
+
+    def pending_count(self, *, lane=None) -> int:
+        return 0
+
+
+class FakeBrokerOperations:
+    def diagnostics(self) -> dict:
+        return {}
+
+    def handle_completion(self, completion, *, now, latest_snapshots) -> bool:
+        return False
+
+
+class FakeCandidateExecution:
+    def schedule_unknown_order_lookups(self, *, now) -> None:
+        return None
+
+    def pending_open_count(self) -> int:
+        return 0
+
+    def diagnostics(self) -> dict:
+        return {}
+
+    def handle_completion(self, completion, *, now) -> bool:
+        return False
+
+
 class SessionAwareRuntime(EventDrivenMarketRuntime):
     def __init__(self, open_position_symbols: list[str] | None = None) -> None:
         self.run_id = 'test-run'
@@ -59,10 +92,14 @@ class SessionAwareRuntime(EventDrivenMarketRuntime):
             rest_control_interval_seconds=60.0,
             ws_position_silence_seconds=15.0,
             position_fallback_interval_seconds=10.0,
+            candle_clock_grace_seconds=1.0,
         )
         self.live_market_data = FakeFeed()
         self.coordinator = FakeCoordinator()
         self.trade_journal = FakeJournal()
+        self.broker_task_runner = FakeBrokerTaskRunner()
+        self.broker_operations = FakeBrokerOperations()
+        self.candidate_execution = FakeCandidateExecution()
         positions = [
             SimpleNamespace(symbol=symbol)
             for symbol in (open_position_symbols or [])
@@ -73,6 +110,7 @@ class SessionAwareRuntime(EventDrivenMarketRuntime):
         self.heartbeat = SimpleNamespace(maybe_emit=lambda **kwargs: None)
         self.active_symbols: list[str] = []
         self.context_asset_classes = {}
+        self.latest_snapshots = {}
         self.loop_id = 0
         self._last_session_refresh = 0.0
         self._last_rest_control = 0.0
