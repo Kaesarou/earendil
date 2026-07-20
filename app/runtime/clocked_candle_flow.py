@@ -42,6 +42,12 @@ class ClockedCandleFlow:
         now: datetime,
         source: str,
     ) -> None:
+        enriched_candle = replace(
+            result.candle,
+            carried_forward=result.quality.carried_forward,
+            source_price_age_seconds=result.quality.last_price_age_seconds,
+            quality_degraded=result.quality.degraded,
+        )
         entry_allowed = (
             self.coordinator.entry_allowed(symbol)
             and not result.quality.degraded
@@ -60,14 +66,14 @@ class ClockedCandleFlow:
         )
         decision_snapshot = replace(
             latest_snapshot,
-            last=result.candle.close,
-            timestamp=result.candle.closed_at,
+            last=enriched_candle.close,
+            timestamp=enriched_candle.closed_at,
             received_at=_as_utc(now),
         )
         candidate = process_closed_candle(
             symbol=symbol,
             snapshot=decision_snapshot,
-            closed_candle=result.candle,
+            closed_candle=enriched_candle,
             strategy=self.strategies[symbol],
             risk_manager=self.risk_manager,
             trade_journal=self.trade_journal,
@@ -84,7 +90,7 @@ class ClockedCandleFlow:
             'candle_finalized',
             {
                 'symbol': symbol,
-                'candle': result.candle,
+                'candle': enriched_candle,
                 'quality': result.quality,
                 'entry_allowed': entry_allowed,
                 'feed_state': self.coordinator.state_for(symbol).value,
@@ -94,7 +100,7 @@ class ClockedCandleFlow:
             },
         )
         recorded = self.decision_windows.record(
-            closed_at=result.candle.closed_at,
+            closed_at=enriched_candle.closed_at,
             symbol=symbol,
             expected_symbols=self.active_symbols,
             candidate=candidate,
@@ -104,13 +110,13 @@ class ClockedCandleFlow:
                 'decision_window_late_symbol',
                 {
                     'symbol': symbol,
-                    'closed_at': result.candle.closed_at,
+                    'closed_at': enriched_candle.closed_at,
                     'candidate': candidate,
                     'quality': result.quality,
                     'finalization_source': source,
                 },
             )
-        self._last_bucket_by_symbol[symbol] = result.candle.opened_at
+        self._last_bucket_by_symbol[symbol] = enriched_candle.opened_at
 
 
 def _as_utc(value: datetime) -> datetime:
