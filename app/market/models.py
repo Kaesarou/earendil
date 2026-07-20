@@ -67,6 +67,9 @@ class Candle:
     opened_at: datetime
     closed_at: datetime
     sample_count: int = 0
+    carried_forward: bool = False
+    source_price_age_seconds: float | None = None
+    quality_degraded: bool = False
 
 
 def _as_utc(value: datetime) -> datetime:

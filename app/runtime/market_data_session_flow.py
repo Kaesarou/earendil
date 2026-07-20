@@ -3,7 +3,6 @@ from datetime import datetime, timezone
 from app.instruments.models import AssetClass
 from app.market.timeframes import BarCompleteness
 from app.runtime.pending_entry_flow import write_pending_events
-from app.runtime.position_lifecycle import reconcile_externally_closed_positions
 from app.runtime.session_runtime import filter_symbols_by_trading_session
 from app.strategies.strategy import TrendStrategy
 
@@ -147,15 +146,7 @@ class MarketDataSessionFlow:
             return
         self._last_position_reconciliation = monotonic_now
         self.cooldown_store.delete_expired(now)
-        reconcile_externally_closed_positions(
-            broker=self.execution_broker,
-            position_tracker=self.position_tracker,
-            risk_manager=self.risk_manager,
-            position_store=self.position_store,
-            cooldown_store=self.cooldown_store,
-            trade_journal=self.trade_journal,
-            is_broker_authorization_error=self.is_broker_authorization_error,
-        )
+        self.broker_operations.schedule_reconciliation(now=now)
 
     def _context_symbols_for_active_assets(
         self,

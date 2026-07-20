@@ -1,8 +1,8 @@
-from datetime import datetime, timezone
+from datetime import datetime
 
 from app.market.data_quality import MarketDataStatus
-from app.market_data.models import MarketDataEvent, MarketDataSource
-from app.runtime.symbol_flow import process_closed_candle, process_symbol
+from app.market_data.models import MarketDataEvent
+from app.runtime.pending_entry_flow import write_pending_events
 
 
 class MarketDataEventFlow:
@@ -55,119 +55,74 @@ class MarketDataEventFlow:
             )
             return
 
-        accepted = self.coordinator.mark_accepted(event)
+        self.coordinator.mark_accepted(event)
         self.latest_snapshots[symbol] = snapshot
-        self.market_journal.write(
-            'market_snapshot_received',
-            {
-                'symbol': symbol,
-                'snapshot': snapshot,
-                'source': event.source.value,
-                'loop_id': self.loop_id,
-            },
-        )
-
-        if symbol not in self.active_symbols:
-            return
+        if event.price_changed:
+            self.market_journal.write(
+                'market_price_changed',
+                {
+                    'symbol': symbol,
+                    'snapshot': snapshot,
+                    'source': event.source.value,
+                    'message_id': event.message_id,
+                    'connection_id': event.connection_id,
+                    'loop_id': self.loop_id,
+                },
+            )
 
         session_decision = self.session_decisions.get(symbol)
-        if session_decision is None:
+        self.broker_operations.on_snapshot(
+            snapshot=snapshot,
+            session_decision=session_decision,
+            source=event.source.value,
+        )
+
+        if symbol not in self.active_symbols or session_decision is None:
             return
-
-        current_bucket = _minute_bucket(snapshot.timestamp)
-        previous_bucket = self._last_bucket_by_symbol.get(symbol)
-        closing_bucket = (
-            previous_bucket
-            if previous_bucket is not None and current_bucket > previous_bucket
-            else None
-        )
-        if event.source == MarketDataSource.REST_FALLBACK:
-            self._degraded_buckets.add((symbol, current_bucket))
-
-        entry_allowed = accepted.entry_allowed
-        if closing_bucket is not None and (symbol, closing_bucket) in self._degraded_buckets:
-            entry_allowed = False
-        effective_session_decision = (
-            session_decision
-            if entry_allowed
-            else session_decision._replace(
-                new_entries_allowed=False,
-                reason='market_data_degraded',
-            )
-        )
+        self.strategies[symbol].on_snapshot(snapshot)
+        self._invalidate_pending_after_symbol_lock(symbol, snapshot.timestamp)
 
         builder = self.candle_builders[symbol]
-        candidate = None
-        if event.price_changed:
-            builder.prepare_event(event)
-            candidate = process_symbol(
-                symbol=symbol,
-                broker=self.execution_broker,
-                strategy=self.strategies[symbol],
-                risk_manager=self.risk_manager,
-                executor=self.executor,
-                position_tracker=self.position_tracker,
-                candle_builder=builder,
-                trade_journal=self.trade_journal,
-                market_journal=self.market_journal,
-                candle_journal=self.candle_journal,
-                is_broker_authorization_error=self.is_broker_authorization_error,
-                position_store=self.position_store,
-                cooldown_store=self.cooldown_store,
-                snapshot=snapshot,
-                session_decision=effective_session_decision,
-                loop_id=self.loop_id,
-                pending_entry_manager=self.pending_entry_manager,
-                cooldown_guard=self.cooldown_guard,
-                market_context_service=self.market_context_service,
-                multi_timeframe_service=self.multi_timeframe_service,
-                run_id=self.run_id,
-            )
-        else:
-            builder.prepare_event(event)
-            closed_candle = builder.on_snapshot(snapshot)
-            if closed_candle is not None:
-                candidate = process_closed_candle(
-                    symbol=symbol,
-                    snapshot=snapshot,
-                    closed_candle=closed_candle,
-                    strategy=self.strategies[symbol],
-                    risk_manager=self.risk_manager,
-                    trade_journal=self.trade_journal,
-                    candle_journal=self.candle_journal,
-                    session_decision=effective_session_decision,
-                    loop_id=self.loop_id,
-                    pending_entry_manager=self.pending_entry_manager,
-                    cooldown_guard=self.cooldown_guard,
-                    market_context_service=self.market_context_service,
-                    multi_timeframe_service=self.multi_timeframe_service,
-                    run_id=self.run_id,
-                )
-
-        if previous_bucket is None or current_bucket >= previous_bucket:
-            self._last_bucket_by_symbol[symbol] = current_bucket
-
+        builder.prepare_event(event)
+        builder.on_snapshot(snapshot)
         closed_result = builder.take_last_closed_result()
         if closed_result is None:
             return
-        self.candle_journal.write(
-            'candle_quality',
-            {
-                'symbol': symbol,
-                'candle': closed_result.candle,
-                'quality': closed_result.quality,
-                'entry_allowed': entry_allowed,
-                'feed_state': self.coordinator.state_for(symbol).value,
-                'loop_id': self.loop_id,
-            },
-        )
-        self.decision_windows.record(
-            closed_at=closed_result.candle.closed_at,
+        self._process_candle_result(
             symbol=symbol,
-            expected_symbols=self.active_symbols,
-            candidate=candidate,
+            result=closed_result,
+            latest_snapshot=snapshot,
+            session_decision=session_decision,
+            now=now,
+            source='event',
         )
-        self._degraded_buckets.discard((symbol, closed_result.candle.opened_at))
+
+    def _invalidate_pending_after_symbol_lock(
+        self,
+        symbol: str,
+        observed_at: datetime,
+    ) -> None:
+        latest_stop_loss = self.cooldown_store.find_latest_stop_loss(
+            symbol=symbol
+        )
+        if latest_stop_loss is None:
+            return
+        config = self.risk_manager.risk_profile_for(symbol).trade_cooldown
+        if (
+            latest_stop_loss.symbol_lock_remaining_seconds(
+                config=config,
+                now=observed_at,
+            )
+            <= 0
+        ):
+            return
+        write_pending_events(
+            self.trade_journal,
+            self.pending_entry_manager.invalidate_symbol(
+                symbol,
+                'stop_loss_symbol_lock_registered',
+            ),
+        )
 
     def _record_precheck_rejection(
         self,
@@ -177,9 +132,6 @@ class MarketDataEventFlow:
     ) -> None:
         if reason == 'strict_out_of_order_timestamp' and symbol in self.candle_builders:
             self.candle_builders[symbol].record_out_of_order_drop()
-            bucket = self._last_bucket_by_symbol.get(symbol)
-            if bucket is not None:
-                self._degraded_buckets.add((symbol, bucket))
         self.trade_journal.write(
             'market_data_event_ignored',
             {
@@ -207,8 +159,3 @@ class MarketDataEventFlow:
         return self.strategy_profile.instrument_config_for_asset_class(
             asset_class
         ).market_data_quality
-
-
-def _minute_bucket(value: datetime) -> datetime:
-    actual = value if value.tzinfo is not None else value.replace(tzinfo=timezone.utc)
-    return actual.astimezone(timezone.utc).replace(second=0, microsecond=0)

@@ -15,7 +15,7 @@ from app.market.multi_timeframe import (
     MultiTimeframeUpdate,
 )
 from app.market.session_rules import TradingSessionDecision
-from app.market.timeframes import BarCompleteness
+from app.market.timeframes import BASE_TIMEFRAME, BarCompleteness
 from app.persistence.position_store import PositionStore
 from app.persistence.trade_cooldown_store import TradeCooldownStore
 from app.risk.models import TradePlan
@@ -147,10 +147,6 @@ def process_closed_candle(
     multi_timeframe_service: MultiTimeframeService | None = None,
     run_id: str = '',
 ) -> TradeCandidate | None:
-    candle_journal.write(
-        'candle_closed',
-        {'symbol': symbol, 'candle': closed_candle, 'loop_id': loop_id},
-    )
     if multi_timeframe_service is not None and session_decision is not None:
         update = multi_timeframe_service.on_base_candle(
             symbol=symbol,
@@ -354,6 +350,8 @@ def _write_multi_timeframe_update(
             {'symbol': symbol, 'gap': gap, 'loop_id': loop_id},
         )
     for bar in update.closed_bars:
+        if bar.timeframe == BASE_TIMEFRAME:
+            continue
         event_type = 'timeframe_bar_closed'
         if bar.completeness == BarCompleteness.INCOMPLETE:
             event_type = 'timeframe_bar_incomplete'

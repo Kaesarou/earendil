@@ -13,6 +13,16 @@ class _DecisionWindow:
     candidates: list[TradeCandidate] = field(default_factory=list)
 
 
+@dataclass(frozen=True)
+class DecisionWindowBatch:
+    closed_at: datetime
+    candidates: tuple[TradeCandidate, ...]
+    expected_symbols: tuple[str, ...]
+    completed_symbols: tuple[str, ...]
+    missing_symbols: tuple[str, ...]
+    finalization_reason: str
+
+
 class DecisionWindowCoordinator:
     def __init__(self, *, grace_seconds: float, finalized_capacity: int = 512) -> None:
         self.grace_seconds = grace_seconds
@@ -47,7 +57,9 @@ class DecisionWindowCoordinator:
             key,
             _DecisionWindow(
                 closed_at=key,
-                expected_symbols={item.strip().upper() for item in expected_symbols},
+                expected_symbols={
+                    item.strip().upper() for item in expected_symbols
+                },
             ),
         )
         window.expected_symbols.update(
@@ -59,21 +71,46 @@ class DecisionWindowCoordinator:
         return True
 
     def pop_ready(self, *, now: datetime) -> list[list[TradeCandidate]]:
+        return [
+            list(batch.candidates)
+            for batch in self.pop_ready_batches(now=now)
+        ]
+
+    def pop_ready_batches(self, *, now: datetime) -> list[DecisionWindowBatch]:
         actual_now = _as_utc(now)
-        ready_keys: list[datetime] = []
+        ready: list[tuple[datetime, str]] = []
         for key, window in self._windows.items():
-            complete = window.expected_symbols.issubset(window.completed_symbols)
+            complete = window.expected_symbols.issubset(
+                window.completed_symbols
+            )
             expired = actual_now >= window.closed_at + timedelta(
                 seconds=self.grace_seconds
             )
-            if complete or expired:
-                ready_keys.append(key)
-        result: list[list[TradeCandidate]] = []
-        for key in sorted(ready_keys):
+            if complete:
+                ready.append((key, 'all_symbols_completed'))
+            elif expired:
+                ready.append((key, 'grace_expired'))
+
+        result: list[DecisionWindowBatch] = []
+        for key, reason in sorted(ready, key=lambda item: item[0]):
             window = self._windows.pop(key)
             self._remember_finalized(key)
-            result.append(window.candidates)
+            expected = set(window.expected_symbols)
+            completed = set(window.completed_symbols)
+            result.append(
+                DecisionWindowBatch(
+                    closed_at=window.closed_at,
+                    candidates=tuple(window.candidates),
+                    expected_symbols=tuple(sorted(expected)),
+                    completed_symbols=tuple(sorted(completed)),
+                    missing_symbols=tuple(sorted(expected - completed)),
+                    finalization_reason=reason,
+                )
+            )
         return result
+
+    def is_finalized(self, closed_at: datetime) -> bool:
+        return _as_utc(closed_at) in self._finalized
 
     def _remember_finalized(self, key: datetime) -> None:
         self._finalized.add(key)

@@ -12,7 +12,12 @@ from app.market_data.models import (
 
 
 class QualityAwareCandleBuilder:
-    def __init__(self) -> None:
+    def __init__(
+        self,
+        *,
+        ordering_drop_degrade_count: int = 3,
+        ordering_drop_degrade_ratio: float = 0.10,
+    ) -> None:
         self._builder = CandleBuilder()
         self._bucket: datetime | None = None
         self._messages = 0
@@ -22,6 +27,14 @@ class QualityAwareCandleBuilder:
         self._sources: Counter[str] = Counter()
         self._pending_event: MarketDataEvent | None = None
         self._last_closed_result: CandleBuildResult | None = None
+        self.ordering_drop_degrade_count = max(
+            1,
+            ordering_drop_degrade_count,
+        )
+        self.ordering_drop_degrade_ratio = max(
+            0.0,
+            ordering_drop_degrade_ratio,
+        )
 
     def reset(self) -> None:
         self._builder.reset()
@@ -80,14 +93,53 @@ class QualityAwareCandleBuilder:
                 self._builder.on_snapshot(snapshot)
             return None
 
-        closed_quality = self._quality()
+        closed_quality_base = self._quality(
+            carried_forward=False,
+            last_price_age_seconds=None,
+            max_carry_forward_age_seconds=None,
+        )
         closed = self._builder.on_snapshot(snapshot)
+        carried, price_age = self._builder.take_last_closed_metadata()
         self._bucket = bucket
         self._reset_quality()
         self._record_event(event, forwarded=True)
         if closed is None:
             return None
-        return CandleBuildResult(candle=closed, quality=closed_quality)
+        return CandleBuildResult(
+            candle=closed,
+            quality=self._merge_clock_metadata(
+                closed_quality_base,
+                carried_forward=carried,
+                last_price_age_seconds=price_age,
+                max_carry_forward_age_seconds=None,
+            ),
+        )
+
+    def finalize_until(
+        self,
+        now: datetime,
+        *,
+        grace_seconds: float,
+        max_carry_forward_age_seconds: float,
+    ) -> list[CandleBuildResult]:
+        finalized = self._builder.finalize_until(
+            now,
+            grace_seconds=grace_seconds,
+        )
+        results: list[CandleBuildResult] = []
+        for index, (candle, carried, price_age) in enumerate(finalized):
+            quality = self._quality(
+                carried_forward=carried,
+                last_price_age_seconds=price_age,
+                max_carry_forward_age_seconds=max_carry_forward_age_seconds,
+            )
+            results.append(CandleBuildResult(candle=candle, quality=quality))
+            self._bucket = candle.closed_at
+            self._reset_quality()
+            if index + 1 < len(finalized):
+                # Intermediate buckets are entirely synthetic carry-forward bars.
+                self._bucket = candle.closed_at
+        return results
 
     def _record_event(self, event: MarketDataEvent, *, forwarded: bool) -> None:
         self._messages += 1
@@ -104,18 +156,79 @@ class QualityAwareCandleBuilder:
         self._out_of_order_drops = 0
         self._sources = Counter()
 
-    def _quality(self) -> CandleQuality:
-        source = next(iter(self._sources)) if len(self._sources) == 1 else 'mixed'
-        degraded = (
-            self._fallback_events > 0
-            or self._out_of_order_drops > 0
-            or source == 'mixed'
+    def _quality(
+        self,
+        *,
+        carried_forward: bool,
+        last_price_age_seconds: float | None,
+        max_carry_forward_age_seconds: float | None,
+    ) -> CandleQuality:
+        source = (
+            next(iter(self._sources))
+            if len(self._sources) == 1
+            else ('mixed' if self._sources else 'carried_forward')
         )
+        ordering_denominator = max(
+            1,
+            self._messages + self._out_of_order_drops,
+        )
+        ordering_ratio = self._out_of_order_drops / ordering_denominator
+        reasons: list[str] = []
+        if self._fallback_events > 0:
+            reasons.append('rest_fallback')
+        if source == 'mixed':
+            reasons.append('mixed_sources')
+        if (
+            self._out_of_order_drops >= self.ordering_drop_degrade_count
+            and ordering_ratio >= self.ordering_drop_degrade_ratio
+        ):
+            reasons.append('ordering_drop_rate')
+        if (
+            carried_forward
+            and max_carry_forward_age_seconds is not None
+            and last_price_age_seconds is not None
+            and last_price_age_seconds > max_carry_forward_age_seconds
+        ):
+            reasons.append('stale_carried_forward_price')
         return CandleQuality(
             source=source,
             message_count=self._messages,
             price_event_count=self._price_events,
             fallback_event_count=self._fallback_events,
             out_of_order_drop_count=self._out_of_order_drops,
-            degraded=degraded,
+            degraded=bool(reasons),
+            carried_forward=carried_forward,
+            last_price_age_seconds=last_price_age_seconds,
+            ordering_drop_ratio=round(ordering_ratio, 6),
+            degraded_reasons=tuple(reasons),
+        )
+
+    def _merge_clock_metadata(
+        self,
+        quality: CandleQuality,
+        *,
+        carried_forward: bool,
+        last_price_age_seconds: float | None,
+        max_carry_forward_age_seconds: float | None,
+    ) -> CandleQuality:
+        reasons = list(quality.degraded_reasons)
+        if (
+            carried_forward
+            and max_carry_forward_age_seconds is not None
+            and last_price_age_seconds is not None
+            and last_price_age_seconds > max_carry_forward_age_seconds
+            and 'stale_carried_forward_price' not in reasons
+        ):
+            reasons.append('stale_carried_forward_price')
+        return CandleQuality(
+            source=quality.source,
+            message_count=quality.message_count,
+            price_event_count=quality.price_event_count,
+            fallback_event_count=quality.fallback_event_count,
+            out_of_order_drop_count=quality.out_of_order_drop_count,
+            degraded=bool(reasons),
+            carried_forward=carried_forward,
+            last_price_age_seconds=last_price_age_seconds,
+            ordering_drop_ratio=quality.ordering_drop_ratio,
+            degraded_reasons=tuple(reasons),
         )

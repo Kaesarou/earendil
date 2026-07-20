@@ -1,7 +1,6 @@
 from datetime import datetime, timezone
 from types import SimpleNamespace
 
-from app.market.models import MarketSnapshot
 from app.runtime.market_data_maintenance import MarketDataMaintenance
 
 
@@ -15,45 +14,23 @@ class FakeFeed:
         return True
 
 
-class FakeRestMarketData:
-    def __init__(self) -> None:
-        self.calls: list[list[str]] = []
-
-    def get_market_snapshots(self, symbols: list[str]):
-        self.calls.append(list(symbols))
-        return {
-            symbol: MarketSnapshot(
-                symbol=symbol,
-                bid=99.0,
-                ask=101.0,
-                last=100.0,
-                timestamp=NOW,
-            )
-            for symbol in symbols
-        }
-
-
 class FakeCoordinator:
-    def __init__(self) -> None:
-        self.failed: list[list[str]] = []
-        self.succeeded: list[list[str]] = []
-
     def position_fallback_symbols(self, *, symbols, now, force=False):
         return list(symbols)
 
-    def mark_fallback_failed(self, symbols):
-        self.failed.append(list(symbols))
 
-    def mark_fallback_succeeded(self, symbols):
-        self.succeeded.append(list(symbols))
-
-
-class FakeJournal:
+class FakeBrokerOperations:
     def __init__(self) -> None:
-        self.events: list[tuple[str, dict]] = []
+        self.calls: list[tuple[list[str], datetime]] = []
 
-    def write(self, event_type: str, payload: dict) -> None:
-        self.events.append((event_type, payload))
+    def schedule_position_fallback(
+        self,
+        *,
+        symbols: list[str],
+        now: datetime,
+    ) -> bool:
+        self.calls.append((list(symbols), now))
+        return True
 
 
 class RuntimeState(MarketDataMaintenance):
@@ -70,58 +47,34 @@ class RuntimeState(MarketDataMaintenance):
             position_fallback_interval_seconds=10.0
         )
         self.coordinator = FakeCoordinator()
-        self.rest_market_data = FakeRestMarketData()
-        self.trade_journal = FakeJournal()
-        self.executor = object()
-        self.risk_manager = object()
-        self.position_store = object()
-        self.cooldown_store = object()
-        self.is_broker_authorization_error = lambda exc: False
-        self.loop_id = 1
+        self.broker_operations = FakeBrokerOperations()
 
 
-def test_no_open_position_means_no_rest_fallback(monkeypatch):
+def test_no_open_position_means_no_rest_fallback_task():
     runtime = RuntimeState([])
-    monkeypatch.setattr(
-        'app.runtime.market_data_maintenance.close_positions_triggered_by_snapshot',
-        lambda **kwargs: None,
-    )
 
     runtime._run_position_fallback_if_due(NOW, 20.0)
 
-    assert runtime.rest_market_data.calls == []
+    assert runtime.broker_operations.calls == []
 
 
-def test_all_stale_positions_share_one_fixed_cadence_batch(monkeypatch):
+def test_all_stale_positions_share_one_fixed_cadence_batch():
     runtime = RuntimeState(['AIR.PA', 'BNP.PA'])
-    processed: list[str] = []
-    monkeypatch.setattr(
-        'app.runtime.market_data_maintenance.close_positions_triggered_by_snapshot',
-        lambda **kwargs: processed.append(kwargs['symbol']),
-    )
 
     runtime._run_position_fallback_if_due(NOW, 20.0)
     runtime._run_position_fallback_if_due(NOW, 25.0)
     runtime._run_position_fallback_if_due(NOW, 30.0)
 
-    assert runtime.rest_market_data.calls == [
-        ['AIR.PA', 'BNP.PA'],
-        ['AIR.PA', 'BNP.PA'],
+    assert runtime.broker_operations.calls == [
+        (['AIR.PA', 'BNP.PA'], NOW),
+        (['AIR.PA', 'BNP.PA'], NOW),
     ]
-    assert processed == ['AIR.PA', 'BNP.PA', 'AIR.PA', 'BNP.PA']
 
 
-def test_position_fallback_does_not_enter_market_event_pipeline(monkeypatch):
+def test_position_fallback_only_schedules_position_lifecycle_work():
     runtime = RuntimeState(['AIR.PA'])
-    processed: list[str] = []
-    monkeypatch.setattr(
-        'app.runtime.market_data_maintenance.close_positions_triggered_by_snapshot',
-        lambda **kwargs: processed.append(kwargs['symbol']),
-    )
 
     runtime._run_position_fallback_if_due(NOW, 20.0)
 
-    assert processed == ['AIR.PA']
-    assert [event for event, _ in runtime.trade_journal.events] == [
-        'rest_position_fallback_snapshot'
-    ]
+    assert runtime.broker_operations.calls == [(['AIR.PA'], NOW)]
+    assert not hasattr(runtime, '_handle_event')
