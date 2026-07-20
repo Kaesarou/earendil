@@ -31,7 +31,6 @@ from app.persistence.trade_cooldown_store import TradeCooldownStore
 from app.risk.position_sizing import FixedPercentPositionSizing
 from app.risk.risk_manager import RiskManager
 from app.risk.trade_cooldown_guard import TradeCooldownGuard
-from app.runtime.candidate_flow import execute_ranked_candidates
 from app.runtime.factories import build_runtime_clients
 from app.runtime.market_data_runtime import EventDrivenMarketRuntime
 from app.runtime.pending_entry import PendingEntryManager
@@ -76,19 +75,15 @@ def build_candidate_economics_estimator(
 
 def build_candle_builders(
     symbols: list[str],
-    settings: Settings | None = None,
+    settings: Settings,
 ) -> dict[str, QualityAwareCandleBuilder]:
-    actual = settings or Settings.model_construct(
-        candle_ordering_drop_degrade_count=3,
-        candle_ordering_drop_degrade_ratio=0.10,
-    )
     return {
         symbol: QualityAwareCandleBuilder(
             ordering_drop_degrade_count=(
-                actual.candle_ordering_drop_degrade_count
+                settings.candle_ordering_drop_degrade_count
             ),
             ordering_drop_degrade_ratio=(
-                actual.candle_ordering_drop_degrade_ratio
+                settings.candle_ordering_drop_degrade_ratio
             ),
         )
         for symbol in symbols
