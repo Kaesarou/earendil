@@ -35,7 +35,13 @@ def build_runtime_clients(settings: Settings) -> RuntimeClients:
 
     if settings.broker in {'etoro_demo', 'etoro_live'}:
         etoro = EtoroClient(settings=settings)
-        market_data = EtoroRestMarketDataClient(etoro)
+        market_data = EtoroRestMarketDataClient(
+            etoro,
+            instrument_id_cache_path=settings.instrument_id_cache_path,
+            resolution_min_interval_seconds=(
+                settings.instrument_resolution_min_interval_seconds
+            ),
+        )
         mode = settings.market_data_mode.strip().lower()
         if mode not in {'auto', 'websocket', 'polling'}:
             raise ValueError(
