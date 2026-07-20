@@ -51,7 +51,33 @@ class Settings(BaseSettings):
 
     broker: str = Field(default='paper', alias='BROKER')
     log_level: str = Field(default='INFO', alias='LOG_LEVEL')
-    poll_interval_seconds: int = Field(default=60, alias='POLL_INTERVAL_SECONDS')
+    poll_interval_seconds: int = Field(default=10, alias='POLL_INTERVAL_SECONDS')
+
+    market_data_mode: str = Field(default='auto', alias='MARKET_DATA_MODE')
+    market_data_queue_capacity: int = Field(
+        default=4096,
+        alias='MARKET_DATA_QUEUE_CAPACITY',
+    )
+    ws_symbol_silence_seconds: float = Field(
+        default=5.0,
+        alias='WS_SYMBOL_SILENCE_SECONDS',
+    )
+    ws_global_silence_seconds: float = Field(
+        default=15.0,
+        alias='WS_GLOBAL_SILENCE_SECONDS',
+    )
+    rest_control_interval_seconds: float = Field(
+        default=60.0,
+        alias='REST_CONTROL_INTERVAL_SECONDS',
+    )
+    rest_fallback_cooldown_seconds: float = Field(
+        default=5.0,
+        alias='REST_FALLBACK_COOLDOWN_SECONDS',
+    )
+    decision_window_grace_seconds: float = Field(
+        default=5.0,
+        alias='DECISION_WINDOW_GRACE_SECONDS',
+    )
 
     etoro_api_key: str = Field(default='', alias='ETORO_API_KEY')
     etoro_user_key: str = Field(default='', alias='ETORO_USER_KEY')
