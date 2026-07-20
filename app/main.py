@@ -7,15 +7,20 @@ from app.execution.position_tracker import PositionTracker
 from app.execution.trade_executor import TradeExecutor
 from app.instruments.instrument_registry import InstrumentRegistry
 from app.journal.analysis_journal import build_analysis_journal
-from app.journal.raw_data_journal import RawDataJournal
+from app.journal.filtered_journal import (
+    FilteredJournal,
+    keep_candle_event,
+    keep_market_event,
+)
 from app.journal.jsonl_journal import JsonlJournal
+from app.journal.raw_data_journal import RawDataJournal
 from app.journal.run_manifest import (
     build_run_id,
     build_run_manifest,
     finalize_run_manifest,
-    run_artifact_path,
     write_run_manifest,
 )
+from app.journal.run_paths import build_run_journal_paths, rotate_run_journals
 from app.market.data_quality import MarketDataValidator
 from app.market.market_context import MarketContextService
 from app.market.session_timeframe_service import FullSessionMultiTimeframeService
@@ -26,7 +31,6 @@ from app.persistence.trade_cooldown_store import TradeCooldownStore
 from app.risk.position_sizing import FixedPercentPositionSizing
 from app.risk.risk_manager import RiskManager
 from app.risk.trade_cooldown_guard import TradeCooldownGuard
-from app.runtime.candidate_flow import execute_ranked_candidates
 from app.runtime.factories import build_runtime_clients
 from app.runtime.market_data_runtime import EventDrivenMarketRuntime
 from app.runtime.pending_entry import PendingEntryManager
@@ -71,8 +75,23 @@ def build_candidate_economics_estimator(
 
 def build_candle_builders(
     symbols: list[str],
+    settings: Settings | None = None,
 ) -> dict[str, QualityAwareCandleBuilder]:
-    return {symbol: QualityAwareCandleBuilder() for symbol in symbols}
+    actual = settings or Settings.model_construct(
+        candle_ordering_drop_degrade_count=3,
+        candle_ordering_drop_degrade_ratio=0.10,
+    )
+    return {
+        symbol: QualityAwareCandleBuilder(
+            ordering_drop_degrade_count=(
+                actual.candle_ordering_drop_degrade_count
+            ),
+            ordering_drop_degrade_ratio=(
+                actual.candle_ordering_drop_degrade_ratio
+            ),
+        )
+        for symbol in symbols
+    }
 
 
 def build_strategies(
@@ -96,6 +115,16 @@ def build_market_data_manifest(settings: Settings) -> dict[str, object]:
             settings.position_fallback_interval_seconds
         ),
         'decision_window_grace_seconds': settings.decision_window_grace_seconds,
+        'candle_clock_grace_seconds': settings.candle_clock_grace_seconds,
+        'candle_max_carry_forward_age_seconds': (
+            settings.candle_max_carry_forward_age_seconds
+        ),
+        'position_reconciliation_grace_seconds': (
+            settings.position_reconciliation_grace_seconds
+        ),
+        'position_reconciliation_required_misses': (
+            settings.position_reconciliation_required_misses
+        ),
     }
 
 
@@ -104,14 +133,17 @@ def main() -> None:
     run_id = build_run_id(started_at)
     run_status = 'running'
     settings = get_settings()
-    archived_manifest_path = run_artifact_path(
-        settings.run_manifest_path,
-        run_id,
+    run_paths = build_run_journal_paths(
+        journal_path=settings.journal_path,
+        run_id=run_id,
     )
-    archived_summary_path = run_artifact_path(
-        settings.daily_summary_path,
-        run_id,
+    removed_runs = rotate_run_journals(
+        runs_root=run_paths.root.parent,
+        max_runs=settings.journal_max_runs,
+        current_run_id=run_id,
     )
+    archived_manifest_path = str(run_paths.manifest)
+    archived_summary_path = str(run_paths.summary)
     configure_logging(
         level=settings.log_level,
         log_file_path=settings.app_log_path,
@@ -134,15 +166,21 @@ def main() -> None:
         manifest_path=archived_manifest_path,
         summary_path=archived_summary_path,
     )
-    manifest['schema_version'] = 10
+    manifest['schema_version'] = 11
     manifest['models']['market_data'] = MARKET_DATA_MODEL_VERSION
     manifest['runtime']['market_data'] = build_market_data_manifest(settings)
+    manifest['runtime']['journals'] = {
+        'run_root': str(run_paths.root),
+        'compressed': True,
+        'max_runs': settings.journal_max_runs,
+        'removed_runs': list(removed_runs),
+    }
     write_run_manifest(archived_manifest_path, manifest)
     write_run_manifest(settings.run_manifest_path, manifest)
 
     clients = build_runtime_clients(settings)
     strategies = build_strategies(symbols, instrument_registry)
-    candle_builders = build_candle_builders(symbols)
+    candle_builders = build_candle_builders(symbols, settings)
     trading_session_service = trading_session_service_from_settings(settings)
     trading_session_state = TradingSessionState()
     risk_manager = build_risk_manager(settings, instrument_registry)
@@ -166,27 +204,40 @@ def main() -> None:
             for symbol in symbols
         }
     )
+    journal_settings = settings.model_copy(
+        update={
+            'journal_path': str(run_paths.trades),
+            'market_log_path': str(run_paths.market),
+            'candle_journal_path': str(run_paths.candles),
+            'errors_journal_path': str(run_paths.errors),
+            'debug_decisions_journal_path': str(run_paths.debug_decisions),
+            'daily_summary_path': str(run_paths.summary),
+            'partial_daily_summary_path': str(run_paths.partial_summary),
+        }
+    )
     trade_journal = build_analysis_journal(
-        settings,
+        journal_settings,
         run_id=run_id,
         profile=strategy_profile.name,
     )
-    market_journal = RawDataJournal(
+    raw_market_journal = RawDataJournal(
         JsonlJournal(
-            settings.market_log_path,
+            str(run_paths.market),
             run_id=run_id,
             stream_name='market',
         ),
         trade_journal.record_raw_event,
     )
-    candle_journal = RawDataJournal(
+    market_journal = FilteredJournal(raw_market_journal, keep_market_event)
+    raw_candle_journal = RawDataJournal(
         JsonlJournal(
-            settings.candle_journal_path,
+            str(run_paths.candles),
             run_id=run_id,
             stream_name='candles',
         ),
         trade_journal.record_raw_event,
     )
+    candle_journal = FilteredJournal(raw_candle_journal, keep_candle_event)
     heartbeat = RuntimeHeartbeat(settings.runtime_heartbeat_minutes)
     runtime = EventDrivenMarketRuntime(
         settings=settings,
@@ -226,16 +277,19 @@ def main() -> None:
             'strategy_profile': strategy_profile.name,
             'market_data_version': MARKET_DATA_MODEL_VERSION,
             'market_data_mode': settings.market_data_mode,
+            'run_journal_root': str(run_paths.root),
+            'rotated_run_ids': list(removed_runs),
         },
     )
     logger.info(
         'Starting Goblin! | run_id=%s | broker=%s | market_data=%s | '
-        'strategy_profile=%s | watchlist=%s',
+        'strategy_profile=%s | watchlist=%s | run_logs=%s',
         run_id,
         settings.broker,
         settings.market_data_mode,
         strategy_profile.name,
         symbols,
+        run_paths.root,
     )
 
     try:
@@ -281,7 +335,7 @@ def main() -> None:
             },
         )
         summary = trade_journal.finalize()
-        summary['schema_version'] = 10
+        summary['schema_version'] = 11
         summary.setdefault('market_data', {})['model_version'] = (
             MARKET_DATA_MODEL_VERSION
         )
