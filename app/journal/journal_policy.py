@@ -22,6 +22,16 @@ ERROR_EVENT_TYPES = frozenset(
 
 DEBUG_ONLY_EVENT_TYPES = frozenset({'candidate_ranking'})
 
+HIGH_VOLUME_RUNTIME_EVENT_TYPES = frozenset(
+    {
+        'market_data_event_received',
+        'market_data_event_ignored',
+        'rest_control_snapshot',
+        'position_reconciliation_grace',
+        'position_reconciliation_suspect_updated',
+    }
+)
+
 MINIMAL_TRADE_EVENT_TYPES = frozenset(
     {
         'runtime_started',
@@ -34,11 +44,16 @@ MINIMAL_TRADE_EVENT_TYPES = frozenset(
         'order_submitted',
         'order_failed',
         'order_filled',
-        'order_cancelled',
+        'order_confirmation_unknown',
+        'order_confirmation_recovered',
+        'order_confirmation_manual_intervention_required',
         'position_opened',
         'position_updated',
+        'position_close_pending',
         'position_closed',
         'position_restored',
+        'position_reconciliation_suspect',
+        'position_reconciliation_recovered',
         'position_reconciled_closed',
         'force_close_requested',
         'force_close_completed',
@@ -54,6 +69,10 @@ MINIMAL_TRADE_EVENT_TYPES = frozenset(
         'pending_entry_confirmed',
         'pending_entry_invalidated',
         'pending_entry_expired',
+        'rest_control_completed',
+        'rest_position_fallback_completed',
+        'decision_window_finalized',
+        'decision_window_late_symbol',
     }
 )
 
@@ -77,6 +96,8 @@ def should_write_to_trade_journal(
         return False
     if is_hold_decision(event_type, payload):
         return False
+    if event_type in HIGH_VOLUME_RUNTIME_EVENT_TYPES:
+        return level == 'full'
     if event_type in DEBUG_ONLY_EVENT_TYPES:
         return level in {'debug', 'full'}
     if level == 'minimal':
@@ -92,7 +113,11 @@ def should_write_to_debug_journal(
     level = normalize_detail_level(detail_level)
     if level not in {'debug', 'full'}:
         return False
-    return event_type == 'decision' or event_type in DEBUG_ONLY_EVENT_TYPES
+    return (
+        event_type == 'decision'
+        or event_type in DEBUG_ONLY_EVENT_TYPES
+        or event_type in HIGH_VOLUME_RUNTIME_EVENT_TYPES
+    )
 
 
 def should_write_to_errors_journal(event_type: str) -> bool:
