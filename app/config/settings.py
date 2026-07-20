@@ -85,6 +85,14 @@ class Settings(BaseSettings):
         default=0.30,
         alias='ETORO_SELLSHORT_SAFETY_SL_BUFFER_PERCENT',
     )
+    instrument_id_cache_path: str = Field(
+        default='data/etoro_instrument_ids.json',
+        alias='ETORO_INSTRUMENT_ID_CACHE_PATH',
+    )
+    instrument_resolution_min_interval_seconds: float = Field(
+        default=1.05,
+        alias='ETORO_INSTRUMENT_RESOLUTION_MIN_INTERVAL_SECONDS',
+    )
 
     watchlist: str = Field(default='', alias='WATCHLIST')
     base_currency: str = Field(default='USD', alias='BASE_CURRENCY')
