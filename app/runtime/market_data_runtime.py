@@ -100,8 +100,7 @@ class EventDrivenMarketRuntime(
         self.is_broker_authorization_error = is_broker_authorization_error
         self.coordinator = MarketDataCoordinator(
             websocket_required=live_market_data.requires_websocket_health,
-            symbol_silence_seconds=settings.ws_symbol_silence_seconds,
-            fallback_cooldown_seconds=settings.rest_fallback_cooldown_seconds,
+            symbol_silence_seconds=settings.ws_position_silence_seconds,
         )
         self.decision_windows = DecisionWindowCoordinator(
             grace_seconds=settings.decision_window_grace_seconds
@@ -114,6 +113,7 @@ class EventDrivenMarketRuntime(
         self._last_session_refresh = 0.0
         self._last_context_update = 0.0
         self._last_rest_control = 0.0
+        self._last_position_fallback = 0.0
         self._last_position_reconciliation = 0.0
         self._last_bucket_by_symbol = {}
         self._degraded_buckets: set[tuple[str, datetime]] = set()
@@ -154,8 +154,11 @@ class EventDrivenMarketRuntime(
                 'rest_control_interval_seconds': (
                     self.settings.rest_control_interval_seconds
                 ),
-                'symbol_silence_seconds': (
-                    self.settings.ws_symbol_silence_seconds
+                'position_silence_seconds': (
+                    self.settings.ws_position_silence_seconds
+                ),
+                'position_fallback_interval_seconds': (
+                    self.settings.position_fallback_interval_seconds
                 ),
             },
         )
@@ -173,7 +176,7 @@ class EventDrivenMarketRuntime(
                 if event is not None:
                     self._handle_event(event, now)
                 self._update_context_if_due(monotonic_now)
-                self._run_fallback_if_needed(now)
+                self._run_position_fallback_if_due(now, monotonic_now)
                 self._run_rest_control_if_due(now, monotonic_now)
                 self._flush_decision_windows(now)
                 self.heartbeat.maybe_emit(
