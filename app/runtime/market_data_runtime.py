@@ -18,6 +18,10 @@ from app.persistence.position_store import PositionStore
 from app.persistence.trade_cooldown_store import TradeCooldownStore
 from app.risk.risk_manager import RiskManager
 from app.risk.trade_cooldown_guard import TradeCooldownGuard
+from app.runtime.async_broker_operations import AsyncBrokerOperationsCoordinator
+from app.runtime.async_candidate_execution import AsyncCandidateExecutionCoordinator
+from app.runtime.broker_task_runner import BrokerTaskRunner
+from app.runtime.clocked_candle_flow import ClockedCandleFlow
 from app.runtime.decision_window import DecisionWindowCoordinator
 from app.runtime.market_data_event_flow import MarketDataEventFlow
 from app.runtime.market_data_maintenance import MarketDataMaintenance
@@ -37,6 +41,7 @@ class EventDrivenMarketRuntime(
     MarketDataSessionFlow,
     MarketDataEventFlow,
     MarketDataMaintenance,
+    ClockedCandleFlow,
 ):
     def __init__(
         self,
@@ -105,6 +110,51 @@ class EventDrivenMarketRuntime(
         self.decision_windows = DecisionWindowCoordinator(
             grace_seconds=settings.decision_window_grace_seconds
         )
+        self.broker_task_runner = BrokerTaskRunner()
+        self.broker_operations = AsyncBrokerOperationsCoordinator(
+            runner=self.broker_task_runner,
+            execution_broker=execution_broker,
+            rest_market_data=rest_market_data,
+            executor=executor,
+            position_tracker=position_tracker,
+            risk_manager=risk_manager,
+            position_store=position_store,
+            cooldown_store=cooldown_store,
+            trade_journal=trade_journal,
+            market_data_coordinator=self.coordinator,
+            is_broker_authorization_error=is_broker_authorization_error,
+            reconciliation_grace_seconds=(
+                settings.position_reconciliation_grace_seconds
+            ),
+            reconciliation_required_misses=(
+                settings.position_reconciliation_required_misses
+            ),
+            reconciliation_miss_interval_seconds=(
+                settings.position_reconciliation_miss_interval_seconds
+            ),
+            rest_control_anomaly_percent=(
+                settings.rest_control_anomaly_percent
+            ),
+        )
+        self.candidate_execution = AsyncCandidateExecutionCoordinator(
+            runner=self.broker_task_runner,
+            execution_broker=execution_broker,
+            executor=executor,
+            risk_manager=risk_manager,
+            position_tracker=position_tracker,
+            position_store=position_store,
+            trade_journal=trade_journal,
+            strategy_profile=strategy_profile,
+            cooldown_guard=cooldown_guard,
+            candidate_economics_estimator=candidate_economics_estimator,
+            pending_entry_manager=pending_entry_manager,
+            unknown_lookup_interval_seconds=(
+                settings.unknown_order_lookup_interval_seconds
+            ),
+            unknown_max_age_minutes=(
+                settings.unknown_order_max_age_minutes
+            ),
+        )
         self.latest_snapshots = {}
         self.session_decisions = {}
         self.active_symbols: list[str] = []
@@ -160,6 +210,9 @@ class EventDrivenMarketRuntime(
                 'position_fallback_interval_seconds': (
                     self.settings.position_fallback_interval_seconds
                 ),
+                'candle_clock_grace_seconds': (
+                    self.settings.candle_clock_grace_seconds
+                ),
             },
         )
         try:
@@ -167,24 +220,29 @@ class EventDrivenMarketRuntime(
                 self.loop_id += 1
                 now = datetime.now(timezone.utc)
                 monotonic_now = time.monotonic()
+                self._drain_broker_completions(now)
                 self._refresh_sessions_if_due(now, monotonic_now)
                 self._refresh_applied_market_data_subscription(now)
                 self._reconcile_positions_if_due(now, monotonic_now)
-                event = self.live_market_data.next_event(timeout_seconds=0.25)
+                event = self.live_market_data.next_event(timeout_seconds=0.10)
                 now = datetime.now(timezone.utc)
                 monotonic_now = time.monotonic()
                 if event is not None:
                     self._handle_event(event, now)
+                self._finalize_clocked_candles(now)
                 self._update_context_if_due(monotonic_now)
                 self._run_position_fallback_if_due(now, monotonic_now)
                 self._run_rest_control_if_due(now, monotonic_now)
                 self._flush_decision_windows(now)
+                self.candidate_execution.schedule_unknown_order_lookups(now=now)
+                self._drain_broker_completions(now)
                 self.heartbeat.maybe_emit(
                     journal=self.trade_journal,
                     logger=logger,
                     metrics=self.trade_journal.runtime_metrics(),
-                    open_positions=len(
-                        self.position_tracker.open_positions_snapshot()
+                    open_positions=(
+                        len(self.position_tracker.open_positions_snapshot())
+                        + self.candidate_execution.pending_open_count()
                     ),
                     active_symbols=len(self.active_symbols),
                 )
@@ -198,12 +256,29 @@ class EventDrivenMarketRuntime(
         finally:
             self._feed_started = False
             self.live_market_data.stop()
+            self.broker_task_runner.close(wait=False)
             self.trade_journal.write(
                 'market_data_runtime_stopped',
                 {
                     'coordinator_metrics': self.coordinator.metrics,
                     'feed_diagnostics': self.live_market_data.diagnostics(),
                     'symbol_states': self.coordinator.snapshot(),
+                    'broker_operations': self.broker_operations.diagnostics(),
+                    'candidate_execution': self.candidate_execution.diagnostics(),
+                    'broker_tasks_pending': self.broker_task_runner.pending_count(),
                     'loop_id': self.loop_id,
                 },
+            )
+
+    def _drain_broker_completions(self, now: datetime) -> None:
+        for completion in self.broker_task_runner.drain():
+            if self.candidate_execution.handle_completion(
+                completion,
+                now=now,
+            ):
+                continue
+            self.broker_operations.handle_completion(
+                completion,
+                now=now,
+                latest_snapshots=self.latest_snapshots,
             )
