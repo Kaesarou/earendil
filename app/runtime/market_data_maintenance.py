@@ -37,10 +37,16 @@ class MarketDataMaintenance:
             context_asset_classes=self.context_asset_classes,
         )
 
+    def _applied_monitored_symbols(self) -> list[str]:
+        applied = set(self._applied_feed_symbols)
+        return [
+            symbol
+            for symbol in self._desired_market_data_symbols()
+            if symbol in applied
+        ]
+
     def _run_fallback_if_needed(self, now: datetime) -> None:
-        monitored = list(
-            dict.fromkeys([*self.active_symbols, *self.context_asset_classes])
-        )
+        monitored = self._applied_monitored_symbols()
         stale = self.coordinator.stale_symbols(symbols=monitored, now=now)
         if not stale:
             return
@@ -88,9 +94,7 @@ class MarketDataMaintenance:
         ):
             return
         self._last_rest_control = monotonic_now
-        monitored = list(
-            dict.fromkeys([*self.active_symbols, *self.context_asset_classes])
-        )
+        monitored = self._applied_monitored_symbols()
         if not monitored:
             return
         try:
