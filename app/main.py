@@ -31,6 +31,7 @@ from app.persistence.trade_cooldown_store import TradeCooldownStore
 from app.risk.position_sizing import FixedPercentPositionSizing
 from app.risk.risk_manager import RiskManager
 from app.risk.trade_cooldown_guard import TradeCooldownGuard
+from app.runtime.candidate_flow import execute_ranked_candidates
 from app.runtime.factories import build_runtime_clients
 from app.runtime.market_data_runtime import EventDrivenMarketRuntime
 from app.runtime.pending_entry import PendingEntryManager
