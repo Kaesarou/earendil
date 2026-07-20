@@ -18,6 +18,10 @@ from app.market_data.contracts import LiveMarketDataFeed, RestMarketDataClient
 from app.market_data.models import MarketDataEvent
 
 
+class _SubscriptionChanged(Exception):
+    pass
+
+
 class EtoroWebSocketMarketDataFeed(LiveMarketDataFeed):
     websocket_url = 'wss://ws.etoro.com/ws'
 
@@ -40,12 +44,16 @@ class EtoroWebSocketMarketDataFeed(LiveMarketDataFeed):
             maxsize=queue_capacity
         )
         self._stop_event = threading.Event()
+        self._subscription_changed = threading.Event()
+        self._symbols_lock = threading.Lock()
         self._thread: threading.Thread | None = None
         self._fatal_error: Exception | None = None
-        self._symbols: list[str] = []
+        self._symbols: tuple[str, ...] = ()
         self._instrument_id_by_symbol: dict[str, int] = {}
         self._connections = 0
         self._reconnections = 0
+        self._subscription_restarts = 0
+        self._subscription_updates = 0
         self._events = 0
         self._null_frames = 0
         self._global_silences = 0
@@ -56,20 +64,33 @@ class EtoroWebSocketMarketDataFeed(LiveMarketDataFeed):
         return True
 
     def start(self, symbols: list[str]) -> None:
+        self.update_symbols(symbols)
         if self._thread is not None:
             return
-        self._symbols = list(
-            dict.fromkeys(symbol.strip().upper() for symbol in symbols)
-        )
-        self._instrument_id_by_symbol = (
-            self.rest_client.resolve_instrument_ids(self._symbols)
-        )
         self._thread = threading.Thread(
             target=self._thread_main,
             name='etoro-websocket-market-data',
             daemon=True,
         )
         self._thread.start()
+
+    def update_symbols(self, symbols: list[str]) -> None:
+        normalized = tuple(
+            dict.fromkeys(symbol.strip().upper() for symbol in symbols if symbol.strip())
+        )
+        with self._symbols_lock:
+            if normalized == self._symbols:
+                return
+        instrument_ids = self.rest_client.resolve_instrument_ids(list(normalized))
+        with self._symbols_lock:
+            self._symbols = normalized
+            self._instrument_id_by_symbol = {
+                symbol: instrument_ids[symbol]
+                for symbol in normalized
+            }
+            self._subscription_updates += 1
+        if self._thread is not None:
+            self._subscription_changed.set()
 
     def next_event(self, timeout_seconds: float) -> MarketDataEvent | None:
         try:
@@ -83,14 +104,19 @@ class EtoroWebSocketMarketDataFeed(LiveMarketDataFeed):
 
     def stop(self) -> None:
         self._stop_event.set()
+        self._subscription_changed.set()
         if self._thread is not None:
             self._thread.join(timeout=10.0)
 
     def diagnostics(self) -> dict[str, object]:
+        symbols, _ = self._subscription_snapshot()
         return {
             'mode': 'websocket',
             'connections': self._connections,
             'reconnections': self._reconnections,
+            'subscription_restarts': self._subscription_restarts,
+            'subscription_updates': self._subscription_updates,
+            'subscribed_symbols': list(symbols),
             'events': self._events,
             'null_frames': self._null_frames,
             'global_silences': self._global_silences,
@@ -98,6 +124,10 @@ class EtoroWebSocketMarketDataFeed(LiveMarketDataFeed):
             'last_error': self._last_error,
             'fatal_error': str(self._fatal_error) if self._fatal_error else None,
         }
+
+    def _subscription_snapshot(self) -> tuple[tuple[str, ...], dict[str, int]]:
+        with self._symbols_lock:
+            return self._symbols, dict(self._instrument_id_by_symbol)
 
     def _thread_main(self) -> None:
         try:
@@ -108,14 +138,23 @@ class EtoroWebSocketMarketDataFeed(LiveMarketDataFeed):
 
     async def _run(self) -> None:
         backoff_seconds = 1.0
-        first_connection = True
+        connected_once = False
         while not self._stop_event.is_set():
+            self._subscription_changed.clear()
+            _, instrument_id_by_symbol = self._subscription_snapshot()
+            if not instrument_id_by_symbol:
+                await asyncio.sleep(0.25)
+                continue
             try:
-                if not first_connection:
+                if connected_once:
                     self._reconnections += 1
-                first_connection = False
-                await self._run_connection()
+                connected_once = True
+                await self._run_connection(instrument_id_by_symbol)
                 backoff_seconds = 1.0
+            except _SubscriptionChanged:
+                self._subscription_restarts += 1
+                backoff_seconds = 1.0
+                continue
             except asyncio.CancelledError:
                 raise
             except Exception as exc:
@@ -125,13 +164,15 @@ class EtoroWebSocketMarketDataFeed(LiveMarketDataFeed):
                 await asyncio.sleep(backoff_seconds)
                 backoff_seconds = min(backoff_seconds * 2, 30.0)
 
-    async def _run_connection(self) -> None:
+    async def _run_connection(
+        self,
+        instrument_id_by_symbol: dict[str, int],
+    ) -> None:
         self._connections += 1
         connection_id = str(uuid4())
         symbol_by_instrument_id = {
             instrument_id: symbol
-            for symbol, instrument_id
-            in self._instrument_id_by_symbol.items()
+            for symbol, instrument_id in instrument_id_by_symbol.items()
         }
         state: dict[int, dict] = {}
         async with self.connector(self.websocket_url) as websocket:
@@ -153,24 +194,37 @@ class EtoroWebSocketMarketDataFeed(LiveMarketDataFeed):
                 list(symbol_by_instrument_id)
             )
             await websocket.send(json.dumps(subscription))
-            consecutive_silences = 0
+            silence_probes = 0
+            last_frame_at = time.monotonic()
+            receive_timeout = min(1.0, self.global_silence_seconds)
             while not self._stop_event.is_set():
+                if self._subscription_changed.is_set():
+                    raise _SubscriptionChanged
                 try:
                     raw = await asyncio.wait_for(
                         websocket.recv(),
-                        timeout=self.global_silence_seconds,
+                        timeout=receive_timeout,
                     )
                 except TimeoutError:
+                    if self._subscription_changed.is_set():
+                        raise _SubscriptionChanged
+                    if (
+                        time.monotonic() - last_frame_at
+                        < self.global_silence_seconds
+                    ):
+                        continue
                     self._global_silences += 1
-                    consecutive_silences += 1
+                    silence_probes += 1
                     pong_waiter = await websocket.ping()
                     await asyncio.wait_for(pong_waiter, timeout=5.0)
-                    if consecutive_silences >= 2:
+                    last_frame_at = time.monotonic()
+                    if silence_probes >= 2:
                         raise RuntimeError(
                             'WebSocket stream globally silent'
                         )
                     continue
-                consecutive_silences = 0
+                silence_probes = 0
+                last_frame_at = time.monotonic()
                 text = _decode_frame(raw)
                 if text == '\x00':
                     self._null_frames += 1
