@@ -7,11 +7,6 @@ from app.execution.position_tracker import PositionTracker
 from app.execution.trade_executor import TradeExecutor
 from app.instruments.instrument_registry import InstrumentRegistry
 from app.journal.analysis_journal import build_analysis_journal
-from app.journal.filtered_journal import (
-    FilteredJournal,
-    keep_candle_event,
-    keep_market_event,
-)
 from app.journal.jsonl_journal import JsonlJournal
 from app.journal.raw_data_journal import RawDataJournal
 from app.journal.run_manifest import (
@@ -216,7 +211,7 @@ def main() -> None:
         run_id=run_id,
         profile=strategy_profile.name,
     )
-    raw_market_journal = RawDataJournal(
+    market_journal = RawDataJournal(
         JsonlJournal(
             str(run_paths.market),
             run_id=run_id,
@@ -224,8 +219,7 @@ def main() -> None:
         ),
         trade_journal.record_raw_event,
     )
-    market_journal = FilteredJournal(raw_market_journal, keep_market_event)
-    raw_candle_journal = RawDataJournal(
+    candle_journal = RawDataJournal(
         JsonlJournal(
             str(run_paths.candles),
             run_id=run_id,
@@ -233,7 +227,6 @@ def main() -> None:
         ),
         trade_journal.record_raw_event,
     )
-    candle_journal = FilteredJournal(raw_candle_journal, keep_candle_event)
     heartbeat = RuntimeHeartbeat(settings.runtime_heartbeat_minutes)
     runtime = EventDrivenMarketRuntime(
         settings=settings,
