@@ -1,7 +1,7 @@
-from datetime import datetime, timezone
+from datetime import datetime
 
-from app.market_data.models import MarketDataEvent, MarketDataSource
 from app.runtime.candidate_flow import execute_ranked_candidates
+from app.runtime.position_lifecycle import close_positions_triggered_by_snapshot
 
 
 class MarketDataMaintenance:
@@ -45,40 +45,85 @@ class MarketDataMaintenance:
             if symbol in applied
         ]
 
-    def _run_fallback_if_needed(self, now: datetime) -> None:
-        monitored = self._applied_monitored_symbols()
-        stale = self.coordinator.stale_symbols(symbols=monitored, now=now)
-        if not stale:
+    def _run_position_fallback_if_due(
+        self,
+        now: datetime,
+        monotonic_now: float,
+    ) -> None:
+        if not self.live_market_data.requires_websocket_health:
             return
-        self.coordinator.mark_fallback_requested(stale, now)
+
+        applied = set(self._applied_feed_symbols)
+        open_symbols = list(
+            dict.fromkeys(
+                position.symbol.strip().upper()
+                for position in self.position_tracker.open_positions_snapshot()
+                if position.symbol.strip().upper() in applied
+            )
+        )
+        if not open_symbols:
+            return
+
+        fallback_symbols = self.coordinator.position_fallback_symbols(
+            symbols=open_symbols,
+            now=now,
+            force=not self.live_market_data.connection_healthy(),
+        )
+        if not fallback_symbols:
+            return
+        if (
+            monotonic_now - self._last_position_fallback
+            < self.settings.position_fallback_interval_seconds
+        ):
+            return
+        self._last_position_fallback = monotonic_now
+
         try:
-            snapshots = self.rest_market_data.get_market_snapshots(stale)
+            snapshots = self.rest_market_data.get_market_snapshots(
+                fallback_symbols
+            )
         except Exception as exc:
-            self.coordinator.mark_fallback_failed(stale)
+            self.coordinator.mark_fallback_failed(fallback_symbols)
             self.trade_journal.write(
-                'rest_fallback_error',
+                'rest_position_fallback_error',
                 {
-                    'symbols': stale,
+                    'symbols': fallback_symbols,
                     'message': str(exc),
                     'loop_id': self.loop_id,
                 },
             )
             return
 
-        missing = [symbol for symbol in stale if symbol not in snapshots]
+        received_symbols = list(snapshots)
+        if received_symbols:
+            self.coordinator.mark_fallback_succeeded(received_symbols)
+        missing = [
+            symbol for symbol in fallback_symbols if symbol not in snapshots
+        ]
         if missing:
             self.coordinator.mark_fallback_failed(missing)
-        received_at = datetime.now(timezone.utc)
+
         for symbol, snapshot in snapshots.items():
-            self._handle_event(
-                MarketDataEvent(
-                    symbol=symbol,
-                    source=MarketDataSource.REST_FALLBACK,
-                    received_at=received_at,
-                    snapshot=snapshot,
-                    price_changed=True,
+            self.trade_journal.write(
+                'rest_position_fallback_snapshot',
+                {
+                    'symbol': symbol,
+                    'snapshot': snapshot,
+                    'loop_id': self.loop_id,
+                },
+            )
+            close_positions_triggered_by_snapshot(
+                symbol=symbol,
+                snapshot=snapshot,
+                executor=self.executor,
+                position_tracker=self.position_tracker,
+                risk_manager=self.risk_manager,
+                trade_journal=self.trade_journal,
+                position_store=self.position_store,
+                cooldown_store=self.cooldown_store,
+                is_broker_authorization_error=(
+                    self.is_broker_authorization_error
                 ),
-                received_at,
             )
 
     def _run_rest_control_if_due(
@@ -110,7 +155,6 @@ class MarketDataMaintenance:
             )
             return
 
-        received_at = datetime.now(timezone.utc)
         for symbol, snapshot in snapshots.items():
             websocket_snapshot = self.latest_snapshots.get(symbol)
             self.trade_journal.write(

@@ -1,4 +1,4 @@
-from pydantic import Field
+from pydantic import AliasChoices, Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -58,9 +58,12 @@ class Settings(BaseSettings):
         default=4096,
         alias='MARKET_DATA_QUEUE_CAPACITY',
     )
-    ws_symbol_silence_seconds: float = Field(
-        default=5.0,
-        alias='WS_SYMBOL_SILENCE_SECONDS',
+    ws_position_silence_seconds: float = Field(
+        default=15.0,
+        validation_alias=AliasChoices(
+            'WS_POSITION_SILENCE_SECONDS',
+            'WS_SYMBOL_SILENCE_SECONDS',
+        ),
     )
     ws_global_silence_seconds: float = Field(
         default=15.0,
@@ -70,9 +73,12 @@ class Settings(BaseSettings):
         default=60.0,
         alias='REST_CONTROL_INTERVAL_SECONDS',
     )
-    rest_fallback_cooldown_seconds: float = Field(
-        default=5.0,
-        alias='REST_FALLBACK_COOLDOWN_SECONDS',
+    position_fallback_interval_seconds: float = Field(
+        default=10.0,
+        validation_alias=AliasChoices(
+            'POSITION_FALLBACK_INTERVAL_SECONDS',
+            'REST_FALLBACK_COOLDOWN_SECONDS',
+        ),
     )
     decision_window_grace_seconds: float = Field(
         default=5.0,
@@ -119,6 +125,16 @@ class Settings(BaseSettings):
     trading_sessions_crypto: str = Field(default='', alias='TRADING_SESSIONS_CRYPTO')
     trading_sessions_equity_us: str = Field(default='', alias='TRADING_SESSIONS_EQUITY_US')
     trading_sessions_equity_eu: str = Field(default='', alias='TRADING_SESSIONS_EQUITY_EU')
+
+    @field_validator('ws_position_silence_seconds')
+    @classmethod
+    def enforce_position_silence_floor(cls, value: float) -> float:
+        return max(15.0, value)
+
+    @field_validator('position_fallback_interval_seconds')
+    @classmethod
+    def enforce_position_fallback_interval_floor(cls, value: float) -> float:
+        return max(10.0, value)
 
     def watchlist_symbols(self) -> list[str]:
         symbols = self._parse_symbols(self.watchlist)

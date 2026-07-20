@@ -19,6 +19,9 @@ class FakeFeed:
     def subscribed_symbols(self) -> tuple[str, ...]:
         return tuple(self.started_symbols)
 
+    def connection_healthy(self) -> bool:
+        return True
+
     def next_event(self, timeout_seconds: float):
         raise KeyboardInterrupt
 
@@ -50,17 +53,22 @@ class FakeJournal:
 
 
 class SessionAwareRuntime(EventDrivenMarketRuntime):
-    def __init__(self) -> None:
+    def __init__(self, open_position_symbols: list[str] | None = None) -> None:
         self.run_id = 'test-run'
         self.settings = SimpleNamespace(
             rest_control_interval_seconds=60.0,
-            ws_symbol_silence_seconds=5.0,
+            ws_position_silence_seconds=15.0,
+            position_fallback_interval_seconds=10.0,
         )
         self.live_market_data = FakeFeed()
         self.coordinator = FakeCoordinator()
         self.trade_journal = FakeJournal()
+        positions = [
+            SimpleNamespace(symbol=symbol)
+            for symbol in (open_position_symbols or [])
+        ]
         self.position_tracker = SimpleNamespace(
-            open_positions_snapshot=lambda: []
+            open_positions_snapshot=lambda: positions
         )
         self.heartbeat = SimpleNamespace(maybe_emit=lambda **kwargs: None)
         self.active_symbols: list[str] = []
@@ -68,6 +76,7 @@ class SessionAwareRuntime(EventDrivenMarketRuntime):
         self.loop_id = 0
         self._last_session_refresh = 0.0
         self._last_rest_control = 0.0
+        self._last_position_fallback = 0.0
         self._last_position_reconciliation = 0.0
         self._feed_started = False
         self._subscribed_symbols: tuple[str, ...] = ()
@@ -92,3 +101,19 @@ def test_runtime_starts_feed_with_only_current_session_symbols():
     assert 'AAPL' not in runtime.live_market_data.started_symbols
     assert runtime.coordinator.initialized_symbols == ['AIR.PA', 'FRA40']
     assert runtime.live_market_data.stopped is True
+
+
+def test_open_position_stays_subscribed_when_its_session_is_closed():
+    runtime = SessionAwareRuntime(open_position_symbols=['AAPL'])
+
+    assert runtime.run() == 'stopped'
+    assert runtime.live_market_data.started_symbols == [
+        'AIR.PA',
+        'FRA40',
+        'AAPL',
+    ]
+    assert runtime.coordinator.initialized_symbols == [
+        'AIR.PA',
+        'FRA40',
+        'AAPL',
+    ]

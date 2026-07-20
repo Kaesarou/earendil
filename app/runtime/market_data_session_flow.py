@@ -79,9 +79,17 @@ class MarketDataSessionFlow:
         self._synchronize_market_data_subscription()
 
     def _desired_market_data_symbols(self) -> list[str]:
+        open_position_symbols = [
+            position.symbol.strip().upper()
+            for position in self.position_tracker.open_positions_snapshot()
+        ]
         return list(
             dict.fromkeys(
-                [*self.active_symbols, *self.context_asset_classes]
+                [
+                    *self.active_symbols,
+                    *self.context_asset_classes,
+                    *open_position_symbols,
+                ]
             )
         )
 
