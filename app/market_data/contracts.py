@@ -17,6 +17,11 @@ class LiveMarketDataFeed(ABC):
         raise NotImplementedError
 
     @abstractmethod
+    def update_symbols(self, symbols: list[str]) -> None:
+        """Replace the subscribed universe with the supplied symbols."""
+        raise NotImplementedError
+
+    @abstractmethod
     def next_event(self, timeout_seconds: float) -> MarketDataEvent | None:
         raise NotImplementedError
 
