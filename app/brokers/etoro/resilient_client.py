@@ -9,6 +9,7 @@ from app.brokers.etoro.order_confirmation_error import (
 from app.brokers.etoro.position_instrument_cache import (
     remember_position_instrument_id,
 )
+from app.brokers.etoro.trade_side import ensure_side_is_allowed, normalize_side
 
 logger = logging.getLogger(__name__)
 
@@ -24,7 +25,8 @@ class ResilientEtoroClient(EtoroClient):
         stop_loss: float,
         take_profit: float,
     ) -> OpenPositionResult:
-        normalized_side = side.strip().upper()
+        normalized_side = normalize_side(side)
+        ensure_side_is_allowed(normalized_side)
         instrument_id = self._find_instrument_id(symbol)
         payload = self._build_open_order_payload(
             instrument_id=instrument_id,
