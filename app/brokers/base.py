@@ -46,6 +46,8 @@ class ClosePositionSubmissionUnknownError(RuntimeError):
         submitted_at: datetime,
         cause: Exception,
         broker_response: dict[str, Any] | None = None,
+        close_order_id: str | None = None,
+        reference_id: str | None = None,
     ) -> None:
         super().__init__(
             'Close submission outcome is unknown: '
@@ -55,6 +57,8 @@ class ClosePositionSubmissionUnknownError(RuntimeError):
         self.submitted_at = submitted_at
         self.cause = cause
         self.broker_response = broker_response
+        self.close_order_id = close_order_id
+        self.reference_id = reference_id
         self.response = getattr(cause, 'response', None)
 
 
