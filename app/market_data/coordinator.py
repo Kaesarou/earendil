@@ -68,7 +68,12 @@ class MarketDataCoordinator:
             key = (event.connection_id, event.message_id)
             if key in self._seen_message_ids:
                 self.metrics['duplicate_message_ids_dropped'] += 1
-                return self._decision(False, 'duplicate_message_id', event, symbol)
+                return self._decision(
+                    False,
+                    'duplicate_message_id',
+                    event,
+                    symbol,
+                )
             self._remember_message_id(key)
 
         if event.source == MarketDataSource.WEBSOCKET:
@@ -143,12 +148,6 @@ class MarketDataCoordinator:
         now: datetime,
         force: bool = False,
     ) -> list[str]:
-        """Return open-position symbols currently requiring REST protection.
-
-        A quiet symbol without an open position is never evaluated here. Once a
-        position enters fallback, it remains there until two coherent WebSocket
-        events restore the live feed state.
-        """
         if not self.websocket_required:
             return []
         actual_now = _as_utc(now)
@@ -247,35 +246,27 @@ class MarketDataCoordinator:
         state: _SymbolState,
         source: MarketDataSource,
     ) -> None:
-        if source == MarketDataSource.WEBSOCKET:
-            if state.state in {
-                SymbolFeedState.WS_STALE,
-                SymbolFeedState.REST_FALLBACK,
-                SymbolFeedState.BLOCKED,
-            }:
-                state.state = SymbolFeedState.RECOVERING
-                state.recovery_events = 1
-                return
-            if state.state == SymbolFeedState.RECOVERING:
-                state.recovery_events += 1
-                if state.recovery_events >= 2:
-                    state.state = SymbolFeedState.WS_HEALTHY
-                    state.recovery_events = 0
-                    state.fallback_started_at = None
-                    self.metrics['symbol_recovery_count'] += 1
-                return
-            state.state = SymbolFeedState.WS_HEALTHY
-            state.recovery_events = 0
-            state.fallback_started_at = None
+        if source != MarketDataSource.WEBSOCKET:
             return
-
-        if source in {
-            MarketDataSource.REST_POLLING,
-            MarketDataSource.PAPER,
+        if state.state in {
+            SymbolFeedState.WS_STALE,
+            SymbolFeedState.REST_FALLBACK,
+            SymbolFeedState.BLOCKED,
         }:
-            state.state = SymbolFeedState.WS_HEALTHY
-            state.recovery_events = 0
-            state.fallback_started_at = None
+            state.state = SymbolFeedState.RECOVERING
+            state.recovery_events = 1
+            return
+        if state.state == SymbolFeedState.RECOVERING:
+            state.recovery_events += 1
+            if state.recovery_events >= 2:
+                state.state = SymbolFeedState.WS_HEALTHY
+                state.recovery_events = 0
+                state.fallback_started_at = None
+                self.metrics['symbol_recovery_count'] += 1
+            return
+        state.state = SymbolFeedState.WS_HEALTHY
+        state.recovery_events = 0
+        state.fallback_started_at = None
 
     def _remember_message_id(self, key: tuple[str | None, str]) -> None:
         self._seen_message_ids.add(key)
