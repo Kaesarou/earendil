@@ -60,7 +60,7 @@ class QualityAwareCandleBuilder:
         if event is None:
             event = MarketDataEvent(
                 symbol=snapshot.symbol,
-                source=MarketDataSource.PAPER,
+                source=MarketDataSource.WEBSOCKET,
                 received_at=snapshot.received_at or snapshot.timestamp,
                 snapshot=snapshot,
                 price_changed=True,
@@ -137,7 +137,6 @@ class QualityAwareCandleBuilder:
             self._bucket = candle.closed_at
             self._reset_quality()
             if index + 1 < len(finalized):
-                # Intermediate buckets are entirely synthetic carry-forward bars.
                 self._bucket = candle.closed_at
         return results
 
