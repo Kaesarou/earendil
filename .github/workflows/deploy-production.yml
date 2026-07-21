@@ -43,7 +43,9 @@ jobs:
       - name: Validate production Compose file
         env:
           GOBLIN_IMAGE: ghcr.io/kaesarou/goblin:0000000000000000000000000000000000000000
-        run: docker compose -f docker-compose.production.yml config --quiet
+        run: |
+          touch .env
+          docker compose -f docker-compose.production.yml config --quiet
 
   publish:
     name: Publish immutable image
