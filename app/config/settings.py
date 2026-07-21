@@ -1,5 +1,11 @@
-from pydantic import AliasChoices, Field, field_validator
+from typing import Literal
+
+from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+
+BrokerMode = Literal['paper', 'etoro_demo', 'etoro_live']
+JournalDetailLevel = Literal['minimal', 'normal', 'debug', 'full']
 
 
 class Settings(BaseSettings):
@@ -10,19 +16,34 @@ class Settings(BaseSettings):
     )
 
     app_log_path: str = Field(default='data/logs/goblin.log', alias='APP_LOG_PATH')
-    position_store_path: str = Field(default='data/goblin.sqlite', alias='POSITION_STORE_PATH')
-    journal_path: str = Field(default='data/logs/trades.jsonl', alias='JOURNAL_PATH')
-    market_log_path: str = Field(default='data/logs/market.jsonl.gz', alias='MARKET_LOG_PATH')
+    position_store_path: str = Field(
+        default='data/goblin.sqlite',
+        alias='POSITION_STORE_PATH',
+    )
+    journal_path: str = Field(
+        default='data/logs/trades.jsonl',
+        alias='JOURNAL_PATH',
+    )
+    market_log_path: str = Field(
+        default='data/logs/market.jsonl.gz',
+        alias='MARKET_LOG_PATH',
+    )
     candle_journal_path: str = Field(
         default='data/logs/candles.jsonl.gz',
         alias='CANDLE_JOURNAL_PATH',
     )
-    errors_journal_path: str = Field(default='data/logs/errors.jsonl', alias='ERRORS_JOURNAL_PATH')
+    errors_journal_path: str = Field(
+        default='data/logs/errors.jsonl',
+        alias='ERRORS_JOURNAL_PATH',
+    )
     debug_decisions_journal_path: str = Field(
         default='data/logs/debug_decisions.jsonl.gz',
         alias='DEBUG_DECISIONS_JOURNAL_PATH',
     )
-    daily_summary_path: str = Field(default='data/logs/daily_summary.json', alias='DAILY_SUMMARY_PATH')
+    daily_summary_path: str = Field(
+        default='data/logs/daily_summary.json',
+        alias='DAILY_SUMMARY_PATH',
+    )
     partial_daily_summary_path: str = Field(
         default='data/logs/daily_summary.partial.json',
         alias='PARTIAL_DAILY_SUMMARY_PATH',
@@ -31,18 +52,9 @@ class Settings(BaseSettings):
         default='data/logs/run_manifest.json',
         alias='RUN_MANIFEST_PATH',
     )
-    journal_detail_level: str = Field(default='normal', alias='JOURNAL_DETAIL_LEVEL')
-    journal_keep_debug_decisions: bool = Field(
-        default=False,
-        alias='JOURNAL_KEEP_DEBUG_DECISIONS',
-    )
-    journal_write_partial_summary: bool = Field(
-        default=True,
-        alias='JOURNAL_WRITE_PARTIAL_SUMMARY',
-    )
-    journal_partial_summary_interval_minutes: int = Field(
-        default=15,
-        alias='JOURNAL_PARTIAL_SUMMARY_INTERVAL_MINUTES',
+    journal_detail_level: JournalDetailLevel = Field(
+        default='normal',
+        alias='JOURNAL_DETAIL_LEVEL',
     )
     journal_max_runs: int = Field(default=30, alias='JOURNAL_MAX_RUNS')
     runtime_heartbeat_minutes: int = Field(
@@ -50,103 +62,27 @@ class Settings(BaseSettings):
         alias='RUNTIME_HEARTBEAT_MINUTES',
     )
 
-    broker: str = Field(default='paper', alias='BROKER')
+    broker: BrokerMode = Field(default='paper', alias='BROKER')
     log_level: str = Field(default='INFO', alias='LOG_LEVEL')
-    poll_interval_seconds: int = Field(default=10, alias='POLL_INTERVAL_SECONDS')
-
-    market_data_mode: str = Field(default='auto', alias='MARKET_DATA_MODE')
-    market_data_queue_capacity: int = Field(
-        default=4096,
-        alias='MARKET_DATA_QUEUE_CAPACITY',
-    )
-    ws_position_silence_seconds: float = Field(
-        default=15.0,
-        validation_alias=AliasChoices(
-            'WS_POSITION_SILENCE_SECONDS',
-            'WS_SYMBOL_SILENCE_SECONDS',
-        ),
-    )
-    ws_global_silence_seconds: float = Field(
-        default=15.0,
-        alias='WS_GLOBAL_SILENCE_SECONDS',
-    )
-    rest_control_interval_seconds: float = Field(
-        default=60.0,
-        alias='REST_CONTROL_INTERVAL_SECONDS',
-    )
-    rest_control_anomaly_percent: float = Field(
-        default=0.25,
-        alias='REST_CONTROL_ANOMALY_PERCENT',
-    )
-    position_fallback_interval_seconds: float = Field(
-        default=10.0,
-        validation_alias=AliasChoices(
-            'POSITION_FALLBACK_INTERVAL_SECONDS',
-            'REST_FALLBACK_COOLDOWN_SECONDS',
-        ),
-    )
-    decision_window_grace_seconds: float = Field(
-        default=5.0,
-        alias='DECISION_WINDOW_GRACE_SECONDS',
-    )
-    candle_clock_grace_seconds: float = Field(
-        default=1.0,
-        alias='CANDLE_CLOCK_GRACE_SECONDS',
-    )
-    candle_max_carry_forward_age_seconds: float = Field(
-        default=180.0,
-        alias='CANDLE_MAX_CARRY_FORWARD_AGE_SECONDS',
-    )
-    candle_ordering_drop_degrade_count: int = Field(
-        default=3,
-        alias='CANDLE_ORDERING_DROP_DEGRADE_COUNT',
-    )
-    candle_ordering_drop_degrade_ratio: float = Field(
-        default=0.10,
-        alias='CANDLE_ORDERING_DROP_DEGRADE_RATIO',
-    )
-
-    position_reconciliation_grace_seconds: float = Field(
-        default=30.0,
-        alias='POSITION_RECONCILIATION_GRACE_SECONDS',
-    )
-    position_reconciliation_required_misses: int = Field(
-        default=3,
-        alias='POSITION_RECONCILIATION_REQUIRED_MISSES',
-    )
-    position_reconciliation_miss_interval_seconds: float = Field(
-        default=10.0,
-        alias='POSITION_RECONCILIATION_MISS_INTERVAL_SECONDS',
-    )
-    unknown_order_lookup_interval_seconds: float = Field(
-        default=15.0,
-        alias='UNKNOWN_ORDER_LOOKUP_INTERVAL_SECONDS',
-    )
-    unknown_order_max_age_minutes: float = Field(
-        default=30.0,
-        alias='UNKNOWN_ORDER_MAX_AGE_MINUTES',
-    )
 
     etoro_api_key: str = Field(default='', alias='ETORO_API_KEY')
     etoro_user_key: str = Field(default='', alias='ETORO_USER_KEY')
-    etoro_sellshort_safety_sl_buffer_percent: float = Field(
-        default=0.30,
-        alias='ETORO_SELLSHORT_SAFETY_SL_BUFFER_PERCENT',
-    )
     instrument_id_cache_path: str = Field(
         default='data/etoro_instrument_ids.json',
         alias='ETORO_INSTRUMENT_ID_CACHE_PATH',
-    )
-    instrument_resolution_min_interval_seconds: float = Field(
-        default=1.05,
-        alias='ETORO_INSTRUMENT_RESOLUTION_MIN_INTERVAL_SECONDS',
     )
 
     watchlist: str = Field(default='', alias='WATCHLIST')
     base_currency: str = Field(default='USD', alias='BASE_CURRENCY')
     max_open_positions: int = Field(default=1, alias='MAX_OPEN_POSITIONS')
-    max_open_positions_per_symbol: int = Field(default=1, alias='MAX_OPEN_POSITIONS_PER_SYMBOL')
-    max_trades_per_session: int = Field(default=3, alias='MAX_TRADES_PER_SESSION')
+    max_open_positions_per_symbol: int = Field(
+        default=1,
+        alias='MAX_OPEN_POSITIONS_PER_SYMBOL',
+    )
+    max_trades_per_session: int = Field(
+        default=3,
+        alias='MAX_TRADES_PER_SESSION',
+    )
 
     crypto_symbols: str = Field(default='', alias='CRYPTO_SYMBOLS')
     equity_us_symbols: str = Field(default='', alias='EQUITY_US_SYMBOLS')
@@ -163,25 +99,22 @@ class Settings(BaseSettings):
         default='FRA40',
         alias='MARKET_BENCHMARK_EQUITY_EU',
     )
-    trading_session_timezone: str = Field(default='Europe/Paris', alias='TRADING_SESSION_TIMEZONE')
-    trading_sessions_crypto: str = Field(default='', alias='TRADING_SESSIONS_CRYPTO')
-    trading_sessions_equity_us: str = Field(default='', alias='TRADING_SESSIONS_EQUITY_US')
-    trading_sessions_equity_eu: str = Field(default='', alias='TRADING_SESSIONS_EQUITY_EU')
-
-    @field_validator('ws_position_silence_seconds')
-    @classmethod
-    def enforce_position_silence_floor(cls, value: float) -> float:
-        return max(15.0, value)
-
-    @field_validator('position_fallback_interval_seconds')
-    @classmethod
-    def enforce_position_fallback_interval_floor(cls, value: float) -> float:
-        return max(10.0, value)
-
-    @field_validator('position_reconciliation_required_misses')
-    @classmethod
-    def enforce_reconciliation_miss_floor(cls, value: int) -> int:
-        return max(2, value)
+    trading_session_timezone: str = Field(
+        default='Europe/Paris',
+        alias='TRADING_SESSION_TIMEZONE',
+    )
+    trading_sessions_crypto: str = Field(
+        default='',
+        alias='TRADING_SESSIONS_CRYPTO',
+    )
+    trading_sessions_equity_us: str = Field(
+        default='',
+        alias='TRADING_SESSIONS_EQUITY_US',
+    )
+    trading_sessions_equity_eu: str = Field(
+        default='',
+        alias='TRADING_SESSIONS_EQUITY_EU',
+    )
 
     @field_validator('journal_max_runs')
     @classmethod
@@ -198,9 +131,15 @@ class Settings(BaseSettings):
         from app.instruments.models import AssetClass
 
         return {
-            AssetClass.CRYPTO: tuple(self._parse_symbols(self.market_benchmark_crypto)),
-            AssetClass.EQUITY_US: tuple(self._parse_symbols(self.market_benchmark_equity_us)),
-            AssetClass.EQUITY_EU: tuple(self._parse_symbols(self.market_benchmark_equity_eu)),
+            AssetClass.CRYPTO: tuple(
+                self._parse_symbols(self.market_benchmark_crypto)
+            ),
+            AssetClass.EQUITY_US: tuple(
+                self._parse_symbols(self.market_benchmark_equity_us)
+            ),
+            AssetClass.EQUITY_EU: tuple(
+                self._parse_symbols(self.market_benchmark_equity_eu)
+            ),
         }
 
     def _parse_symbols(self, raw_symbols: str) -> list[str]:
