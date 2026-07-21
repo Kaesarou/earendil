@@ -7,13 +7,5 @@ __pycache__/
 build/
 dist/
 *.egg-info/
-data/logs/*.jsonl
-data/logs/*.jsonl.gz
-data/logs/*.log
-data/logs/*.log.*
-data/logs/*.json
-data/logs/runs/
-data/*.sqlite
-data/*.sqlite-shm
-data/*.sqlite-wal
+data/*
 .DS_Store
