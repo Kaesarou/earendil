@@ -53,9 +53,6 @@ class FakeJournal:
 
 
 class FakeBrokerTaskRunner:
-    def drain(self):
-        return []
-
     def close(self, *, wait: bool) -> None:
         return None
 
@@ -66,9 +63,6 @@ class FakeBrokerTaskRunner:
 class FakeBrokerOperations:
     def diagnostics(self) -> dict:
         return {}
-
-    def handle_completion(self, completion, *, now, latest_snapshots) -> bool:
-        return False
 
 
 class FakeCandidateExecution:
@@ -81,19 +75,10 @@ class FakeCandidateExecution:
     def diagnostics(self) -> dict:
         return {}
 
-    def handle_completion(self, completion, *, now) -> bool:
-        return False
-
 
 class SessionAwareRuntime(EventDrivenMarketRuntime):
     def __init__(self, open_position_symbols: list[str] | None = None) -> None:
         self.run_id = 'test-run'
-        self.settings = SimpleNamespace(
-            rest_control_interval_seconds=60.0,
-            ws_position_silence_seconds=15.0,
-            position_fallback_interval_seconds=10.0,
-            candle_clock_grace_seconds=1.0,
-        )
         self.live_market_data = FakeFeed()
         self.coordinator = FakeCoordinator()
         self.trade_journal = FakeJournal()
@@ -128,6 +113,9 @@ class SessionAwareRuntime(EventDrivenMarketRuntime):
         return None
 
     def _reconcile_positions_if_due(self, now, monotonic_now: float) -> None:
+        return None
+
+    def _drain_broker_completions(self, now) -> None:
         return None
 
 
