@@ -14,6 +14,7 @@ from app.market_data.candle_stream import QualityAwareCandleBuilder
 from app.market_data.contracts import LiveMarketDataFeed, RestMarketDataClient
 from app.market_data.coordinator import MarketDataCoordinator
 from app.market_data.models import MARKET_DATA_MODEL_VERSION
+from app.persistence.pending_close_store import PendingCloseStore
 from app.persistence.position_store import PositionStore
 from app.persistence.trade_cooldown_store import TradeCooldownStore
 from app.risk.risk_manager import RiskManager
@@ -27,9 +28,7 @@ from app.runtime.market_data_maintenance import MarketDataMaintenance
 from app.runtime.market_data_session_flow import MarketDataSessionFlow
 from app.runtime.pending_entry import PendingEntryManager
 from app.runtime.position_lifecycle import BrokerAuthorizationErrorChecker
-from app.runtime.resilient_candidate_execution import (
-    ResilientCandidateExecutionCoordinator,
-)
+from app.runtime.resilient_candidate_execution import ResilientCandidateExecutionCoordinator
 from app.runtime.runtime_heartbeat import RuntimeHeartbeat
 from app.runtime.trading_session_window import TradingSessionState
 from app.strategies.balanced_strategy_config import BalancedStrategyConfig
@@ -65,6 +64,7 @@ class EventDrivenMarketRuntime(
         executor: TradeExecutor,
         position_tracker: PositionTracker,
         position_store: PositionStore,
+        pending_close_store: PendingCloseStore,
         cooldown_store: TradeCooldownStore,
         cooldown_guard: TradeCooldownGuard,
         pending_entry_manager: PendingEntryManager,
@@ -94,6 +94,7 @@ class EventDrivenMarketRuntime(
         self.executor = executor
         self.position_tracker = position_tracker
         self.position_store = position_store
+        self.pending_close_store = pending_close_store
         self.cooldown_store = cooldown_store
         self.cooldown_guard = cooldown_guard
         self.pending_entry_manager = pending_entry_manager
@@ -121,6 +122,7 @@ class EventDrivenMarketRuntime(
             position_tracker=position_tracker,
             risk_manager=risk_manager,
             position_store=position_store,
+            pending_close_store=pending_close_store,
             cooldown_store=cooldown_store,
             trade_journal=trade_journal,
             market_data_coordinator=self.coordinator,
@@ -134,9 +136,7 @@ class EventDrivenMarketRuntime(
             reconciliation_miss_interval_seconds=(
                 settings.position_reconciliation_miss_interval_seconds
             ),
-            rest_control_anomaly_percent=(
-                settings.rest_control_anomaly_percent
-            ),
+            rest_control_anomaly_percent=settings.rest_control_anomaly_percent,
         )
         self.candidate_execution = ResilientCandidateExecutionCoordinator(
             runner=self.broker_task_runner,

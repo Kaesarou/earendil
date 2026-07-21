@@ -21,6 +21,7 @@ from app.market.market_context import MarketContextService
 from app.market.session_timeframe_service import FullSessionMultiTimeframeService
 from app.market_data.candle_stream import QualityAwareCandleBuilder
 from app.market_data.models import MARKET_DATA_MODEL_VERSION
+from app.persistence.pending_close_store import PendingCloseStore
 from app.persistence.position_store import PositionStore
 from app.persistence.trade_cooldown_store import TradeCooldownStore
 from app.risk.position_sizing import FixedPercentPositionSizing
@@ -181,6 +182,7 @@ def main() -> None:
     executor = TradeExecutor(clients.execution_broker)
     position_tracker = PositionTracker()
     position_store = PositionStore(settings.position_store_path)
+    pending_close_store = PendingCloseStore(settings.position_store_path)
     cooldown_store = TradeCooldownStore(settings.position_store_path)
     cooldown_guard = TradeCooldownGuard(cooldown_store)
     pending_entry_manager = PendingEntryManager()
@@ -246,6 +248,7 @@ def main() -> None:
         executor=executor,
         position_tracker=position_tracker,
         position_store=position_store,
+        pending_close_store=pending_close_store,
         cooldown_store=cooldown_store,
         cooldown_guard=cooldown_guard,
         pending_entry_manager=pending_entry_manager,
@@ -282,13 +285,19 @@ def main() -> None:
     )
 
     try:
-        restore_persisted_positions_batched(
+        pending_closes = pending_close_store.load_all()
+        startup_open_states = restore_persisted_positions_batched(
             position_store=position_store,
             position_tracker=position_tracker,
             risk_manager=risk_manager,
             broker=clients.execution_broker,
             trade_journal=trade_journal,
             is_broker_authorization_error=is_broker_authorization_error,
+        )
+        runtime.broker_operations.restore_pending_closes(
+            pending_closes,
+            open_states=startup_open_states,
+            observed_at=datetime.now(timezone.utc),
         )
         run_status = runtime.run()
     except Exception as exc:
@@ -324,9 +333,7 @@ def main() -> None:
         )
         summary = trade_journal.finalize()
         summary['schema_version'] = 11
-        summary.setdefault('market_data', {})['model_version'] = (
-            MARKET_DATA_MODEL_VERSION
-        )
+        summary.setdefault('market_data', {})['model_version'] = MARKET_DATA_MODEL_VERSION
         write_run_manifest(settings.daily_summary_path, summary)
         write_run_manifest(archived_summary_path, summary)
         finalize_run_manifest(

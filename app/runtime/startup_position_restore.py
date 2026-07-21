@@ -23,18 +23,18 @@ def restore_persisted_positions_batched(
     broker: BrokerClient,
     trade_journal: JsonlJournal,
     is_broker_authorization_error: BrokerAuthorizationErrorChecker,
-) -> None:
+) -> dict[str, bool]:
     positions = position_store.load_open_positions()
     if not positions:
         logger.info('No persisted open positions to restore')
-        return
+        return {}
     logger.warning('Restoring persisted open positions | count=%s', len(positions))
     try:
         states = get_fresh_position_open_states(
             broker,
             [position.position_id for position in positions],
         )
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         if is_broker_authorization_error(exc):
             trade_journal.write(
                 'broker_authorization_error',
@@ -65,7 +65,7 @@ def restore_persisted_positions_batched(
                 position_id=position.position_id,
                 symbol=position.symbol,
             )
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             if is_broker_authorization_error(exc):
                 trade_journal.write(
                     'broker_authorization_error',
@@ -106,3 +106,4 @@ def restore_persisted_positions_batched(
                     'message': 'single_startup_absence_requires_runtime_confirmation',
                 },
             )
+    return {str(key): bool(value) for key, value in states.items()}

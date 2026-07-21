@@ -6,7 +6,12 @@ from datetime import datetime, timezone
 from statistics import median
 from typing import Any, Callable
 
-from app.brokers.base import BrokerClient
+from app.brokers.base import (
+    BrokerClient,
+    ClosePositionRejectedError,
+    ClosePositionSubmission,
+    ClosePositionSubmissionUnknownError,
+)
 from app.execution.position_tracker import (
     PositionCloseSignal,
     PositionTracker,
@@ -17,11 +22,13 @@ from app.journal.jsonl_journal import JsonlJournal
 from app.market.models import MarketSnapshot
 from app.market_data.contracts import RestMarketDataClient
 from app.market_data.coordinator import MarketDataCoordinator
+from app.persistence.pending_close_store import PendingCloseStore
 from app.persistence.position_store import PositionStore
 from app.persistence.trade_cooldown_store import TradeCooldownStore
 from app.risk.risk_manager import RiskManager
 from app.runtime.broker_queries import get_fresh_position_open_states
 from app.runtime.broker_task_runner import BrokerTaskCompletion, BrokerTaskRunner
+from app.runtime.pending_close import CloseState, PendingClose
 from app.runtime.position_lifecycle import (
     register_trade_cooldown_for_closed_position,
     register_trade_cooldown_for_missing_position,
@@ -51,9 +58,7 @@ class _RestContext:
 
 @dataclass(frozen=True)
 class _CloseContext:
-    signal: PositionCloseSignal
-    source: str
-    session_decision: Any = None
+    position_id: str
 
 
 class AsyncBrokerOperationsCoordinator:
@@ -67,6 +72,7 @@ class AsyncBrokerOperationsCoordinator:
         position_tracker: PositionTracker,
         risk_manager: RiskManager,
         position_store: PositionStore,
+        pending_close_store: PendingCloseStore,
         cooldown_store: TradeCooldownStore,
         trade_journal: JsonlJournal,
         market_data_coordinator: MarketDataCoordinator,
@@ -75,6 +81,8 @@ class AsyncBrokerOperationsCoordinator:
         reconciliation_required_misses: int = 3,
         reconciliation_miss_interval_seconds: float = 10.0,
         rest_control_anomaly_percent: float = 0.25,
+        close_confirmation_delayed_seconds: float = 30.0,
+        close_manual_intervention_seconds: float = 300.0,
     ) -> None:
         self.runner = runner
         self.execution_broker = execution_broker
@@ -83,19 +91,90 @@ class AsyncBrokerOperationsCoordinator:
         self.position_tracker = position_tracker
         self.risk_manager = risk_manager
         self.position_store = position_store
+        self.pending_close_store = pending_close_store
         self.cooldown_store = cooldown_store
         self.trade_journal = trade_journal
         self.market_data_coordinator = market_data_coordinator
         self.is_broker_authorization_error = is_broker_authorization_error
         self.rest_control_anomaly_percent = max(0.0, rest_control_anomaly_percent)
+        self.close_confirmation_delayed_seconds = max(
+            0.0,
+            close_confirmation_delayed_seconds,
+        )
+        self.close_manual_intervention_seconds = max(
+            self.close_confirmation_delayed_seconds,
+            close_manual_intervention_seconds,
+        )
         self.reconciliation = PositionReconciliationTracker(
             grace_seconds=reconciliation_grace_seconds,
             required_misses=reconciliation_required_misses,
-            minimum_miss_interval_seconds=(
-                reconciliation_miss_interval_seconds
-            ),
+            minimum_miss_interval_seconds=reconciliation_miss_interval_seconds,
         )
-        self._pending_close_ids: set[str] = set()
+        self._pending_closes: dict[str, PendingClose] = {}
+
+    def restore_pending_closes(
+        self,
+        pending_closes: list[PendingClose],
+        *,
+        open_states: dict[str, bool],
+        observed_at: datetime,
+    ) -> None:
+        now = _as_utc(observed_at)
+        tracked_ids = {
+            position.position_id
+            for position in self.position_tracker.open_positions_snapshot()
+        }
+        for restored in pending_closes:
+            pending = restored
+            if pending.state == CloseState.SUBMITTING:
+                pending = pending.mark_submission_unknown(
+                    error=RuntimeError('runtime_restarted_during_close_submission'),
+                    submitted_at=pending.requested_at,
+                )
+                self._persist_pending(pending, stage='startup_unknown_restore')
+                self.trade_journal.write(
+                    'position_close_submission_unknown',
+                    self._pending_payload(
+                        pending,
+                        restored=True,
+                        message=pending.last_error,
+                    ),
+                )
+            self._pending_closes[pending.position_id] = pending
+            self.trade_journal.write(
+                'position_close_confirmation_pending',
+                self._pending_payload(
+                    pending,
+                    restored=True,
+                    risk_reserved=True,
+                ),
+            )
+            if pending.position_id not in tracked_ids:
+                self._report_manual_intervention(
+                    pending,
+                    now=now,
+                    reason='pending_close_without_restored_position',
+                )
+                continue
+            state = open_states.get(pending.position_id)
+            if state is False:
+                self._confirm_pending_close(
+                    pending,
+                    closed_at=now,
+                    source='startup_portfolio_snapshot',
+                )
+            elif state is True:
+                self._observe_pending_still_open(pending, observed_at=now)
+            else:
+                self.trade_journal.write(
+                    'position_reconciliation_warning',
+                    {
+                        'position_id': pending.position_id,
+                        'symbol': pending.symbol,
+                        'stage': 'startup_pending_close_reconciliation',
+                        'message': 'broker_position_state_missing',
+                    },
+                )
 
     def schedule_reconciliation(self, *, now: datetime) -> bool:
         if self.runner.has_pending_kind('position_reconciliation'):
@@ -186,11 +265,7 @@ class AsyncBrokerOperationsCoordinator:
                     reason=FORCE_CLOSE_BEFORE_SESSION_END,
                     detected_at=snapshot.timestamp,
                     metadata={
-                        'session_decision': getattr(
-                            session_decision,
-                            'reason',
-                            None,
-                        ),
+                        'session_decision': getattr(session_decision, 'reason', None),
                         'time_until_session_end_minutes': getattr(
                             session_decision,
                             'time_until_session_end_minutes',
@@ -209,7 +284,7 @@ class AsyncBrokerOperationsCoordinator:
         source: str,
         session_decision: Any = None,
     ) -> bool:
-        if signal.position_id in self._pending_close_ids:
+        if signal.position_id in self._pending_closes:
             return False
         tracked_ids = {
             position.position_id
@@ -217,28 +292,54 @@ class AsyncBrokerOperationsCoordinator:
         }
         if signal.position_id not in tracked_ids:
             return False
-        self._pending_close_ids.add(signal.position_id)
-        context = _CloseContext(
+
+        pending = PendingClose(
+            position_id=signal.position_id,
+            symbol=signal.symbol,
             signal=signal,
             source=source,
-            session_decision=session_decision,
+            state=CloseState.SUBMITTING,
+            requested_at=datetime.now(timezone.utc),
+            metadata=self._runtime_close_metadata(session_decision),
         )
+        if not self._persist_pending(pending, stage='close_requested'):
+            return False
+        self._pending_closes[pending.position_id] = pending
         self.trade_journal.write(
-            'position_close_pending',
-            {
-                'source': source,
-                'symbol': signal.symbol,
-                'position_id': signal.position_id,
-                'close_signal': signal,
-            },
-        )
-        self.runner.submit(
-            kind='close_position',
-            context=context,
-            operation=lambda position_id=signal.position_id: (
-                self.executor.close(position_id)
+            'position_close_requested',
+            self._pending_payload(
+                pending,
+                risk_reserved=True,
+                position_persisted=True,
             ),
         )
+        try:
+            self.runner.submit(
+                kind='close_position',
+                task_id=f'close_position:{signal.position_id}',
+                context=_CloseContext(position_id=signal.position_id),
+                operation=lambda position_id=signal.position_id: (
+                    self.executor.close(position_id)
+                ),
+            )
+        except Exception as exc:
+            rejected = pending.mark_rejected(error=exc)
+            self._pending_closes[pending.position_id] = rejected
+            self._persist_pending(rejected, stage='close_task_submission')
+            self.trade_journal.write(
+                'position_close_rejected',
+                self._pending_payload(
+                    rejected,
+                    message=str(exc),
+                    rejection_stage='runtime_task_submission',
+                ),
+            )
+            self._report_manual_intervention(
+                rejected,
+                now=datetime.now(timezone.utc),
+                reason='close_task_submission_failed',
+            )
+            return False
         return True
 
     def handle_completion(
@@ -262,13 +363,17 @@ class AsyncBrokerOperationsCoordinator:
             self._handle_position_fallback(completion, now=_as_utc(now))
             return True
         if completion.kind == 'close_position':
-            self._handle_close(completion)
+            self._handle_close(completion, now=_as_utc(now))
             return True
         return False
 
     def diagnostics(self) -> dict[str, Any]:
+        states: dict[str, int] = {}
+        for pending in self._pending_closes.values():
+            states[pending.state.value] = states.get(pending.state.value, 0) + 1
         return {
-            'pending_close_position_ids': sorted(self._pending_close_ids),
+            'pending_close_position_ids': sorted(self._pending_closes),
+            'pending_close_states': states,
             'reconciliation_evidence': self.reconciliation.snapshot(),
         }
 
@@ -302,18 +407,47 @@ class AsyncBrokerOperationsCoordinator:
                 },
             )
             return
+        normalized_states = {str(key): bool(value) for key, value in states.items()}
+
+        for position_id, pending in list(self._pending_closes.items()):
+            if position_id not in normalized_states:
+                self.trade_journal.write(
+                    'position_reconciliation_warning',
+                    {
+                        'position_id': position_id,
+                        'symbol': pending.symbol,
+                        'message': 'broker_position_state_missing',
+                        'state': pending.state.value,
+                    },
+                )
+                continue
+            if normalized_states[position_id]:
+                self._observe_pending_still_open(pending, observed_at=now)
+            else:
+                self._confirm_pending_close(
+                    pending,
+                    closed_at=now,
+                    source='runtime_portfolio_reconciliation',
+                )
+
         current_by_id = {
             position.position_id: position
             for position in self.position_tracker.open_positions_snapshot()
         }
+        pending_ids = set(self._pending_closes)
         positions = [
             current_by_id[position.position_id]
             for position in context.positions
             if position.position_id in current_by_id
+            and position.position_id not in pending_ids
         ]
         outcome = self.reconciliation.observe(
             positions=positions,
-            open_states={str(key): bool(value) for key, value in states.items()},
+            open_states={
+                position_id: state
+                for position_id, state in normalized_states.items()
+                if position_id not in pending_ids
+            },
             observed_at=now,
         )
         self._write_reconciliation_outcome(outcome)
@@ -377,13 +511,10 @@ class AsyncBrokerOperationsCoordinator:
         removed = self.position_tracker.remove_position(position.position_id)
         if removed is None:
             return
-        self._pending_close_ids.discard(position.position_id)
-        closed_session_key = self.risk_manager.record_close_position(
-            removed.symbol
-        )
+        closed_session_key = self.risk_manager.record_close_position(removed.symbol)
         try:
             self.position_store.delete_open_position(removed.position_id)
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             self.trade_journal.write(
                 'position_persistence_error',
                 {
@@ -400,6 +531,7 @@ class AsyncBrokerOperationsCoordinator:
             trade_journal=self.trade_journal,
             session_key=closed_session_key,
         )
+        self.execution_broker.forget_position_instrument(removed.position_id)
         self.trade_journal.write(
             'position_reconciled_closed',
             {
@@ -464,13 +596,9 @@ class AsyncBrokerOperationsCoordinator:
                     0,
                     len(context.symbols) - len(snapshots),
                 ),
-                'median_delta_percent': (
-                    round(median(deltas), 6) if deltas else None
-                ),
+                'median_delta_percent': round(median(deltas), 6) if deltas else None,
                 'p95_delta_percent': _percentile(sorted_deltas, 0.95),
-                'max_delta_percent': (
-                    round(max(deltas), 6) if deltas else None
-                ),
+                'max_delta_percent': round(max(deltas), 6) if deltas else None,
                 'anomaly_count': len(anomalies),
                 'anomalies': anomalies,
                 'requested_at': context.requested_at,
@@ -521,59 +649,302 @@ class AsyncBrokerOperationsCoordinator:
                 source='rest_fallback',
             )
 
-    def _handle_close(self, completion: BrokerTaskCompletion) -> None:
+    def _handle_close(
+        self,
+        completion: BrokerTaskCompletion,
+        *,
+        now: datetime,
+    ) -> None:
         context = completion.context
         if not isinstance(context, _CloseContext):
             return
-        signal = context.signal
-        self._pending_close_ids.discard(signal.position_id)
-        if completion.error is not None:
-            if self.is_broker_authorization_error(completion.error):
-                raise completion.error
+        pending = self._pending_closes.get(context.position_id)
+        if pending is None:
             self.trade_journal.write(
-                'position_close_error',
+                'position_reconciliation_warning',
                 {
-                    'source': context.source,
-                    'symbol': signal.symbol,
-                    'close_signal': signal,
-                    'message': str(completion.error),
-                    'session_decision': context.session_decision,
+                    'position_id': context.position_id,
+                    'message': 'close_completion_without_pending_state',
                 },
             )
             return
-        closed_position = self.position_tracker.record_closed_position(signal)
-        if closed_position is None:
+
+        error = completion.error
+        if error is not None:
+            if isinstance(error, ClosePositionRejectedError):
+                rejected = pending.mark_rejected(error=error)
+                self._pending_closes[pending.position_id] = rejected
+                self._persist_pending(rejected, stage='close_rejected')
+                self.trade_journal.write(
+                    'position_close_rejected',
+                    self._pending_payload(
+                        rejected,
+                        message=str(error),
+                        broker_response=error.broker_response,
+                    ),
+                )
+                self._report_manual_intervention(
+                    rejected,
+                    now=now,
+                    reason='broker_explicit_rejection',
+                )
+                if self.is_broker_authorization_error(error):
+                    raise error
+                return
+
+            submitted_at = getattr(error, 'submitted_at', None)
+            unknown = pending.mark_submission_unknown(
+                error=error,
+                submitted_at=(
+                    submitted_at if isinstance(submitted_at, datetime) else None
+                ),
+            )
+            self._pending_closes[pending.position_id] = unknown
+            self._persist_pending(unknown, stage='close_submission_unknown')
+            self.trade_journal.write(
+                'position_close_submission_unknown',
+                self._pending_payload(
+                    unknown,
+                    message=str(error),
+                    broker_response=getattr(error, 'broker_response', None),
+                ),
+            )
+            if self.is_broker_authorization_error(error):
+                raise error
             return
-        closed_session_key = self.risk_manager.record_close_position(signal.symbol)
+
+        submission = completion.value
+        if not isinstance(submission, ClosePositionSubmission):
+            error = ClosePositionSubmissionUnknownError(
+                position_id=pending.position_id,
+                submitted_at=pending.requested_at,
+                cause=TypeError(
+                    'close operation returned invalid submission payload: '
+                    f'{type(submission).__name__}'
+                ),
+            )
+            unknown = pending.mark_submission_unknown(
+                error=error,
+                submitted_at=pending.requested_at,
+            )
+            self._pending_closes[pending.position_id] = unknown
+            self._persist_pending(unknown, stage='invalid_close_submission')
+            self.trade_journal.write(
+                'position_close_submission_unknown',
+                self._pending_payload(unknown, message=str(error)),
+            )
+            return
+
         try:
-            self.position_store.delete_open_position(signal.position_id)
-        except Exception as exc:  # noqa: BLE001
+            submitted = pending.mark_submitted(submission)
+        except ValueError as exc:
+            unknown_error = ClosePositionSubmissionUnknownError(
+                position_id=pending.position_id,
+                submitted_at=submission.submitted_at,
+                cause=exc,
+                broker_response=submission.broker_response,
+            )
+            unknown = pending.mark_submission_unknown(
+                error=unknown_error,
+                submitted_at=submission.submitted_at,
+            )
+            self._pending_closes[pending.position_id] = unknown
+            self._persist_pending(unknown, stage='mismatched_close_submission')
+            self.trade_journal.write(
+                'position_close_submission_unknown',
+                self._pending_payload(
+                    unknown,
+                    message=str(unknown_error),
+                    broker_response=submission.broker_response,
+                ),
+            )
+            return
+
+        self._pending_closes[pending.position_id] = submitted
+        self._persist_pending(submitted, stage='close_submitted')
+        self.trade_journal.write(
+            'position_close_submitted',
+            self._pending_payload(
+                submitted,
+                broker_response=submission.broker_response,
+            ),
+        )
+        self.trade_journal.write(
+            'position_close_confirmation_pending',
+            self._pending_payload(
+                submitted,
+                risk_reserved=True,
+                position_persisted=True,
+            ),
+        )
+
+    def _observe_pending_still_open(
+        self,
+        pending: PendingClose,
+        *,
+        observed_at: datetime,
+    ) -> None:
+        now = _as_utc(observed_at)
+        updated = pending.observe_still_open(observed_at=now)
+        age_seconds = updated.confirmation_age_seconds(now=now)
+        if (
+            age_seconds >= self.close_confirmation_delayed_seconds
+            and updated.delayed_reported_at is None
+        ):
+            updated = updated.mark_delayed_reported(reported_at=now)
+            self.trade_journal.write(
+                'position_close_confirmation_delayed',
+                self._pending_payload(
+                    updated,
+                    confirmation_age_seconds=round(age_seconds, 3),
+                ),
+            )
+        if (
+            age_seconds >= self.close_manual_intervention_seconds
+            and updated.manual_intervention_reported_at is None
+        ):
+            updated = updated.mark_manual_intervention_reported(reported_at=now)
+            self.trade_journal.write(
+                'position_close_manual_intervention_required',
+                self._pending_payload(
+                    updated,
+                    reason='close_confirmation_timeout',
+                    confirmation_age_seconds=round(age_seconds, 3),
+                ),
+            )
+        self._pending_closes[updated.position_id] = updated
+        self._persist_pending(updated, stage='close_confirmation_check')
+
+    def _confirm_pending_close(
+        self,
+        pending: PendingClose,
+        *,
+        closed_at: datetime,
+        source: str,
+    ) -> None:
+        tracked_ids = {
+            position.position_id
+            for position in self.position_tracker.open_positions_snapshot()
+        }
+        if pending.position_id not in tracked_ids:
+            self._report_manual_intervention(
+                pending,
+                now=closed_at,
+                reason='portfolio_closed_but_tracker_position_missing',
+            )
+            return
+        try:
+            self.pending_close_store.delete_with_open_position(pending.position_id)
+        except Exception as exc:
             self.trade_journal.write(
                 'position_persistence_error',
                 {
-                    'symbol': signal.symbol,
-                    'position_id': signal.position_id,
+                    'symbol': pending.symbol,
+                    'position_id': pending.position_id,
+                    'stage': 'close_confirmation_cleanup',
                     'message': str(exc),
                 },
             )
-        register_trade_cooldown_for_closed_position(
-            closed_position=closed_position,
-            risk_manager=self.risk_manager,
-            cooldown_store=self.cooldown_store,
-            trade_journal=self.trade_journal,
-            session_key=closed_session_key,
+            return
+
+        closed_position = self.position_tracker.record_closed_position(
+            pending.signal,
+            closed_at=closed_at,
         )
-        self.reconciliation.clear(signal.position_id)
+        closed_session_key = self.risk_manager.record_close_position(pending.symbol)
+        if closed_position is not None:
+            register_trade_cooldown_for_closed_position(
+                closed_position=closed_position,
+                risk_manager=self.risk_manager,
+                cooldown_store=self.cooldown_store,
+                trade_journal=self.trade_journal,
+                session_key=closed_session_key,
+            )
+        self.reconciliation.clear(pending.position_id)
+        self.execution_broker.forget_position_instrument(pending.position_id)
+        self._pending_closes.pop(pending.position_id, None)
         self.trade_journal.write(
-            'position_closed',
-            {
-                'source': context.source,
-                'symbol': signal.symbol,
-                'close_signal': signal,
-                'closed_position': closed_position,
-                'session_decision': context.session_decision,
-            },
+            'position_close_confirmed',
+            self._pending_payload(
+                pending,
+                confirmation_source=source,
+                confirmed_at=closed_at,
+                closed_position=closed_position,
+                confirmation_policy='first_absence_after_close_request',
+                risk_released=True,
+                position_persistence_cleared=True,
+            ),
         )
+
+    def _report_manual_intervention(
+        self,
+        pending: PendingClose,
+        *,
+        now: datetime,
+        reason: str,
+    ) -> None:
+        if pending.manual_intervention_reported_at is not None:
+            return
+        updated = pending.mark_manual_intervention_reported(reported_at=now)
+        self._pending_closes[updated.position_id] = updated
+        self._persist_pending(updated, stage='manual_intervention')
+        self.trade_journal.write(
+            'position_close_manual_intervention_required',
+            self._pending_payload(updated, reason=reason),
+        )
+
+    def _persist_pending(self, pending: PendingClose, *, stage: str) -> bool:
+        try:
+            self.pending_close_store.save(pending)
+        except Exception as exc:
+            self.trade_journal.write(
+                'position_persistence_error',
+                {
+                    'symbol': pending.symbol,
+                    'position_id': pending.position_id,
+                    'stage': stage,
+                    'message': str(exc),
+                },
+            )
+            return False
+        return True
+
+    @staticmethod
+    def _runtime_close_metadata(session_decision: Any) -> dict[str, Any] | None:
+        if session_decision is None:
+            return None
+        return {
+            'session_decision_reason': getattr(session_decision, 'reason', None),
+            'time_until_session_end_minutes': getattr(
+                session_decision,
+                'time_until_session_end_minutes',
+                None,
+            ),
+        }
+
+    @staticmethod
+    def _pending_payload(
+        pending: PendingClose,
+        **extra: Any,
+    ) -> dict[str, Any]:
+        payload = {
+            'position_id': pending.position_id,
+            'symbol': pending.symbol,
+            'state': pending.state.value,
+            'source': pending.source,
+            'close_signal': pending.signal,
+            'requested_at': pending.requested_at,
+            'submitted_at': pending.submitted_at,
+            'accepted_at': pending.accepted_at,
+            'close_order_id': pending.close_order_id,
+            'reference_id': pending.reference_id,
+            'confirmation_checks': pending.confirmation_checks,
+            'last_confirmation_at': pending.last_confirmation_at,
+            'last_error': pending.last_error,
+            'metadata': pending.metadata,
+        }
+        payload.update(extra)
+        return payload
 
     def _record_managed_stop_updates(self, snapshot: MarketSnapshot) -> None:
         for update in self.position_tracker.consume_managed_stop_updates():
@@ -595,7 +966,7 @@ class AsyncBrokerOperationsCoordinator:
             )
             try:
                 self.position_store.save_open_position(position)
-            except Exception as exc:  # noqa: BLE001
+            except Exception as exc:
                 self.trade_journal.write(
                     'position_persistence_error',
                     {
