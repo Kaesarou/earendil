@@ -3,8 +3,6 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
 
-from app.market.models import MarketSnapshot
-
 
 @dataclass(frozen=True)
 class OpenPositionResult:
@@ -63,13 +61,11 @@ class ClosePositionSubmissionUnknownError(RuntimeError):
 
 
 class BrokerClient(ABC):
-    @abstractmethod
-    def get_market_snapshot(self, symbol: str) -> MarketSnapshot:
-        raise NotImplementedError
+    """Execution and account contract.
 
-    @abstractmethod
-    def get_market_snapshots(self, symbols: list[str]) -> dict[str, MarketSnapshot]:
-        raise NotImplementedError
+    Market-data access is deliberately excluded. Paper, demo and live execution
+    all consume the same independent eToro market-data pipeline.
+    """
 
     @abstractmethod
     def get_account_equity(self) -> float:
@@ -88,7 +84,7 @@ class BrokerClient(ABC):
 
     @abstractmethod
     def close_position(self, position_id: str) -> ClosePositionSubmission:
-        """Submit one close request and return as soon as the broker accepts it.
+        """Submit one close request and return as soon as it is accepted.
 
         Portfolio disappearance is confirmed asynchronously by the runtime. This
         method must never poll the portfolio for closure confirmation.
