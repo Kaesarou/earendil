@@ -3,21 +3,27 @@ from __future__ import annotations
 import logging
 from datetime import datetime, timezone
 
-from app.brokers.base import OpenPositionResult
-from app.brokers.etoro.etoro_client import EtoroClient
-from app.brokers.etoro.order_confirmation_error import (
-    EtoroOrderConfirmationUnknownError,
+import requests
+
+from app.brokers.base import (
+    ClosePositionRejectedError,
+    ClosePositionSubmission,
+    ClosePositionSubmissionUnknownError,
+    OpenPositionResult,
 )
+from app.brokers.etoro.close_order_payload_builder import build_close_order_payload
+from app.brokers.etoro.etoro_client import EtoroClient
+from app.brokers.etoro.order_confirmation_error import EtoroOrderConfirmationUnknownError
 from app.brokers.etoro.position_instrument_cache import (
     remember_position_instrument_id,
+    require_position_instrument_id,
 )
-
 
 logger = logging.getLogger(__name__)
 
 
 class ResilientEtoroClient(EtoroClient):
-    """Preserve exposure when an accepted order cannot be confirmed yet."""
+    """Preserve exposure while open or close outcomes remain uncertain."""
 
     def open_position(
         self,
@@ -70,7 +76,7 @@ class ResilientEtoroClient(EtoroClient):
                 order_id,
                 require_position_details=True,
             )
-        except Exception as exc:  # noqa: BLE001 - accepted order may exist
+        except Exception as exc:  # accepted order may exist
             if 'eToro order rejected:' in str(exc):
                 raise
             raise EtoroOrderConfirmationUnknownError(
@@ -83,9 +89,7 @@ class ResilientEtoroClient(EtoroClient):
                 cause=exc,
             ) from exc
 
-        executed_positions = self._extract_executed_position_details_list(
-            order_details
-        )
+        executed_positions = self._extract_executed_position_details_list(order_details)
         if len(executed_positions) != 1:
             raise EtoroOrderConfirmationUnknownError(
                 order_id=order_id,
@@ -117,4 +121,64 @@ class ResilientEtoroClient(EtoroClient):
         return OpenPositionResult(
             position_id=executed_position.position_id,
             executed_entry_price=executed_position.executed_entry_price,
+        )
+
+    def close_position(self, position_id: str) -> ClosePositionSubmission:
+        instrument_id = require_position_instrument_id(
+            position_instruments=self.position_instruments,
+            position_id=position_id,
+        )
+        submitted_at = datetime.now(timezone.utc)
+        try:
+            response = self._post(
+                self._close_position_path(position_id),
+                build_close_order_payload(instrument_id),
+            )
+        except requests.HTTPError as exc:
+            status = getattr(exc.response, 'status_code', None)
+            if status is not None and 400 <= status < 500 and status not in {408, 409, 425, 429}:
+                raise ClosePositionRejectedError(
+                    position_id=position_id,
+                    message=(
+                        'eToro explicitly rejected close submission: '
+                        f'position_id={position_id}, status={status}'
+                    ),
+                    cause=exc,
+                ) from exc
+            raise ClosePositionSubmissionUnknownError(
+                position_id=position_id,
+                submitted_at=submitted_at,
+                cause=exc,
+            ) from exc
+        except requests.RequestException as exc:
+            raise ClosePositionSubmissionUnknownError(
+                position_id=position_id,
+                submitted_at=submitted_at,
+                cause=exc,
+            ) from exc
+
+        if not self._is_close_response_accepted(response, position_id):
+            raise ClosePositionSubmissionUnknownError(
+                position_id=position_id,
+                submitted_at=submitted_at,
+                cause=RuntimeError('eToro close response did not prove acceptance'),
+                broker_response=response,
+            )
+        try:
+            close_order_id = self._extract_order_id(response)
+        except ValueError:
+            close_order_id = None
+        accepted_at = datetime.now(timezone.utc)
+        logger.info(
+            'eToro close submitted | position_id=%s | close_order_id=%s',
+            position_id,
+            close_order_id,
+        )
+        return ClosePositionSubmission(
+            position_id=position_id,
+            close_order_id=close_order_id,
+            reference_id=self._extract_reference_id(response),
+            submitted_at=submitted_at,
+            accepted_at=accepted_at,
+            broker_response=response,
         )
