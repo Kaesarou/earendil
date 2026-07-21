@@ -10,10 +10,8 @@ MARKET_DATA_MODEL_VERSION = 'market_data_v2_ws_clocked_1'
 
 class MarketDataSource(StrEnum):
     WEBSOCKET = 'websocket'
-    REST_POLLING = 'rest_polling'
     REST_CONTROL = 'rest_control'
     REST_FALLBACK = 'rest_fallback'
-    PAPER = 'paper'
 
 
 class SymbolFeedState(StrEnum):

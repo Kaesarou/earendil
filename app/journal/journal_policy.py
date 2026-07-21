@@ -84,9 +84,13 @@ MINIMAL_TRADE_EVENT_TYPES = frozenset(
 
 
 def normalize_detail_level(detail_level: str | None) -> str:
-    normalized = (detail_level or 'normal').strip().lower()
+    normalized = (detail_level or '').strip().lower()
     if normalized not in DETAIL_LEVELS:
-        return 'normal'
+        allowed = ', '.join(sorted(DETAIL_LEVELS))
+        raise ValueError(
+            f'Unsupported journal detail level: {detail_level!r}. '
+            f'Expected one of: {allowed}'
+        )
     return normalized
 
 

@@ -24,7 +24,6 @@ from app.execution.scoring.tp_probability import (
 from app.instruments.instrument_registry import InstrumentRegistry
 from app.journal.serialization import serialize_value
 from app.market.market_context import MARKET_CONTEXT_VERSION
-from app.market.multi_timeframe import expected_sampling_quality
 from app.market.timeframes import (
     BASE_TIMEFRAME,
     MULTI_TIMEFRAME_MODEL_VERSION,
@@ -148,10 +147,7 @@ def build_run_manifest(
                     timeframe.name.lower()
                     for timeframe in SUPPORTED_TIMEFRAMES
                 ],
-                'poll_interval_seconds': settings.poll_interval_seconds,
-                'expected_sampling_quality': expected_sampling_quality(
-                    settings.poll_interval_seconds
-                ),
+                'sampling_source': 'event_driven_websocket',
                 'config_by_symbol': {
                     symbol: instrument_registry.config_for(
                         symbol

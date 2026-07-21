@@ -5,10 +5,18 @@ from pydantic import ValidationError
 
 from app.config.settings import Settings
 from app.execution.entry_decision import ENTRY_DECISION_MODEL_VERSION
-from app.execution.scoring.market_context_scorer import MARKET_CONTEXT_SCORER_VERSION
-from app.execution.scoring.multi_timeframe_scorer import MULTI_TIMEFRAME_SCORER_VERSION
-from app.execution.scoring.tp_feasibility import TP_FEASIBILITY_MODEL_VERSION
-from app.execution.scoring.tp_probability import TP_PROBABILITY_MODEL_VERSION
+from app.execution.scoring.market_context_scorer import (
+    MARKET_CONTEXT_SCORER_VERSION,
+)
+from app.execution.scoring.multi_timeframe_scorer import (
+    MULTI_TIMEFRAME_SCORER_VERSION,
+)
+from app.execution.scoring.tp_feasibility import (
+    TP_FEASIBILITY_MODEL_VERSION,
+)
+from app.execution.scoring.tp_probability import (
+    TP_PROBABILITY_MODEL_VERSION,
+)
 from app.instruments.instrument_registry import InstrumentRegistry
 from app.journal.run_manifest import (
     build_run_manifest,
@@ -27,7 +35,10 @@ def test_run_manifest_captures_pr5d_contract_without_broker_secrets():
         ETORO_USER_KEY='secret-user',
     )
     profile = BalancedStrategyConfig()
-    registry = InstrumentRegistry(settings, instrument_configs=profile.instrument_configs)
+    registry = InstrumentRegistry(
+        settings,
+        instrument_configs=profile.instrument_configs,
+    )
     manifest = build_run_manifest(
         settings=settings,
         strategy_profile=profile,
@@ -45,6 +56,11 @@ def test_run_manifest_captures_pr5d_contract_without_broker_secrets():
     assert 'ETORO_USER_KEY' not in snapshot
     assert manifest['strategy']['profile'] == 'balanced'
     assert manifest['runtime']['watchlist'] == ['AAPL']
+    assert (
+        manifest['runtime']['multi_timeframe']['sampling_source']
+        == 'event_driven_websocket'
+    )
+    assert 'poll_interval_seconds' not in manifest['runtime']['multi_timeframe']
     assert manifest['analysis_sources']['pending_lineage_enabled'] is True
     assert manifest['analysis_sources']['managed_stop_updates_retained'] is True
     assert manifest['analysis_sources']['entry_horizon_rejections_retained'] is True
@@ -70,32 +86,61 @@ def test_run_manifest_captures_pr5d_contract_without_broker_secrets():
         assert field in fields
     assert manifest['models']['entry_decision'] == ENTRY_DECISION_MODEL_VERSION
     assert manifest['models']['entry_decision'] == 'entry_router_v6'
-    assert manifest['models']['market_context_score'] == MARKET_CONTEXT_SCORER_VERSION
+    assert (
+        manifest['models']['market_context_score']
+        == MARKET_CONTEXT_SCORER_VERSION
+    )
     assert manifest['models']['market_context_score'] == 'market_context_score_v3'
-    assert manifest['models']['multi_timeframe_score'] == MULTI_TIMEFRAME_SCORER_VERSION
+    assert (
+        manifest['models']['multi_timeframe_score']
+        == MULTI_TIMEFRAME_SCORER_VERSION
+    )
     assert manifest['models']['multi_timeframe_score'] == 'multi_timeframe_score_v2'
     assert manifest['models']['tp_feasibility'] == TP_FEASIBILITY_MODEL_VERSION
     assert manifest['models']['tp_feasibility'] == 'tp_feasibility_score_v4'
     assert manifest['models']['tp_probability'] == TP_PROBABILITY_MODEL_VERSION
     assert manifest['models']['tp_probability'] == 'heuristic_v5'
     assert manifest['models']['multi_timeframe'] == 'multi_timeframe_features_v2'
-    assert manifest['runtime']['multi_timeframe']['supported_timeframes_seconds'] == [60, 300, 900, 1800, 3600]
+    assert manifest['runtime']['multi_timeframe'][
+        'supported_timeframes_seconds'
+    ] == [60, 300, 900, 1800, 3600]
     assert manifest['code']['source_sha256']
 
 
-def test_removed_candle_timeframe_setting_is_rejected():
+def test_removed_runtime_settings_are_rejected():
     with pytest.raises(ValidationError):
-        Settings(WATCHLIST='AAPL', EQUITY_US_SYMBOLS='AAPL', CANDLE_TIMEFRAME_SECONDS=300)
+        Settings(
+            WATCHLIST='AAPL',
+            EQUITY_US_SYMBOLS='AAPL',
+            CANDLE_TIMEFRAME_SECONDS=300,
+        )
+    with pytest.raises(ValidationError):
+        Settings(
+            WATCHLIST='AAPL',
+            EQUITY_US_SYMBOLS='AAPL',
+            POLL_INTERVAL_SECONDS=15,
+        )
 
 
-def test_sanitized_settings_keeps_non_sensitive_runtime_values():
-    snapshot = sanitized_settings_snapshot(Settings(WATCHLIST='AAPL', EQUITY_US_SYMBOLS='AAPL', POLL_INTERVAL_SECONDS=15))
+def test_sanitized_settings_keeps_non_sensitive_operational_values():
+    snapshot = sanitized_settings_snapshot(
+        Settings(
+            WATCHLIST='AAPL',
+            EQUITY_US_SYMBOLS='AAPL',
+            BROKER='paper',
+            JOURNAL_DETAIL_LEVEL='debug',
+        )
+    )
     assert snapshot['WATCHLIST'] == 'AAPL'
-    assert snapshot['POLL_INTERVAL_SECONDS'] == 15
+    assert snapshot['BROKER'] == 'paper'
+    assert snapshot['JOURNAL_DETAIL_LEVEL'] == 'debug'
 
 
 def test_run_artifact_path_creates_stable_per_run_location():
-    assert run_artifact_path('data/logs/daily_summary.json', 'run-123') == 'data/logs/runs/run-123/daily_summary.json'
+    assert run_artifact_path(
+        'data/logs/daily_summary.json',
+        'run-123',
+    ) == 'data/logs/runs/run-123/daily_summary.json'
 
 
 def test_code_fingerprint_changes_when_source_changes(tmp_path):

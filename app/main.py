@@ -1,12 +1,15 @@
 import logging
 from datetime import datetime, timezone
 
+from app.brokers.etoro.order_payload_builder import (
+    SELLSHORT_SAFETY_SL_BUFFER_PERCENT,
+)
 from app.config.settings import Settings, get_settings
 from app.execution.candidate_economics import CandidateEconomicsEstimator
 from app.execution.position_tracker import PositionTracker
 from app.execution.trade_executor import TradeExecutor
 from app.instruments.instrument_registry import InstrumentRegistry
-from app.journal.analysis_journal import build_analysis_journal
+from app.journal.analysis_journal import AnalysisJournal
 from app.journal.jsonl_journal import JsonlJournal
 from app.journal.raw_data_journal import RawDataJournal
 from app.journal.run_manifest import (
@@ -31,6 +34,27 @@ from app.runtime.factories import build_runtime_clients
 from app.runtime.market_data_runtime import EventDrivenMarketRuntime
 from app.runtime.pending_entry import PendingEntryManager
 from app.runtime.runtime_heartbeat import RuntimeHeartbeat
+from app.runtime.runtime_policy import (
+    CANDLE_CLOCK_GRACE_SECONDS,
+    CANDLE_MAX_CARRY_FORWARD_AGE_SECONDS,
+    CANDLE_ORDERING_DROP_DEGRADE_COUNT,
+    CANDLE_ORDERING_DROP_DEGRADE_RATIO,
+    DECISION_WINDOW_GRACE_SECONDS,
+    ETORO_INSTRUMENT_RESOLUTION_MIN_INTERVAL_SECONDS,
+    JOURNAL_PARTIAL_SUMMARY_INTERVAL_MINUTES,
+    JOURNAL_WRITE_PARTIAL_SUMMARY,
+    MARKET_DATA_QUEUE_CAPACITY,
+    POSITION_FALLBACK_INTERVAL_SECONDS,
+    POSITION_RECONCILIATION_GRACE_SECONDS,
+    POSITION_RECONCILIATION_MISS_INTERVAL_SECONDS,
+    POSITION_RECONCILIATION_REQUIRED_MISSES,
+    REST_CONTROL_ANOMALY_PERCENT,
+    REST_CONTROL_INTERVAL_SECONDS,
+    UNKNOWN_ORDER_LOOKUP_INTERVAL_SECONDS,
+    UNKNOWN_ORDER_MAX_AGE_MINUTES,
+    WS_GLOBAL_SILENCE_SECONDS,
+    WS_POSITION_SILENCE_SECONDS,
+)
 from app.runtime.startup_position_restore import restore_persisted_positions_batched
 from app.runtime.trading_session_window import (
     TradingSessionState,
@@ -39,7 +63,6 @@ from app.runtime.trading_session_window import (
 from app.strategies.balanced_strategy_config import BalancedStrategyConfig
 from app.strategies.strategy import TrendStrategy
 from app.utils.logging import configure_logging
-
 
 logger = logging.getLogger(__name__)
 
@@ -71,19 +94,8 @@ def build_candidate_economics_estimator(
 
 def build_candle_builders(
     symbols: list[str],
-    settings: Settings,
 ) -> dict[str, QualityAwareCandleBuilder]:
-    return {
-        symbol: QualityAwareCandleBuilder(
-            ordering_drop_degrade_count=(
-                settings.candle_ordering_drop_degrade_count
-            ),
-            ordering_drop_degrade_ratio=(
-                settings.candle_ordering_drop_degrade_ratio
-            ),
-        )
-        for symbol in symbols
-    }
+    return {symbol: QualityAwareCandleBuilder() for symbol in symbols}
 
 
 def build_strategies(
@@ -96,28 +108,89 @@ def build_strategies(
     }
 
 
-def build_market_data_manifest(settings: Settings) -> dict[str, object]:
+def build_market_data_manifest() -> dict[str, object]:
     return {
-        'mode': settings.market_data_mode,
-        'queue_capacity': settings.market_data_queue_capacity,
-        'position_silence_seconds': settings.ws_position_silence_seconds,
-        'global_silence_seconds': settings.ws_global_silence_seconds,
-        'rest_control_interval_seconds': settings.rest_control_interval_seconds,
+        'mode': 'websocket',
+        'queue_capacity': MARKET_DATA_QUEUE_CAPACITY,
+        'position_silence_seconds': WS_POSITION_SILENCE_SECONDS,
+        'global_silence_seconds': WS_GLOBAL_SILENCE_SECONDS,
+        'rest_control_interval_seconds': REST_CONTROL_INTERVAL_SECONDS,
+        'rest_control_anomaly_percent': REST_CONTROL_ANOMALY_PERCENT,
         'position_fallback_interval_seconds': (
-            settings.position_fallback_interval_seconds
+            POSITION_FALLBACK_INTERVAL_SECONDS
         ),
-        'decision_window_grace_seconds': settings.decision_window_grace_seconds,
-        'candle_clock_grace_seconds': settings.candle_clock_grace_seconds,
+        'decision_window_grace_seconds': DECISION_WINDOW_GRACE_SECONDS,
+        'candle_clock_grace_seconds': CANDLE_CLOCK_GRACE_SECONDS,
         'candle_max_carry_forward_age_seconds': (
-            settings.candle_max_carry_forward_age_seconds
+            CANDLE_MAX_CARRY_FORWARD_AGE_SECONDS
+        ),
+        'candle_ordering_drop_degrade_count': (
+            CANDLE_ORDERING_DROP_DEGRADE_COUNT
+        ),
+        'candle_ordering_drop_degrade_ratio': (
+            CANDLE_ORDERING_DROP_DEGRADE_RATIO
         ),
         'position_reconciliation_grace_seconds': (
-            settings.position_reconciliation_grace_seconds
+            POSITION_RECONCILIATION_GRACE_SECONDS
         ),
         'position_reconciliation_required_misses': (
-            settings.position_reconciliation_required_misses
+            POSITION_RECONCILIATION_REQUIRED_MISSES
+        ),
+        'position_reconciliation_miss_interval_seconds': (
+            POSITION_RECONCILIATION_MISS_INTERVAL_SECONDS
+        ),
+        'unknown_order_lookup_interval_seconds': (
+            UNKNOWN_ORDER_LOOKUP_INTERVAL_SECONDS
+        ),
+        'unknown_order_max_age_minutes': UNKNOWN_ORDER_MAX_AGE_MINUTES,
+        'instrument_resolution_min_interval_seconds': (
+            ETORO_INSTRUMENT_RESOLUTION_MIN_INTERVAL_SECONDS
+        ),
+        'sellshort_safety_sl_buffer_percent': (
+            SELLSHORT_SAFETY_SL_BUFFER_PERCENT
         ),
     }
+
+
+def _build_analysis_journal(
+    *,
+    settings: Settings,
+    run_paths,
+    run_id: str,
+    profile: str,
+) -> AnalysisJournal:
+    debug_enabled = settings.journal_detail_level in {'debug', 'full'}
+    return AnalysisJournal(
+        trade_journal=JsonlJournal(
+            str(run_paths.trades),
+            run_id=run_id,
+            stream_name='trades',
+        ),
+        errors_journal=JsonlJournal(
+            str(run_paths.errors),
+            run_id=run_id,
+            stream_name='errors',
+        ),
+        debug_decisions_journal=(
+            JsonlJournal(
+                str(run_paths.debug_decisions),
+                run_id=run_id,
+                stream_name='debug_decisions',
+            )
+            if debug_enabled
+            else None
+        ),
+        summary_path=str(run_paths.summary),
+        partial_summary_path=str(run_paths.partial_summary),
+        detail_level=settings.journal_detail_level,
+        write_partial_summary=JOURNAL_WRITE_PARTIAL_SUMMARY,
+        partial_summary_interval_minutes=(
+            JOURNAL_PARTIAL_SUMMARY_INTERVAL_MINUTES
+        ),
+        run_id=run_id,
+        strategy='TrendStrategy',
+        profile=profile,
+    )
 
 
 def main() -> None:
@@ -160,10 +233,15 @@ def main() -> None:
     )
     manifest['schema_version'] = 11
     manifest['models']['market_data'] = MARKET_DATA_MODEL_VERSION
-    manifest['runtime']['market_data'] = build_market_data_manifest(settings)
+    manifest['runtime']['market_data'] = build_market_data_manifest()
     manifest['runtime']['journals'] = {
         'run_root': str(run_paths.root),
         'compressed': True,
+        'detail_level': settings.journal_detail_level,
+        'write_partial_summary': JOURNAL_WRITE_PARTIAL_SUMMARY,
+        'partial_summary_interval_minutes': (
+            JOURNAL_PARTIAL_SUMMARY_INTERVAL_MINUTES
+        ),
         'max_runs': settings.journal_max_runs,
         'removed_runs': list(removed_runs),
     }
@@ -172,7 +250,7 @@ def main() -> None:
 
     clients = build_runtime_clients(settings)
     strategies = build_strategies(symbols, instrument_registry)
-    candle_builders = build_candle_builders(symbols, settings)
+    candle_builders = build_candle_builders(symbols)
     trading_session_service = trading_session_service_from_settings(settings)
     trading_session_state = TradingSessionState()
     risk_manager = build_risk_manager(settings, instrument_registry)
@@ -197,19 +275,9 @@ def main() -> None:
             for symbol in symbols
         }
     )
-    journal_settings = settings.model_copy(
-        update={
-            'journal_path': str(run_paths.trades),
-            'market_log_path': str(run_paths.market),
-            'candle_journal_path': str(run_paths.candles),
-            'errors_journal_path': str(run_paths.errors),
-            'debug_decisions_journal_path': str(run_paths.debug_decisions),
-            'daily_summary_path': str(run_paths.summary),
-            'partial_daily_summary_path': str(run_paths.partial_summary),
-        }
-    )
-    trade_journal = build_analysis_journal(
-        journal_settings,
+    trade_journal = _build_analysis_journal(
+        settings=settings,
+        run_paths=run_paths,
         run_id=run_id,
         profile=strategy_profile.name,
     )
@@ -267,18 +335,17 @@ def main() -> None:
             'run_id': run_id,
             'symbols': symbols,
             'strategy_profile': strategy_profile.name,
-            'market_data_version': MARKET_DATA_MODEL_VERSION,
-            'market_data_mode': settings.market_data_mode,
+            'market_data_mode': 'websocket',
+            'execution_mode': settings.broker,
             'run_journal_root': str(run_paths.root),
             'rotated_run_ids': list(removed_runs),
         },
     )
     logger.info(
-        'Starting Goblin! | run_id=%s | broker=%s | market_data=%s | '
+        'Starting Goblin! | run_id=%s | broker=%s | market_data=websocket | '
         'strategy_profile=%s | watchlist=%s | run_logs=%s',
         run_id,
         settings.broker,
-        settings.market_data_mode,
         strategy_profile.name,
         symbols,
         run_paths.root,
@@ -333,7 +400,9 @@ def main() -> None:
         )
         summary = trade_journal.finalize()
         summary['schema_version'] = 11
-        summary.setdefault('market_data', {})['model_version'] = MARKET_DATA_MODEL_VERSION
+        summary.setdefault('market_data', {})['model_version'] = (
+            MARKET_DATA_MODEL_VERSION
+        )
         write_run_manifest(settings.daily_summary_path, summary)
         write_run_manifest(archived_summary_path, summary)
         finalize_run_manifest(

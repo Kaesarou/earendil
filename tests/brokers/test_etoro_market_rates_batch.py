@@ -1,13 +1,25 @@
-from app.brokers.etoro.etoro_client import EtoroClient
-from app.config.settings import Settings
+from app.brokers.etoro.market_data_client import EtoroRestMarketDataClient
 
 
-def test_get_market_rates_uses_raw_comma_separated_instrument_ids(monkeypatch):
-    settings = Settings(
-        ETORO_API_KEY='api-key',
-        ETORO_USER_KEY='user-key',
+def test_get_market_rates_uses_raw_comma_separated_instrument_ids(
+    tmp_path,
+    monkeypatch,
+):
+    client = EtoroRestMarketDataClient(
+        api_key='api-key',
+        user_key='user-key',
+        instrument_id_cache_path=str(tmp_path / 'ids.json'),
     )
-    client = EtoroClient(settings=settings)
+    client.instrument_ids_by_symbol = {
+        'BTC': 1004,
+        'ETH': 1137,
+        'AAPL': 1001,
+    }
+    client.symbol_by_instrument_id = {
+        1004: 'BTC',
+        1137: 'ETH',
+        1001: 'AAPL',
+    }
     captured = {}
 
     def fake_get(path, params=None):
@@ -17,8 +29,7 @@ def test_get_market_rates_uses_raw_comma_separated_instrument_ids(monkeypatch):
 
     monkeypatch.setattr(client, '_get', fake_get)
 
-    client._get_market_rates([1004, 1137, 1001])
-
+    assert client.get_market_snapshots(['BTC', 'ETH', 'AAPL']) == {}
     assert captured['path'] == (
         '/api/v1/market-data/instruments/rates'
         '?instrumentIds=1004,1137,1001'

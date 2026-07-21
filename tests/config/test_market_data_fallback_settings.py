@@ -1,28 +1,27 @@
+import pytest
+from pydantic import ValidationError
+
 from app.config.settings import Settings
+from app.runtime.runtime_policy import (
+    POSITION_FALLBACK_INTERVAL_SECONDS,
+    WS_POSITION_SILENCE_SECONDS,
+)
 
 
-def test_position_fallback_defaults_are_conservative():
-    settings = Settings()
-
-    assert settings.ws_position_silence_seconds == 15.0
-    assert settings.position_fallback_interval_seconds == 10.0
+def test_position_fallback_policy_is_code_versioned():
+    assert WS_POSITION_SILENCE_SECONDS == 15.0
+    assert POSITION_FALLBACK_INTERVAL_SECONDS == 10.0
 
 
-def test_legacy_environment_names_are_accepted_but_not_allowed_below_floors():
-    settings = Settings(
-        WS_SYMBOL_SILENCE_SECONDS=5,
-        REST_FALLBACK_COOLDOWN_SECONDS=5,
-    )
-
-    assert settings.ws_position_silence_seconds == 15.0
-    assert settings.position_fallback_interval_seconds == 10.0
-
-
-def test_new_environment_names_can_raise_the_thresholds():
-    settings = Settings(
-        WS_POSITION_SILENCE_SECONDS=30,
-        POSITION_FALLBACK_INTERVAL_SECONDS=20,
-    )
-
-    assert settings.ws_position_silence_seconds == 30.0
-    assert settings.position_fallback_interval_seconds == 20.0
+@pytest.mark.parametrize(
+    'environment_name',
+    [
+        'WS_SYMBOL_SILENCE_SECONDS',
+        'REST_FALLBACK_COOLDOWN_SECONDS',
+        'WS_POSITION_SILENCE_SECONDS',
+        'POSITION_FALLBACK_INTERVAL_SECONDS',
+    ],
+)
+def test_environment_cannot_override_runtime_safety_policy(environment_name):
+    with pytest.raises(ValidationError, match='Extra inputs are not permitted'):
+        Settings(**{environment_name: 30})

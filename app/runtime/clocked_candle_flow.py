@@ -5,6 +5,10 @@ from datetime import datetime, timezone
 
 from app.market.models import MarketSnapshot
 from app.market_data.models import CandleBuildResult
+from app.runtime.runtime_policy import (
+    CANDLE_CLOCK_GRACE_SECONDS,
+    CANDLE_MAX_CARRY_FORWARD_AGE_SECONDS,
+)
 from app.runtime.symbol_flow import process_closed_candle
 
 
@@ -21,15 +25,9 @@ class ClockedCandleFlow:
                 continue
             for result in builder.finalize_until(
                 now,
-                grace_seconds=getattr(
-                    self.settings,
-                    'candle_clock_grace_seconds',
-                    1.0,
-                ),
-                max_carry_forward_age_seconds=getattr(
-                    self.settings,
-                    'candle_max_carry_forward_age_seconds',
-                    180.0,
+                grace_seconds=CANDLE_CLOCK_GRACE_SECONDS,
+                max_carry_forward_age_seconds=(
+                    CANDLE_MAX_CARRY_FORWARD_AGE_SECONDS
                 ),
             ):
                 self._process_candle_result(

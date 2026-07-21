@@ -5,11 +5,13 @@ from app.brokers.cached_broker import CachedBrokerClient
 from app.brokers.etoro.market_data_client import EtoroRestMarketDataClient
 from app.brokers.etoro.resilient_client import ResilientEtoroClient
 from app.brokers.etoro.websocket_feed import EtoroWebSocketMarketDataFeed
-from app.brokers.fake.fake_broker import FakeBrokerClient
+from app.brokers.paper.paper_broker import PaperBrokerClient
 from app.config.settings import Settings
 from app.market_data.contracts import LiveMarketDataFeed, RestMarketDataClient
-from app.market_data.models import MarketDataSource
-from app.market_data.polling_feed import PollingMarketDataFeed
+from app.runtime.runtime_policy import (
+    MARKET_DATA_QUEUE_CAPACITY,
+    WS_GLOBAL_SILENCE_SECONDS,
+)
 
 
 @dataclass(frozen=True)
@@ -20,58 +22,29 @@ class RuntimeClients:
 
 
 def build_runtime_clients(settings: Settings) -> RuntimeClients:
+    market_data = EtoroRestMarketDataClient(
+        api_key=settings.etoro_api_key,
+        user_key=settings.etoro_user_key,
+        instrument_id_cache_path=settings.instrument_id_cache_path,
+    )
+    live_feed = EtoroWebSocketMarketDataFeed(
+        api_key=settings.etoro_api_key,
+        user_key=settings.etoro_user_key,
+        rest_client=market_data,
+        queue_capacity=MARKET_DATA_QUEUE_CAPACITY,
+        global_silence_seconds=WS_GLOBAL_SILENCE_SECONDS,
+    )
+
     if settings.broker == 'paper':
-        fake = FakeBrokerClient(equity=50.0)
-        return RuntimeClients(
-            execution_broker=CachedBrokerClient(fake),
-            rest_market_data=fake,
-            live_market_data=PollingMarketDataFeed(
-                client=fake,
-                interval_seconds=settings.poll_interval_seconds,
-                queue_capacity=settings.market_data_queue_capacity,
-                source=MarketDataSource.PAPER,
-            ),
-        )
-
-    if settings.broker in {'etoro_demo', 'etoro_live'}:
+        execution: BrokerClient = PaperBrokerClient()
+    else:
         etoro = ResilientEtoroClient(settings=settings)
-        market_data = EtoroRestMarketDataClient(
-            etoro,
-            instrument_id_cache_path=settings.instrument_id_cache_path,
-            resolution_min_interval_seconds=(
-                settings.instrument_resolution_min_interval_seconds
-            ),
-        )
-        mode = settings.market_data_mode.strip().lower()
-        if mode not in {'auto', 'websocket', 'polling'}:
-            raise ValueError(
-                f'Unsupported MARKET_DATA_MODE: {settings.market_data_mode}'
-            )
-        live_feed: LiveMarketDataFeed
-        if mode in {'auto', 'websocket'}:
-            live_feed = EtoroWebSocketMarketDataFeed(
-                api_key=settings.etoro_api_key,
-                user_key=settings.etoro_user_key,
-                rest_client=market_data,
-                queue_capacity=settings.market_data_queue_capacity,
-                global_silence_seconds=settings.ws_global_silence_seconds,
-            )
-        else:
-            live_feed = PollingMarketDataFeed(
-                client=market_data,
-                interval_seconds=settings.poll_interval_seconds,
-                queue_capacity=settings.market_data_queue_capacity,
-                source=MarketDataSource.REST_POLLING,
-            )
-        return RuntimeClients(
-            execution_broker=CachedBrokerClient(etoro),
-            rest_market_data=market_data,
-            live_market_data=live_feed,
-        )
+        etoro.instrument_ids_by_symbol = market_data.instrument_ids_by_symbol
+        etoro.symbol_by_instrument_id = market_data.symbol_by_instrument_id
+        execution = etoro
 
-    raise ValueError(f'Unsupported broker: {settings.broker}')
-
-
-def build_broker(settings: Settings) -> BrokerClient:
-    """Compatibility entry point for code that only needs execution services."""
-    return build_runtime_clients(settings).execution_broker
+    return RuntimeClients(
+        execution_broker=CachedBrokerClient(execution),
+        rest_market_data=market_data,
+        live_market_data=live_feed,
+    )

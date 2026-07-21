@@ -1,5 +1,10 @@
 from datetime import datetime
 
+from app.runtime.runtime_policy import (
+    POSITION_FALLBACK_INTERVAL_SECONDS,
+    REST_CONTROL_INTERVAL_SECONDS,
+)
+
 
 class MarketDataMaintenance:
     def _all_monitored_symbols(self) -> list[str]:
@@ -47,11 +52,9 @@ class MarketDataMaintenance:
         now: datetime,
         monotonic_now: float,
     ) -> None:
-        if not self.live_market_data.requires_websocket_health:
-            return
         if (
             monotonic_now - self._last_position_fallback
-            < self.settings.position_fallback_interval_seconds
+            < POSITION_FALLBACK_INTERVAL_SECONDS
         ):
             return
         applied = set(self._applied_feed_symbols)
@@ -83,11 +86,9 @@ class MarketDataMaintenance:
         now: datetime,
         monotonic_now: float,
     ) -> None:
-        if not self.live_market_data.requires_websocket_health:
-            return
         if (
             monotonic_now - self._last_rest_control
-            < self.settings.rest_control_interval_seconds
+            < REST_CONTROL_INTERVAL_SECONDS
         ):
             return
         monitored = self._applied_monitored_symbols()

@@ -1,7 +1,6 @@
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
-from app.config.settings import Settings
 from app.journal.analysis_ready_summary import AnalysisReadySummaryAggregator
 from app.journal.journal_policy import (
     normalize_detail_level,
@@ -10,6 +9,10 @@ from app.journal.journal_policy import (
     should_write_to_trade_journal,
 )
 from app.journal.jsonl_journal import JsonlJournal
+
+
+PARTIAL_SUMMARY_INTERVAL_MINUTES = 15
+WRITE_PARTIAL_SUMMARY = True
 
 
 class AnalysisJournal:
@@ -22,8 +25,10 @@ class AnalysisJournal:
         detail_level: str = 'normal',
         debug_decisions_journal: JsonlJournal | None = None,
         partial_summary_path: str | None = None,
-        partial_summary_interval_minutes: int = 15,
-        write_partial_summary: bool = True,
+        partial_summary_interval_minutes: int = (
+            PARTIAL_SUMMARY_INTERVAL_MINUTES
+        ),
+        write_partial_summary: bool = WRITE_PARTIAL_SUMMARY,
         run_id: str | None = None,
         strategy: str | None = None,
         profile: str | None = None,
@@ -93,147 +98,19 @@ class AnalysisJournal:
         for evaluated, selection_outcome, selection_reason in (
             _evaluated_selection_items(payload)
         ):
-            candidate = _attribute(evaluated, 'candidate')
-            decision = _attribute(evaluated, 'entry_decision')
-            if candidate is None or decision is None:
-                continue
-            signal = _attribute(candidate, 'signal')
-            snapshot = _attribute(candidate, 'snapshot')
-            economics = _attribute(evaluated, 'economics')
-            effective_sl_tp = _attribute(evaluated, 'effective_sl_tp')
-            tp_feasibility = _attribute(evaluated, 'tp_feasibility')
-            tp_probability = _attribute(evaluated, 'tp_probability')
-            market_context = _attribute(candidate, 'market_context')
-            multi_timeframe_context = _attribute(
-                candidate,
-                'multi_timeframe_context',
+            record = _entry_decision_record(
+                evaluated=evaluated,
+                selection_outcome=selection_outcome,
+                selection_reason=selection_reason,
+                strategy_profile=self.summary.profile,
             )
-            record = {
-                'candidate_id': _attribute(candidate, 'candidate_id'),
-                'origin_candidate_id': _attribute(
-                    candidate, 'origin_candidate_id'
-                ),
-                'pending_entry_id': _attribute(
-                    candidate, 'pending_entry_id'
-                ),
-                'candidate_timestamp': _attribute(snapshot, 'timestamp'),
-                'symbol': _attribute(candidate, 'symbol'),
-                'side': _attribute(signal, 'action'),
-                'entry_reference_price': _attribute(snapshot, 'last'),
-                'profile_key': _profile_key(
-                    effective_sl_tp,
-                    tp_probability,
-                ),
-                'sl_tp_source': _attribute(effective_sl_tp, 'source'),
-                'score': _attribute(candidate, 'score'),
-                'base_score': _attribute(candidate, 'base_score'),
-                'directional_score': _attribute(
-                    candidate, 'directional_score'
-                ),
-                'market_context_score': _attribute(
-                    candidate, 'market_context_score'
-                ),
-                'market_context_components': _attribute(
-                    candidate, 'market_context_components'
-                ),
-                'multi_timeframe_score': _attribute(
-                    candidate, 'multi_timeframe_score'
-                ),
-                'multi_timeframe_components': _attribute(
-                    candidate, 'multi_timeframe_components'
-                ),
-                'tp_feasibility_score': _attribute(
-                    candidate, 'tp_feasibility_score'
-                ),
-                'tp_feasibility_contribution': _attribute(
-                    candidate, 'tp_feasibility_contribution'
-                ),
-                'movement_consumed_to_tp_ratio': _attribute(
-                    tp_feasibility,
-                    'movement_consumed_to_tp_ratio',
-                ),
-                'entry_freshness_score': _attribute(
-                    tp_feasibility,
-                    'entry_freshness_score',
-                ),
-                'effective_stop_loss_percent': _attribute(
-                    effective_sl_tp, 'stop_loss_percent'
-                ),
-                'effective_take_profit_percent': _attribute(
-                    effective_sl_tp, 'take_profit_percent'
-                ),
-                'estimated_total_cost_percent': _attribute(
-                    economics, 'estimated_total_cost_percent'
-                ),
-                'expected_net_profit_percent': _attribute(
-                    economics, 'expected_net_profit_percent'
-                ),
-                'raw_tp_before_sl_probability': _attribute(
-                    candidate, 'raw_tp_before_sl_probability'
-                ),
-                'tp_before_sl_probability': _attribute(
-                    candidate, 'tp_before_sl_probability'
-                ),
-                'calibration_profile_key': _attribute(
-                    tp_probability,
-                    'calibration_profile_key',
-                ),
-                'break_even_probability': _attribute(
-                    candidate, 'break_even_probability'
-                ),
-                'net_expected_value_percent': _attribute(
-                    candidate, 'net_expected_value_percent'
-                ),
-                'probability_edge': _attribute(
-                    candidate, 'probability_edge'
-                ),
-                'entry_route_action': _enum_value(
-                    _attribute(decision, 'action')
-                ),
-                'entry_route_reason': _attribute(decision, 'reason'),
-                'selection_outcome': selection_outcome,
-                'selection_reason': selection_reason,
-                'candidate': candidate,
-                'market_context': market_context,
-                'multi_timeframe_context': multi_timeframe_context,
-                'candidate_economics': economics,
-                'tp_feasibility': tp_feasibility,
-                'tp_probability': tp_probability,
-                'effective_sl_tp': effective_sl_tp,
-                'entry_decision': decision,
-                'market_context_version': _attribute(
-                    market_context, 'version'
-                ),
-                'market_context_score_model_version': _attribute(
-                    _attribute(
-                        candidate, 'market_context_score_metadata'
-                    ),
-                    'model_version',
-                ),
-                'multi_timeframe_model_version': _attribute(
-                    multi_timeframe_context, 'model_version'
-                ),
-                'multi_timeframe_score_model_version': _attribute(
-                    _attribute(
-                        candidate, 'multi_timeframe_score_metadata'
-                    ),
-                    'model_version',
-                ),
-                'tp_feasibility_model_version': _attribute(
-                    tp_feasibility, 'model_version'
-                ),
-                'tp_probability_model_version': _attribute(
-                    candidate, 'tp_probability_model_version'
-                ),
-                'entry_route_model_version': _attribute(
-                    decision, 'model_version'
-                ),
-                'strategy_profile': self.summary.profile,
-            }
+            if record is None:
+                continue
             written = self.trade_journal.write('entry_decision', record)
             if written is False:
                 self._record_trade_journal_write_failure(
-                    'entry_decision', record
+                    'entry_decision',
+                    record,
                 )
 
     def record_raw_event(
@@ -331,7 +208,8 @@ class AnalysisJournal:
                 'new_state': new_state,
                 'reason': _attribute(session_decision, 'reason'),
                 'session_key': _attribute(
-                    session_decision, 'session_key'
+                    session_decision,
+                    'session_key',
                 ),
                 'session_decision': session_decision,
             },
@@ -348,6 +226,151 @@ class AnalysisJournal:
             return
         self.summary.write(self.partial_summary_path)
         self._last_partial_summary_at = now
+
+
+def _entry_decision_record(
+    *,
+    evaluated: Any,
+    selection_outcome: str,
+    selection_reason: Any,
+    strategy_profile: Any,
+) -> dict[str, Any] | None:
+    candidate = _attribute(evaluated, 'candidate')
+    decision = _attribute(evaluated, 'entry_decision')
+    if candidate is None or decision is None:
+        return None
+    signal = _attribute(candidate, 'signal')
+    snapshot = _attribute(candidate, 'snapshot')
+    economics = _attribute(evaluated, 'economics')
+    effective_sl_tp = _attribute(evaluated, 'effective_sl_tp')
+    tp_feasibility = _attribute(evaluated, 'tp_feasibility')
+    tp_probability = _attribute(evaluated, 'tp_probability')
+    market_context = _attribute(candidate, 'market_context')
+    multi_timeframe_context = _attribute(
+        candidate,
+        'multi_timeframe_context',
+    )
+    return {
+        'candidate_id': _attribute(candidate, 'candidate_id'),
+        'origin_candidate_id': _attribute(candidate, 'origin_candidate_id'),
+        'pending_entry_id': _attribute(candidate, 'pending_entry_id'),
+        'candidate_timestamp': _attribute(snapshot, 'timestamp'),
+        'symbol': _attribute(candidate, 'symbol'),
+        'side': _attribute(signal, 'action'),
+        'entry_reference_price': _attribute(snapshot, 'last'),
+        'profile_key': _profile_key(effective_sl_tp, tp_probability),
+        'sl_tp_source': _attribute(effective_sl_tp, 'source'),
+        'score': _attribute(candidate, 'score'),
+        'base_score': _attribute(candidate, 'base_score'),
+        'directional_score': _attribute(candidate, 'directional_score'),
+        'market_context_score': _attribute(
+            candidate,
+            'market_context_score',
+        ),
+        'market_context_components': _attribute(
+            candidate,
+            'market_context_components',
+        ),
+        'multi_timeframe_score': _attribute(
+            candidate,
+            'multi_timeframe_score',
+        ),
+        'multi_timeframe_components': _attribute(
+            candidate,
+            'multi_timeframe_components',
+        ),
+        'tp_feasibility_score': _attribute(
+            candidate,
+            'tp_feasibility_score',
+        ),
+        'tp_feasibility_contribution': _attribute(
+            candidate,
+            'tp_feasibility_contribution',
+        ),
+        'movement_consumed_to_tp_ratio': _attribute(
+            tp_feasibility,
+            'movement_consumed_to_tp_ratio',
+        ),
+        'entry_freshness_score': _attribute(
+            tp_feasibility,
+            'entry_freshness_score',
+        ),
+        'effective_stop_loss_percent': _attribute(
+            effective_sl_tp,
+            'stop_loss_percent',
+        ),
+        'effective_take_profit_percent': _attribute(
+            effective_sl_tp,
+            'take_profit_percent',
+        ),
+        'estimated_total_cost_percent': _attribute(
+            economics,
+            'estimated_total_cost_percent',
+        ),
+        'expected_net_profit_percent': _attribute(
+            economics,
+            'expected_net_profit_percent',
+        ),
+        'raw_tp_before_sl_probability': _attribute(
+            candidate,
+            'raw_tp_before_sl_probability',
+        ),
+        'tp_before_sl_probability': _attribute(
+            candidate,
+            'tp_before_sl_probability',
+        ),
+        'calibration_profile_key': _attribute(
+            tp_probability,
+            'calibration_profile_key',
+        ),
+        'break_even_probability': _attribute(
+            candidate,
+            'break_even_probability',
+        ),
+        'net_expected_value_percent': _attribute(
+            candidate,
+            'net_expected_value_percent',
+        ),
+        'probability_edge': _attribute(candidate, 'probability_edge'),
+        'entry_route_action': _enum_value(_attribute(decision, 'action')),
+        'entry_route_reason': _attribute(decision, 'reason'),
+        'selection_outcome': selection_outcome,
+        'selection_reason': selection_reason,
+        'candidate': candidate,
+        'market_context': market_context,
+        'multi_timeframe_context': multi_timeframe_context,
+        'candidate_economics': economics,
+        'tp_feasibility': tp_feasibility,
+        'tp_probability': tp_probability,
+        'effective_sl_tp': effective_sl_tp,
+        'entry_decision': decision,
+        'market_context_version': _attribute(market_context, 'version'),
+        'market_context_score_model_version': _attribute(
+            _attribute(candidate, 'market_context_score_metadata'),
+            'model_version',
+        ),
+        'multi_timeframe_model_version': _attribute(
+            multi_timeframe_context,
+            'model_version',
+        ),
+        'multi_timeframe_score_model_version': _attribute(
+            _attribute(candidate, 'multi_timeframe_score_metadata'),
+            'model_version',
+        ),
+        'tp_feasibility_model_version': _attribute(
+            tp_feasibility,
+            'model_version',
+        ),
+        'tp_probability_model_version': _attribute(
+            candidate,
+            'tp_probability_model_version',
+        ),
+        'entry_route_model_version': _attribute(
+            decision,
+            'model_version',
+        ),
+        'strategy_profile': strategy_profile,
+    }
 
 
 def _profile_key(effective_sl_tp: Any, tp_probability: Any) -> Any:
@@ -369,50 +392,6 @@ def _evaluated_selection_items(payload: dict[str, Any]):
         evaluated = _attribute(rejection, 'evaluated_candidate')
         if evaluated is not None:
             yield evaluated, 'rejected', _attribute(rejection, 'reason')
-
-
-def build_analysis_journal(
-    settings: Settings,
-    *,
-    run_id: str | None = None,
-    profile: str = 'balanced',
-) -> AnalysisJournal:
-    detail_level = normalize_detail_level(settings.journal_detail_level)
-    debug_enabled = (
-        detail_level in {'debug', 'full'}
-        or settings.journal_keep_debug_decisions
-    )
-    return AnalysisJournal(
-        trade_journal=JsonlJournal(
-            settings.journal_path,
-            run_id=run_id,
-            stream_name='trades',
-        ),
-        errors_journal=JsonlJournal(
-            settings.errors_journal_path,
-            run_id=run_id,
-            stream_name='errors',
-        ),
-        debug_decisions_journal=(
-            JsonlJournal(
-                settings.debug_decisions_journal_path,
-                run_id=run_id,
-                stream_name='debug_decisions',
-            )
-            if debug_enabled
-            else None
-        ),
-        summary_path=settings.daily_summary_path,
-        partial_summary_path=settings.partial_daily_summary_path,
-        detail_level=detail_level,
-        write_partial_summary=settings.journal_write_partial_summary,
-        partial_summary_interval_minutes=(
-            settings.journal_partial_summary_interval_minutes
-        ),
-        run_id=run_id,
-        strategy='TrendStrategy',
-        profile=profile,
-    )
 
 
 def _session_state_name(session_decision: Any) -> str:
