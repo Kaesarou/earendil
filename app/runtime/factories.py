@@ -36,16 +36,15 @@ def build_runtime_clients(settings: Settings) -> RuntimeClients:
     )
 
     if settings.broker == 'paper':
-        execution_broker: BrokerClient = CachedBrokerClient(
-            PaperBrokerClient()
-        )
+        execution: BrokerClient = PaperBrokerClient()
     else:
-        execution_broker = CachedBrokerClient(
-            ResilientEtoroClient(settings=settings)
-        )
+        etoro = ResilientEtoroClient(settings=settings)
+        etoro.instrument_ids_by_symbol = market_data.instrument_ids_by_symbol
+        etoro.symbol_by_instrument_id = market_data.symbol_by_instrument_id
+        execution = etoro
 
     return RuntimeClients(
-        execution_broker=execution_broker,
+        execution_broker=CachedBrokerClient(execution),
         rest_market_data=market_data,
         live_market_data=live_feed,
     )
