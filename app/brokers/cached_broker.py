@@ -3,7 +3,7 @@ import time
 from dataclasses import dataclass, field
 from typing import cast
 
-from app.brokers.base import BrokerClient
+from app.brokers.base import BrokerClient, ClosePositionSubmission
 from app.market.models import MarketSnapshot
 
 logger = logging.getLogger(__name__)
@@ -32,12 +32,20 @@ class CachedBrokerClient(BrokerClient):
 
     def get_account_equity(self) -> float:
         now = self._now()
-        if self.account_equity_ttl_seconds > 0 and self.account_equity_cache is not None and self.account_equity_cache.expires_at > now:
+        if (
+            self.account_equity_ttl_seconds > 0
+            and self.account_equity_cache is not None
+            and self.account_equity_cache.expires_at > now
+        ):
             self._log_cache_hit('account_equity', 'account')
             return cast(float, self.account_equity_cache.value)
         self._log_cache_miss('account_equity', 'account')
         equity = self.delegate.get_account_equity()
-        self.account_equity_cache = self._build_entry(equity, self.account_equity_ttl_seconds) if self.account_equity_ttl_seconds > 0 else None
+        self.account_equity_cache = (
+            self._build_entry(equity, self.account_equity_ttl_seconds)
+            if self.account_equity_ttl_seconds > 0
+            else None
+        )
         return equity
 
     def open_position(self, symbol: str, side: str, amount: float, stop_loss: float, take_profit: float):
@@ -45,9 +53,10 @@ class CachedBrokerClient(BrokerClient):
         self.invalidate_account_and_positions()
         return result
 
-    def close_position(self, position_id: str) -> None:
-        self.delegate.close_position(position_id)
+    def close_position(self, position_id: str) -> ClosePositionSubmission:
+        submission = self.delegate.close_position(position_id)
         self.invalidate_account_and_positions()
+        return submission
 
     def is_position_open(self, position_id: str) -> bool:
         cached_status = self._get_cache_entry(self.position_status_cache, position_id, 'position_status')
@@ -59,6 +68,10 @@ class CachedBrokerClient(BrokerClient):
 
     def remember_position_instrument(self, position_id: str, symbol: str) -> None:
         self.delegate.remember_position_instrument(position_id, symbol)
+
+    def forget_position_instrument(self, position_id: str) -> None:
+        self.delegate.forget_position_instrument(position_id)
+        self.position_status_cache.pop(position_id, None)
 
     def invalidate_account_and_positions(self) -> None:
         self.account_equity_cache = None
