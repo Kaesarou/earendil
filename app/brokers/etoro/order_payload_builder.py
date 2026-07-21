@@ -1,3 +1,6 @@
+SELLSHORT_SAFETY_SL_BUFFER_PERCENT = 0.30
+
+
 def build_open_order_payload(
     *,
     instrument_id: int,
@@ -6,7 +9,6 @@ def build_open_order_payload(
     stop_loss: float,
     take_profit: float,
     order_currency: str,
-    sellshort_safety_sl_buffer_percent: float = 0.30,
 ) -> dict:
     transaction = open_transaction_for_side(side)
 
@@ -24,18 +26,21 @@ def build_open_order_payload(
         payload['settlementType'] = 'cfd'
         payload['StopLossRate'] = calculate_sellshort_safety_stop_loss(
             bot_stop_loss=stop_loss,
-            buffer_percent=sellshort_safety_sl_buffer_percent,
         )
 
     return payload
 
 
-def calculate_sellshort_safety_stop_loss(*, bot_stop_loss: float, buffer_percent: float) -> float:
+def calculate_sellshort_safety_stop_loss(*, bot_stop_loss: float) -> float:
     if bot_stop_loss is None or bot_stop_loss <= 0:
-        raise ValueError(f'Invalid bot_stop_loss for eToro sellShort safety stop: {bot_stop_loss}')
-    if buffer_percent <= 0:
-        raise ValueError(f'eToro sellShort safety stop buffer must be positive: {buffer_percent}')
-    return round(bot_stop_loss * (1 + buffer_percent / 100), 5)
+        raise ValueError(
+            f'Invalid bot_stop_loss for eToro sellShort safety stop: '
+            f'{bot_stop_loss}'
+        )
+    return round(
+        bot_stop_loss * (1 + SELLSHORT_SAFETY_SL_BUFFER_PERCENT / 100),
+        5,
+    )
 
 
 def open_transaction_for_side(side: str) -> str:
