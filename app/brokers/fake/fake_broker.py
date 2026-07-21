@@ -1,8 +1,9 @@
 import math
 import time
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 
-from app.brokers.base import BrokerClient, OpenPositionResult
+from app.brokers.base import BrokerClient, ClosePositionSubmission, OpenPositionResult
 from app.market.models import MarketSnapshot
 
 
@@ -22,10 +23,7 @@ class FakeBrokerClient(BrokerClient):
         return MarketSnapshot.now(symbol=symbol, bid=last - spread / 2, ask=last + spread / 2, last=last)
 
     def get_market_snapshots(self, symbols: list[str]) -> dict[str, MarketSnapshot]:
-        result: dict[str, MarketSnapshot] = {}
-        for symbol in symbols:
-            result[symbol] = self.get_market_snapshot(symbol)
-        return result
+        return {symbol: self.get_market_snapshot(symbol) for symbol in symbols}
 
     def get_account_equity(self) -> float:
         return self.equity
@@ -41,8 +39,18 @@ class FakeBrokerClient(BrokerClient):
         }
         return OpenPositionResult(position_id=position_id, executed_entry_price=None)
 
-    def close_position(self, position_id: str) -> None:
+    def close_position(self, position_id: str) -> ClosePositionSubmission:
+        submitted_at = datetime.now(timezone.utc)
         self.positions.pop(position_id, None)
+        accepted_at = datetime.now(timezone.utc)
+        return ClosePositionSubmission(
+            position_id=position_id,
+            close_order_id=f'paper-close-{position_id}',
+            reference_id=None,
+            submitted_at=submitted_at,
+            accepted_at=accepted_at,
+            broker_response={'accepted': True, 'position_id': position_id},
+        )
 
     def is_position_open(self, position_id: str) -> bool:
         return position_id in self.positions
