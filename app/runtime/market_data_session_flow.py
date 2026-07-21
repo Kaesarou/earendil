@@ -3,6 +3,7 @@ from datetime import datetime, timezone
 from app.instruments.models import AssetClass
 from app.market.timeframes import BarCompleteness
 from app.runtime.pending_entry_flow import write_pending_events
+from app.runtime.runtime_policy import POSITION_RECONCILIATION_INTERVAL_SECONDS
 from app.runtime.session_runtime import filter_symbols_by_trading_session
 from app.strategies.strategy import TrendStrategy
 
@@ -141,7 +142,7 @@ class MarketDataSessionFlow:
     def _reconcile_positions_if_due(self, now, monotonic_now: float) -> None:
         if (
             monotonic_now - self._last_position_reconciliation
-            < self.settings.poll_interval_seconds
+            < POSITION_RECONCILIATION_INTERVAL_SECONDS
         ):
             return
         self._last_position_reconciliation = monotonic_now
