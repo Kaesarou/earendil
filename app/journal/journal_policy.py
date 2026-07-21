@@ -11,7 +11,6 @@ ERROR_EVENT_TYPES = frozenset(
         'broker_timeout',
         'broker_authorization_error',
         'candidate_execution_error',
-        'position_close_error',
         'position_persistence_error',
         'position_reconciliation_warning',
         'position_restore_warning',
@@ -49,8 +48,14 @@ MINIMAL_TRADE_EVENT_TYPES = frozenset(
         'order_confirmation_manual_intervention_required',
         'position_opened',
         'position_updated',
-        'position_close_pending',
-        'position_closed',
+        'position_close_requested',
+        'position_close_submitted',
+        'position_close_confirmation_pending',
+        'position_close_confirmed',
+        'position_close_submission_unknown',
+        'position_close_rejected',
+        'position_close_confirmation_delayed',
+        'position_close_manual_intervention_required',
         'position_restored',
         'position_reconciliation_suspect',
         'position_reconciliation_recovered',
@@ -155,10 +160,7 @@ def decision_symbol(payload: dict[str, Any]) -> str | None:
 
 
 def decision_side(payload: dict[str, Any]) -> str | None:
-    signal = payload.get('signal') or _attribute(
-        payload.get('candidate'),
-        'signal',
-    )
+    signal = payload.get('signal') or _attribute(payload.get('candidate'), 'signal')
     side = _attribute(signal, 'action')
     if side:
         return str(side)
