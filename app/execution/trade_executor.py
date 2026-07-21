@@ -1,6 +1,10 @@
 import logging
 
-from app.brokers.base import BrokerClient, OpenPositionResult as BrokerOpenPositionResult
+from app.brokers.base import (
+    BrokerClient,
+    ClosePositionSubmission,
+    OpenPositionResult as BrokerOpenPositionResult,
+)
 from app.risk.models import TradePlan
 
 logger = logging.getLogger(__name__)
@@ -32,12 +36,16 @@ class TradeExecutor:
         logger.info('Broker result: %s', result)
         return result
 
-    def close(self, position_id: str) -> None:
-        self.broker.close_position(position_id)
-        logger.info('Position closed: %s', position_id)
+    def close(self, position_id: str) -> ClosePositionSubmission:
+        submission = self.broker.close_position(position_id)
+        logger.info(
+            'Position close submitted | position_id=%s | close_order_id=%s',
+            position_id,
+            submission.close_order_id,
+        )
+        return submission
 
     def _required(self, value, field_name: str, plan: TradePlan):
         if value is None:
             raise ValueError(f'Invalid trade plan without {field_name}: {plan}')
-
         return value
