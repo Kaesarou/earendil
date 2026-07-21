@@ -62,6 +62,8 @@ class PendingClose:
         close_order_id: str | None = None,
         reference_id: str | None = None,
     ) -> 'PendingClose':
+        error_close_order_id = getattr(error, 'close_order_id', None)
+        error_reference_id = getattr(error, 'reference_id', None)
         return replace(
             self,
             state=CloseState.SUBMISSION_UNKNOWN,
@@ -70,8 +72,16 @@ class PendingClose:
                 if submitted_at is not None
                 else self.submitted_at
             ),
-            close_order_id=close_order_id or self.close_order_id,
-            reference_id=reference_id or self.reference_id,
+            close_order_id=(
+                close_order_id
+                or error_close_order_id
+                or self.close_order_id
+            ),
+            reference_id=(
+                reference_id
+                or error_reference_id
+                or self.reference_id
+            ),
             last_error=str(error),
         )
 
