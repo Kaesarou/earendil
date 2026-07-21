@@ -17,10 +17,20 @@ REMOVED_SETTING_REFERENCES = (
 )
 
 
-def test_main_no_longer_reads_technical_runtime_policy_from_settings():
-    source = Path('app/main.py').read_text(encoding='utf-8')
+def test_application_no_longer_reads_removed_runtime_policy_from_settings():
+    source_by_path = {
+        path: path.read_text(encoding='utf-8')
+        for path in Path('app').rglob('*.py')
+    }
 
     for removed in REMOVED_SETTING_REFERENCES:
-        assert removed not in source
-    assert 'from app.runtime.runtime_policy import (' in source
-    assert "'mode': 'websocket'" in source
+        offenders = [
+            str(path)
+            for path, source in source_by_path.items()
+            if removed in source
+        ]
+        assert offenders == [], f'{removed} remains in {offenders}'
+
+    main_source = source_by_path[Path('app/main.py')]
+    assert 'from app.runtime.runtime_policy import (' in main_source
+    assert "'mode': 'websocket'" in main_source
