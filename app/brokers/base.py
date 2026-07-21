@@ -1,5 +1,7 @@
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
+from datetime import datetime
+from typing import Any
 
 from app.market.models import MarketSnapshot
 
@@ -8,6 +10,16 @@ from app.market.models import MarketSnapshot
 class OpenPositionResult:
     position_id: str
     executed_entry_price: float | None = None
+
+
+@dataclass(frozen=True)
+class ClosePositionSubmission:
+    position_id: str
+    close_order_id: str | None
+    reference_id: str | None
+    submitted_at: datetime
+    accepted_at: datetime
+    broker_response: dict[str, Any]
 
 
 class BrokerClient(ABC):
@@ -35,7 +47,12 @@ class BrokerClient(ABC):
         raise NotImplementedError
 
     @abstractmethod
-    def close_position(self, position_id: str) -> None:
+    def close_position(self, position_id: str) -> ClosePositionSubmission:
+        """Submit one close request and return as soon as the broker accepts it.
+
+        Portfolio disappearance is confirmed asynchronously by the runtime. This
+        method must never poll the portfolio for closure confirmation.
+        """
         raise NotImplementedError
 
     @abstractmethod
@@ -43,10 +60,5 @@ class BrokerClient(ABC):
         raise NotImplementedError
 
     def remember_position_instrument(self, position_id: str, symbol: str) -> None:
-        """Optional hook for brokers that must restore local position metadata.
-
-        Some execution brokers, like eToro, need to know the instrument id attached
-        to a restored position before they can close it. Generic brokers do not need
-        any extra state, so the default implementation is intentionally a no-op.
-        """
+        """Restore broker-specific metadata needed to manage a position."""
         return None
