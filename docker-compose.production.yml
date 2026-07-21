@@ -1,0 +1,23 @@
+services:
+  goblin:
+    image: ${GOBLIN_IMAGE:?GOBLIN_IMAGE must reference an immutable GHCR image}
+    container_name: goblin-bot
+    init: true
+    env_file:
+      - .env
+    volumes:
+      - ./data:/app/data
+    restart: unless-stopped
+    stop_signal: SIGTERM
+    stop_grace_period: 2m
+    healthcheck:
+      test: ["CMD", "python", "-c", "import os; os.kill(1, 0)"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+    logging:
+      driver: json-file
+      options:
+        max-size: "20m"
+        max-file: "3"
