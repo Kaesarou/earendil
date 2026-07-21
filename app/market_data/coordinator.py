@@ -37,6 +37,7 @@ class MarketDataCoordinator:
             'accepted_events': 0,
             'duplicate_message_ids_dropped': 0,
             'out_of_order_events_dropped': 0,
+            'symbol_stale_count': 0,
             'symbol_fallback_count': 0,
             'symbol_recovery_count': 0,
             'blocked_symbol_count': 0,
@@ -77,7 +78,9 @@ class MarketDataCoordinator:
             self._remember_message_id(key)
 
         if event.source == MarketDataSource.WEBSOCKET:
-            state.last_message_received_at = _as_utc(event.received_at)
+            received_at = _as_utc(event.received_at)
+            self._mark_stale_if_silent(state, now=received_at)
+            state.last_message_received_at = received_at
 
         if event.source == MarketDataSource.REST_CONTROL:
             return self._decision(
@@ -190,8 +193,17 @@ class MarketDataCoordinator:
             if state.state == SymbolFeedState.BLOCKED:
                 state.state = SymbolFeedState.REST_FALLBACK
 
-    def entry_allowed(self, symbol: str) -> bool:
+    def entry_allowed(
+        self,
+        symbol: str,
+        *,
+        now: datetime | None = None,
+    ) -> bool:
         state = self._states.setdefault(symbol.strip().upper(), _SymbolState())
+        self._mark_stale_if_silent(
+            state,
+            now=_as_utc(now or datetime.now(timezone.utc)),
+        )
         return state.state == SymbolFeedState.WS_HEALTHY
 
     def state_for(self, symbol: str) -> SymbolFeedState:
@@ -223,8 +235,34 @@ class MarketDataCoordinator:
             accepted=accepted,
             reason=reason,
             event=event,
-            entry_allowed=self.entry_allowed(symbol),
+            entry_allowed=self.entry_allowed(
+                symbol,
+                now=event.received_at,
+            ),
         )
+
+    def _mark_stale_if_silent(
+        self,
+        state: _SymbolState,
+        *,
+        now: datetime,
+    ) -> None:
+        if not self.websocket_required:
+            return
+        if state.state in {
+            SymbolFeedState.REST_FALLBACK,
+            SymbolFeedState.BLOCKED,
+            SymbolFeedState.WS_STALE,
+        }:
+            return
+        last_message = state.last_message_received_at
+        if last_message is not None and (
+            now - last_message
+        ).total_seconds() <= self.symbol_silence_seconds:
+            return
+        state.state = SymbolFeedState.WS_STALE
+        state.recovery_events = 0
+        self.metrics['symbol_stale_count'] += 1
 
     def _advance_health_without_price(
         self,
