@@ -48,6 +48,7 @@ MINIMAL_TRADE_EVENT_TYPES = frozenset(
         'order_confirmation_manual_intervention_required',
         'position_opened',
         'position_updated',
+        'position_closed',
         'position_close_requested',
         'position_close_submitted',
         'position_close_confirmation_pending',
