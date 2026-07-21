@@ -49,6 +49,9 @@ class AnalysisReadySummaryAggregator(DailySummaryAggregator):
             self.managed_stop_updates_by_type[
                 str(payload.get('protection_type') or 'unknown')
             ] += 1
+        elif event_type == 'position_close_confirmed':
+            self.positions_closed += 1
+            self._record_closed_position_pnl(payload)
 
     def _record_decision(self, payload):
         approved_before = self.risk_approved
@@ -140,21 +143,13 @@ class AnalysisReadySummaryAggregator(DailySummaryAggregator):
         )
         summary['score_contributions'] = {
             'market_context': dict(self.market_context_score_buckets),
-            'multi_timeframe': dict(
-                self.multi_timeframe_score_buckets
-            ),
-            'tp_feasibility_score': dict(
-                self.tp_feasibility_score_buckets
-            ),
+            'multi_timeframe': dict(self.multi_timeframe_score_buckets),
+            'tp_feasibility_score': dict(self.tp_feasibility_score_buckets),
             'tp_feasibility_contribution': dict(
                 self.tp_feasibility_contribution_buckets
             ),
-            'entry_freshness_score': dict(
-                self.entry_freshness_score_buckets
-            ),
-            'net_expected_value_percent': dict(
-                self.net_expected_value_buckets
-            ),
+            'entry_freshness_score': dict(self.entry_freshness_score_buckets),
+            'net_expected_value_percent': dict(self.net_expected_value_buckets),
         }
         summary['tp_feasibility'] = {
             'hard_rejection_components': dict(
