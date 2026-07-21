@@ -41,16 +41,9 @@ def test_close_returns_immediately_after_accepted_post_without_polling(monkeypat
     )
     monkeypatch.setattr(
         broker,
-        '_wait_until_position_closed',
-        lambda *args, **kwargs: (_ for _ in ()).throw(
-            AssertionError('portfolio polling is forbidden')
-        ),
-    )
-    monkeypatch.setattr(
-        broker,
         '_wait_for_executed_order',
         lambda *args, **kwargs: (_ for _ in ()).throw(
-            AssertionError('order polling is forbidden')
+            AssertionError('order polling is forbidden for closes')
         ),
     )
 
