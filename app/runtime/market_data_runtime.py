@@ -36,8 +36,13 @@ from app.runtime.runtime_policy import (
     CANDLE_CLOCK_GRACE_SECONDS,
     DECISION_WINDOW_GRACE_SECONDS,
     POSITION_FALLBACK_INTERVAL_SECONDS,
+    POSITION_RECONCILIATION_GRACE_SECONDS,
+    POSITION_RECONCILIATION_MISS_INTERVAL_SECONDS,
+    POSITION_RECONCILIATION_REQUIRED_MISSES,
     REST_CONTROL_ANOMALY_PERCENT,
     REST_CONTROL_INTERVAL_SECONDS,
+    UNKNOWN_ORDER_LOOKUP_INTERVAL_SECONDS,
+    UNKNOWN_ORDER_MAX_AGE_MINUTES,
     WS_POSITION_SILENCE_SECONDS,
 )
 from app.runtime.trading_session_window import TradingSessionState
@@ -136,6 +141,15 @@ class EventDrivenMarketRuntime(
             trade_journal=trade_journal,
             market_data_coordinator=self.coordinator,
             is_broker_authorization_error=is_broker_authorization_error,
+            reconciliation_grace_seconds=(
+                POSITION_RECONCILIATION_GRACE_SECONDS
+            ),
+            reconciliation_required_misses=(
+                POSITION_RECONCILIATION_REQUIRED_MISSES
+            ),
+            reconciliation_miss_interval_seconds=(
+                POSITION_RECONCILIATION_MISS_INTERVAL_SECONDS
+            ),
             rest_control_anomaly_percent=REST_CONTROL_ANOMALY_PERCENT,
         )
         self.candidate_execution = ResilientCandidateExecutionCoordinator(
@@ -150,6 +164,10 @@ class EventDrivenMarketRuntime(
             cooldown_guard=cooldown_guard,
             candidate_economics_estimator=candidate_economics_estimator,
             pending_entry_manager=pending_entry_manager,
+            unknown_lookup_interval_seconds=(
+                UNKNOWN_ORDER_LOOKUP_INTERVAL_SECONDS
+            ),
+            unknown_max_age_minutes=UNKNOWN_ORDER_MAX_AGE_MINUTES,
         )
         self.latest_snapshots = {}
         self.session_decisions = {}
@@ -270,4 +288,17 @@ class EventDrivenMarketRuntime(
                     ),
                     'loop_id': self.loop_id,
                 },
+            )
+
+    def _drain_broker_completions(self, now: datetime) -> None:
+        for completion in self.broker_task_runner.drain():
+            if self.candidate_execution.handle_completion(
+                completion,
+                now=now,
+            ):
+                continue
+            self.broker_operations.handle_completion(
+                completion,
+                now=now,
+                latest_snapshots=self.latest_snapshots,
             )
