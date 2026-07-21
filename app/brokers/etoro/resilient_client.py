@@ -17,6 +17,7 @@ from app.brokers.etoro.order_confirmation_error import (
     EtoroOrderConfirmationUnknownError,
 )
 from app.brokers.etoro.position_instrument_cache import (
+    forget_position_instrument_id,
     remember_position_instrument_id,
     require_position_instrument_id,
 )
@@ -26,7 +27,7 @@ logger = logging.getLogger(__name__)
 
 
 class ResilientEtoroClient(EtoroClient):
-    """Preserve exposure while accepted open orders remain uncertain."""
+    """Preserve exposure while broker order outcomes remain uncertain."""
 
     def open_position(
         self,
@@ -222,4 +223,10 @@ class ResilientEtoroClient(EtoroClient):
             submitted_at=submitted_at,
             accepted_at=accepted_at,
             broker_response=response,
+        )
+
+    def forget_position_instrument(self, position_id: str) -> None:
+        forget_position_instrument_id(
+            position_instruments=self.position_instruments,
+            position_id=position_id,
         )
