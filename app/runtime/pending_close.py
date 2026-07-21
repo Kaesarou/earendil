@@ -59,6 +59,8 @@ class PendingClose:
         *,
         error: Exception,
         submitted_at: datetime | None = None,
+        close_order_id: str | None = None,
+        reference_id: str | None = None,
     ) -> 'PendingClose':
         return replace(
             self,
@@ -68,6 +70,8 @@ class PendingClose:
                 if submitted_at is not None
                 else self.submitted_at
             ),
+            close_order_id=close_order_id or self.close_order_id,
+            reference_id=reference_id or self.reference_id,
             last_error=str(error),
         )
 
