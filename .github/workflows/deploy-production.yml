@@ -1,0 +1,169 @@
+name: Deploy production
+
+on:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+  packages: write
+
+concurrency:
+  group: goblin-production
+  cancel-in-progress: false
+
+env:
+  IMAGE_REPOSITORY: ghcr.io/kaesarou/goblin
+  DEPLOY_DIRECTORY: /opt/goblin
+
+jobs:
+  tests:
+    name: Validate release
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+
+      - name: Install dependencies
+        run: python -m pip install -e ".[dev]"
+
+      - name: Run tests
+        run: python -m pytest tests -q --tb=short
+
+      - name: Validate deployment script
+        run: bash -n scripts/deploy_release.sh
+
+      - name: Validate production Compose file
+        env:
+          GOBLIN_IMAGE: ghcr.io/kaesarou/goblin:0000000000000000000000000000000000000000
+        run: docker compose -f docker-compose.production.yml config --quiet
+
+  publish:
+    name: Publish immutable image
+    needs: tests
+    runs-on: ubuntu-latest
+    outputs:
+      image: ${{ steps.image.outputs.reference }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Authenticate to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Define immutable image reference
+        id: image
+        run: echo "reference=${IMAGE_REPOSITORY}:${GITHUB_SHA}" >> "$GITHUB_OUTPUT"
+
+      - name: Build and publish image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          build-args: |
+            GIT_COMMIT=${{ github.sha }}
+          tags: |
+            ${{ steps.image.outputs.reference }}
+            ${{ env.IMAGE_REPOSITORY }}:main
+          labels: |
+            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Create deployment manifest
+        run: |
+          mkdir deployment-artifact
+          cp docker-compose.production.yml scripts/deploy_release.sh deployment-artifact/
+          printf '{"git_commit":"%s","image":"%s","created_at":"%s"}\n' \
+            "$GITHUB_SHA" \
+            "${{ steps.image.outputs.reference }}" \
+            "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+            > deployment-artifact/manifest.json
+
+      - name: Upload deployment artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: goblin-deployment-${{ github.sha }}
+          path: deployment-artifact/
+          retention-days: 7
+          if-no-files-found: error
+
+  deploy:
+    name: Deploy to OVHcloud
+    needs: publish
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - name: Download deployment artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: goblin-deployment-${{ github.sha }}
+          path: deployment-artifact
+
+      - name: Configure SSH
+        env:
+          SSH_PRIVATE_KEY: ${{ secrets.OVH_SSH_PRIVATE_KEY }}
+          SSH_KNOWN_HOSTS: ${{ secrets.OVH_SSH_KNOWN_HOSTS }}
+        run: |
+          install -d -m 700 "$HOME/.ssh"
+          printf '%s\n' "$SSH_PRIVATE_KEY" > "$HOME/.ssh/ovh_deploy"
+          chmod 600 "$HOME/.ssh/ovh_deploy"
+          printf '%s\n' "$SSH_KNOWN_HOSTS" > "$HOME/.ssh/known_hosts"
+          chmod 600 "$HOME/.ssh/known_hosts"
+
+      - name: Copy release files
+        env:
+          OVH_HOST: ${{ secrets.OVH_HOST }}
+          OVH_USER: ${{ secrets.OVH_USER }}
+        run: |
+          release_directory="${DEPLOY_DIRECTORY}/releases/${GITHUB_SHA}"
+          ssh -i "$HOME/.ssh/ovh_deploy" "${OVH_USER}@${OVH_HOST}" \
+            "mkdir -p '$release_directory'"
+          scp -i "$HOME/.ssh/ovh_deploy" \
+            deployment-artifact/docker-compose.production.yml \
+            deployment-artifact/deploy_release.sh \
+            "${OVH_USER}@${OVH_HOST}:${release_directory}/"
+
+      - name: Authenticate VPS to GHCR
+        env:
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          OVH_HOST: ${{ secrets.OVH_HOST }}
+          OVH_USER: ${{ secrets.OVH_USER }}
+        run: |
+          printf '%s' "$GHCR_TOKEN" | \
+            ssh -i "$HOME/.ssh/ovh_deploy" "${OVH_USER}@${OVH_HOST}" \
+              "docker login ghcr.io --username 'Kaesarou' --password-stdin"
+
+      - name: Deploy immutable image
+        env:
+          IMAGE: ${{ needs.publish.outputs.image }}
+          OVH_HOST: ${{ secrets.OVH_HOST }}
+          OVH_USER: ${{ secrets.OVH_USER }}
+        run: |
+          release_script="${DEPLOY_DIRECTORY}/releases/${GITHUB_SHA}/deploy_release.sh"
+          ssh -i "$HOME/.ssh/ovh_deploy" "${OVH_USER}@${OVH_HOST}" \
+            "bash '$release_script' '$GITHUB_SHA' '$IMAGE' '$DEPLOY_DIRECTORY'"
+
+      - name: Remove temporary GHCR credentials
+        if: always()
+        env:
+          OVH_HOST: ${{ secrets.OVH_HOST }}
+          OVH_USER: ${{ secrets.OVH_USER }}
+        run: |
+          ssh -i "$HOME/.ssh/ovh_deploy" "${OVH_USER}@${OVH_HOST}" \
+            "docker logout ghcr.io" || true
