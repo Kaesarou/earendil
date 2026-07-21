@@ -5,6 +5,7 @@ from datetime import datetime, timezone
 from enum import StrEnum
 from typing import Any
 
+from app.brokers.base import ClosePositionSubmission
 from app.execution.position_tracker import PositionCloseSignal
 
 
@@ -12,6 +13,7 @@ class CloseState(StrEnum):
     SUBMITTING = 'close_submitting'
     PENDING_CONFIRMATION = 'close_pending_confirmation'
     SUBMISSION_UNKNOWN = 'close_submission_unknown'
+    REJECTED = 'close_rejected'
 
 
 @dataclass(frozen=True)
@@ -29,30 +31,50 @@ class PendingClose:
     confirmation_checks: int = 0
     last_confirmation_at: datetime | None = None
     last_error: str | None = None
-    session_decision: Any = None
+    metadata: dict[str, Any] | None = None
+    delayed_reported_at: datetime | None = None
+    manual_intervention_reported_at: datetime | None = None
 
     def mark_submitted(
         self,
-        *,
-        submitted_at: datetime,
-        accepted_at: datetime,
-        close_order_id: str | None,
-        reference_id: str | None,
+        submission: ClosePositionSubmission,
     ) -> 'PendingClose':
+        if submission.position_id != self.position_id:
+            raise ValueError(
+                'Close submission position mismatch: '
+                f'pending={self.position_id}, submitted={submission.position_id}'
+            )
         return replace(
             self,
             state=CloseState.PENDING_CONFIRMATION,
-            submitted_at=_as_utc(submitted_at),
-            accepted_at=_as_utc(accepted_at),
-            close_order_id=close_order_id,
-            reference_id=reference_id,
+            submitted_at=_as_utc(submission.submitted_at),
+            accepted_at=_as_utc(submission.accepted_at),
+            close_order_id=submission.close_order_id,
+            reference_id=submission.reference_id,
             last_error=None,
         )
 
-    def mark_submission_unknown(self, *, error: Exception) -> 'PendingClose':
+    def mark_submission_unknown(
+        self,
+        *,
+        error: Exception,
+        submitted_at: datetime | None = None,
+    ) -> 'PendingClose':
         return replace(
             self,
             state=CloseState.SUBMISSION_UNKNOWN,
+            submitted_at=(
+                _as_utc(submitted_at)
+                if submitted_at is not None
+                else self.submitted_at
+            ),
+            last_error=str(error),
+        )
+
+    def mark_rejected(self, *, error: Exception) -> 'PendingClose':
+        return replace(
+            self,
+            state=CloseState.REJECTED,
             last_error=str(error),
         )
 
@@ -62,6 +84,23 @@ class PendingClose:
             confirmation_checks=self.confirmation_checks + 1,
             last_confirmation_at=_as_utc(observed_at),
         )
+
+    def mark_delayed_reported(self, *, reported_at: datetime) -> 'PendingClose':
+        return replace(self, delayed_reported_at=_as_utc(reported_at))
+
+    def mark_manual_intervention_reported(
+        self,
+        *,
+        reported_at: datetime,
+    ) -> 'PendingClose':
+        return replace(
+            self,
+            manual_intervention_reported_at=_as_utc(reported_at),
+        )
+
+    def confirmation_age_seconds(self, *, now: datetime) -> float:
+        origin = self.accepted_at or self.submitted_at or self.requested_at
+        return max(0.0, (_as_utc(now) - _as_utc(origin)).total_seconds())
 
 
 def _as_utc(value: datetime) -> datetime:
