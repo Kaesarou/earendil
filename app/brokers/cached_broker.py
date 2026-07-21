@@ -4,7 +4,6 @@ from dataclasses import dataclass, field
 from typing import cast
 
 from app.brokers.base import BrokerClient, ClosePositionSubmission
-from app.market.models import MarketSnapshot
 
 logger = logging.getLogger(__name__)
 
@@ -24,12 +23,6 @@ class CachedBrokerClient(BrokerClient):
     account_equity_cache: CacheEntry | None = None
     position_status_cache: dict[str, CacheEntry] = field(default_factory=dict)
 
-    def get_market_snapshot(self, symbol: str) -> MarketSnapshot:
-        return self.delegate.get_market_snapshot(symbol)
-
-    def get_market_snapshots(self, symbols: list[str]) -> dict[str, MarketSnapshot]:
-        return self.delegate.get_market_snapshots(symbols)
-
     def get_account_equity(self) -> float:
         now = self._now()
         if (
@@ -48,8 +41,21 @@ class CachedBrokerClient(BrokerClient):
         )
         return equity
 
-    def open_position(self, symbol: str, side: str, amount: float, stop_loss: float, take_profit: float):
-        result = self.delegate.open_position(symbol, side, amount, stop_loss, take_profit)
+    def open_position(
+        self,
+        symbol: str,
+        side: str,
+        amount: float,
+        stop_loss: float,
+        take_profit: float,
+    ):
+        result = self.delegate.open_position(
+            symbol,
+            side,
+            amount,
+            stop_loss,
+            take_profit,
+        )
         self.invalidate_account_and_positions()
         return result
 
@@ -59,15 +65,25 @@ class CachedBrokerClient(BrokerClient):
         return submission
 
     def is_position_open(self, position_id: str) -> bool:
-        cached_status = self._get_cache_entry(self.position_status_cache, position_id, 'position_status')
+        cached_status = self._get_cache_entry(
+            self.position_status_cache,
+            position_id,
+            'position_status',
+        )
         if cached_status is not None:
             return bool(cached_status)
         is_open = self.delegate.is_position_open(position_id)
-        self._put_cache_entry(self.position_status_cache, position_id, is_open, self.position_status_ttl_seconds)
+        self._put_cache_entry(
+            self.position_status_cache,
+            position_id,
+            is_open,
+            self.position_status_ttl_seconds,
+        )
         return is_open
 
     def remember_position_instrument(self, position_id: str, symbol: str) -> None:
         self.delegate.remember_position_instrument(position_id, symbol)
+        self.position_status_cache.pop(position_id, None)
 
     def forget_position_instrument(self, position_id: str) -> None:
         self.delegate.forget_position_instrument(position_id)
@@ -77,7 +93,12 @@ class CachedBrokerClient(BrokerClient):
         self.account_equity_cache = None
         self.position_status_cache.clear()
 
-    def _get_cache_entry(self, cache: dict[str, CacheEntry], key: str, cache_name: str) -> object | None:
+    def _get_cache_entry(
+        self,
+        cache: dict[str, CacheEntry],
+        key: str,
+        cache_name: str,
+    ) -> object | None:
         entry = cache.get(key)
         now = self._now()
         if entry is None:
@@ -90,7 +111,13 @@ class CachedBrokerClient(BrokerClient):
         self._log_cache_hit(cache_name, key)
         return entry.value
 
-    def _put_cache_entry(self, cache: dict[str, CacheEntry], key: str, value: object, ttl_seconds: float) -> None:
+    def _put_cache_entry(
+        self,
+        cache: dict[str, CacheEntry],
+        key: str,
+        value: object,
+        ttl_seconds: float,
+    ) -> None:
         if ttl_seconds > 0:
             cache[key] = self._build_entry(value, ttl_seconds)
 
