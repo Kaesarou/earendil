@@ -92,12 +92,19 @@ class PendingClose:
             last_error=str(error),
         )
 
-    def observe_still_open(self, *, observed_at: datetime) -> 'PendingClose':
+    def record_confirmation_check(
+        self,
+        *,
+        observed_at: datetime,
+    ) -> 'PendingClose':
         return replace(
             self,
             confirmation_checks=self.confirmation_checks + 1,
             last_confirmation_at=_as_utc(observed_at),
         )
+
+    def observe_still_open(self, *, observed_at: datetime) -> 'PendingClose':
+        return self.record_confirmation_check(observed_at=observed_at)
 
     def mark_delayed_reported(self, *, reported_at: datetime) -> 'PendingClose':
         return replace(self, delayed_reported_at=_as_utc(reported_at))
