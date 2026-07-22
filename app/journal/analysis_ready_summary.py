@@ -131,7 +131,7 @@ class AnalysisReadySummaryAggregator(DailySummaryAggregator):
 
     def to_dict(self) -> dict[str, Any]:
         summary = super().to_dict()
-        summary['schema_version'] = 8
+        summary['schema_version'] = 11
         market_data = summary['market_data']
         trading_snapshots = market_data.get('accepted', 0)
         market_data['trading_snapshots_processed'] = trading_snapshots

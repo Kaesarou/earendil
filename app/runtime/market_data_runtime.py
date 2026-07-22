@@ -19,7 +19,6 @@ from app.persistence.position_store import PositionStore
 from app.persistence.trade_cooldown_store import TradeCooldownStore
 from app.risk.risk_manager import RiskManager
 from app.risk.trade_cooldown_guard import TradeCooldownGuard
-from app.runtime.async_broker_operations import AsyncBrokerOperationsCoordinator
 from app.runtime.broker_task_runner import BrokerTaskLane, BrokerTaskRunner
 from app.runtime.clocked_candle_flow import ClockedCandleFlow
 from app.runtime.decision_window import DecisionWindowCoordinator
@@ -28,6 +27,9 @@ from app.runtime.market_data_maintenance import MarketDataMaintenance
 from app.runtime.market_data_session_flow import MarketDataSessionFlow
 from app.runtime.pending_entry import PendingEntryManager
 from app.runtime.position_lifecycle import BrokerAuthorizationErrorChecker
+from app.runtime.resilient_broker_operations import (
+    ResilientBrokerOperationsCoordinator,
+)
 from app.runtime.resilient_candidate_execution import (
     ResilientCandidateExecutionCoordinator,
 )
@@ -128,7 +130,7 @@ class EventDrivenMarketRuntime(
             grace_seconds=DECISION_WINDOW_GRACE_SECONDS
         )
         self.broker_task_runner = BrokerTaskRunner()
-        self.broker_operations = AsyncBrokerOperationsCoordinator(
+        self.broker_operations = ResilientBrokerOperationsCoordinator(
             runner=self.broker_task_runner,
             execution_broker=execution_broker,
             rest_market_data=rest_market_data,
@@ -217,6 +219,9 @@ class EventDrivenMarketRuntime(
                 'position_silence_seconds': WS_POSITION_SILENCE_SECONDS,
                 'position_fallback_interval_seconds': (
                     POSITION_FALLBACK_INTERVAL_SECONDS
+                ),
+                'decision_window_grace_seconds': (
+                    DECISION_WINDOW_GRACE_SECONDS
                 ),
                 'candle_clock_grace_seconds': CANDLE_CLOCK_GRACE_SECONDS,
             },
